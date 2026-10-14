@@ -92,6 +92,10 @@ const zones: Zone[] = [
   { id: 'RCV-01', code: 'RCV-01', name: 'จุดรับเข้าสินค้า', floorId: 'F1', kind: 'receiving', x: 22, z: 94, width: 18, depth: 3.5, accessNodeId: node('F1', 5, 2) },
   { id: 'F1-RK-A', code: 'RK-A', name: 'Rack A', floorId: 'F1', kind: 'storage', x: 10, z: 12, width: 18, depth: 10, accessNodeId: node('F1', 1, 1), stores: ['Component'] },
   { id: 'F1-RK-B', code: 'RK-B', name: 'Rack B', floorId: 'F1', kind: 'storage', x: 34, z: 12, width: 18, depth: 10, accessNodeId: node('F1', 1, 3), stores: ['Component'] },
+  // จุดตรวจ MI3, พื้นที่กัก NG และที่ชาร์จรถยกใกล้ประตูรับสินค้า (ตำแหน่งสมมติ — ย้ายได้ในโหมดแก้ไขผัง)
+  { id: 'F1-MI3', code: 'MI3-QC', name: 'พื้นที่ตรวจ MI3 (QC)', floorId: 'F1', kind: 'inspection', x: 33, z: 82.5, width: 9, depth: 7, accessNodeId: node('F1', 4, 2) },
+  { id: 'F1-NG', code: 'NG-HOLD', name: 'พื้นที่กัก NG', floorId: 'F1', kind: 'ng', x: 46, z: 82.5, width: 8, depth: 7, accessNodeId: node('F1', 4, 3) },
+  { id: 'F1-CHG', code: 'CHG', name: 'ที่ชาร์จรถยก / พาเลทเปล่า', floorId: 'F1', kind: 'utility', x: 7.5, z: 82, width: 9, depth: 6, accessNodeId: node('F1', 4, 0) },
   { id: 'F1-RK-C', code: 'RK-C', name: 'Rack C', floorId: 'F1', kind: 'storage', x: 10, z: 48, width: 18, depth: 10, accessNodeId: node('F1', 2, 1), stores: ['Component'] },
   // ชั้น 2 — ไลน์ประกอบวงล้อ
   { id: 'F2-RK-D', code: 'RK-D', name: 'Rack D - Supermarket ชั้น 2', floorId: 'F2', kind: 'storage', x: 10, z: 66, width: 14, depth: 10, accessNodeId: node('F2', 3, 1), stores: ['Component'] },

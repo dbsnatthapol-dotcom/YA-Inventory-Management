@@ -33,6 +33,9 @@ export type ZoneKind =
   | 'tent' // เต็นท์เก็บของลานนอก
   | 'stairs'
   | 'lift'
+  | 'inspection' // พื้นที่ตรวจคุณภาพ MI3
+  | 'ng' // พื้นที่กักของ NG รอส่งคืน
+  | 'utility' // ที่ชาร์จรถยก / กองพาเลทเปล่า
 
 export interface Zone {
   id: string

@@ -5,17 +5,22 @@ import { RoutePanel } from './components/RoutePanel'
 import logoUrl from './assets/uam-logo.png'
 import { BRAND } from './data/brand'
 import { sampleLayout } from './data/factoryLayout'
-import { ZONE_STYLE } from './data/zoneStyle'
+import { MODEL_COLOR } from './data/modelColors'
+import { applyLayoutEdits, isEditable } from './lib/layoutEdit'
 import { loadLayout, type LoadedLayout } from './lib/layoutSource'
+import { useLayoutEdits } from './lib/useLayoutEdits'
 import { findRoute, type RouteOptions } from './lib/pathfinding'
 import { useInventory } from './inventory/useInventory'
 import { zoneContents, zoneTotals } from './inventory/reports'
 import { ZonePanel } from './components/ZonePanel'
+import { LayoutEditorPanel } from './components/LayoutEditorPanel'
 import type { Zone } from './types/layout'
 
 export default function App() {
   const [loaded, setLoaded] = useState<LoadedLayout>({ layout: sampleLayout, source: 'sample' })
-  const layout = loaded.layout
+  const layoutEdits = useLayoutEdits()
+  // ผังที่ใช้งานจริง = ผังหลัก + ตำแหน่งที่ผู้ใช้ปรับ (ทางเดินที่ถูกขวางถูกปิด, จุดเข้า-ออกคำนวณใหม่)
+  const layout = useMemo(() => applyLayoutEdits(loaded.layout, layoutEdits.edits), [loaded.layout, layoutEdits.edits])
   const [sourceId, setSourceId] = useState('TENT-C')
   const [targetId, setTargetId] = useState('F2-ASM')
   const [options, setOptions] = useState<Required<Pick<RouteOptions, 'optimize' | 'avoid'>>>({
@@ -29,7 +34,9 @@ export default function App() {
   const [topView, setTopView] = useState(false)
   const [showSurroundings, setShowSurroundings] = useState(false)
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
-  const [sideTab, setSideTab] = useState<'zone' | 'route'>('zone')
+  const [sideTab, setSideTab] = useState<'zone' | 'route' | 'edit'>('zone')
+  const [editZoneId, setEditZoneId] = useState<string | null>(null)
+  const editMode = sideTab === 'edit'
   const [page, setPage] = useState<'map' | 'inventory'>('map')
   const inventory = useInventory()
 
@@ -45,6 +52,10 @@ export default function App() {
   )
 
   const handleZoneClick = (zone: Zone) => {
+    if (editMode) {
+      if (isEditable(zone, layout.floors.find((f) => f.id === zone.floorId))) setEditZoneId(zone.id)
+      return
+    }
     if (zone.kind !== 'stairs' && zone.kind !== 'lift' && zone.kind !== 'assembly') {
       setSelectedZoneId(zone.id)
       setSideTab('zone')
@@ -175,17 +186,15 @@ export default function App() {
             active={page === 'map'}
             showSurroundings={showSurroundings}
             zoneStock={zoneStock}
+            editMode={editMode}
+            editZoneId={editZoneId}
+            onZoneChange={layoutEdits.update}
           />
           <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap gap-x-3 gap-y-1 rounded-md bg-white/90 px-3 py-1.5 text-[11px] text-slate-700 shadow">
             {mode === 'exterior' ? (
               <span>คลิกอาคาร A เพื่อดูผังภายใน · คลิกเต็นท์เพื่อเลือกเป็นจุดเก็บต้นทาง</span>
             ) : (
-              Object.entries(ZONE_STYLE).map(([kind, s]) => (
-                <span key={kind} className="flex items-center gap-1">
-                  <i className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: s.color }} />
-                  {s.label}
-                </span>
-              ))
+              <FloorLegend editMode={editMode} />
             )}
           </div>
         </div>
@@ -195,11 +204,15 @@ export default function App() {
               [
                 ['zone', 'ของในโซน'],
                 ['route', 'ระยะเดินส่ง Part'],
+                ['edit', 'แก้ไขผัง'],
               ] as const
             ).map(([key, label]) => (
               <button
                 key={key}
-                onClick={() => setSideTab(key)}
+                onClick={() => {
+                  setSideTab(key)
+                  if (key === 'edit') setMode('interior')
+                }}
                 className={`flex-1 rounded-md px-3 py-1.5 transition ${sideTab === key ? 'font-semibold text-white' : 'text-slate-600 hover:bg-slate-100'}`}
                 style={sideTab === key ? { background: BRAND.primary } : undefined}
               >
@@ -207,7 +220,25 @@ export default function App() {
               </button>
             ))}
           </div>
-          {sideTab === 'zone' ? (
+          {sideTab === 'edit' ? (
+            <div className="min-h-0 flex-1 overflow-y-auto p-4 text-sm text-slate-700">
+              <LayoutEditorPanel
+                layout={layout}
+                edits={layoutEdits.edits}
+                zoneId={editZoneId}
+                stock={zoneStock}
+                onSelect={setEditZoneId}
+                onUpdate={layoutEdits.update}
+                onAdd={layoutEdits.add}
+                onRemove={(id) => {
+                  layoutEdits.remove(id)
+                  if (sourceId === id) setSourceId('TENT-C')
+                  if (targetId === id) setTargetId('F2-ASM')
+                }}
+                onReset={layoutEdits.reset}
+              />
+            </div>
+          ) : sideTab === 'zone' ? (
             <div className="min-h-0 flex-1 overflow-y-auto p-4 text-sm text-slate-700">
               <ZonePanel
                 layout={layout}
@@ -252,5 +283,34 @@ function BrandMark() {
     <span className="flex h-10 w-12 items-center justify-center rounded-md bg-white p-1 shadow-sm">
       <img src={logoUrl} alt={BRAND.shortName} className="h-full w-full object-contain" />
     </span>
+  )
+}
+
+/** คำอธิบายสีเส้นพื้นและสีพาเลท (ผังภายใน) */
+function FloorLegend({ editMode }: { editMode: boolean }) {
+  const lines: [string, string][] = [
+    ['#f2c200', 'เส้นเหลือง: ทางเดินรถยก/คน, พื้นที่ทำงาน'],
+    ['#ffffff', 'กรอบขาว: ตำแหน่งชั้นวาง'],
+    ['repeating-linear-gradient(45deg,#f2c200 0 3px,#1d1d1f 3px 6px)', 'เหลือง-ดำ: จุดอันตราย'],
+  ]
+  return (
+    <>
+      {lines.map(([c, label]) => (
+        <span key={label} className="flex items-center gap-1">
+          <i className="inline-block h-2.5 w-2.5 rounded-sm border border-slate-300" style={{ background: c }} />
+          {label}
+        </span>
+      ))}
+      <span className="flex items-center gap-1">
+        สีพาเลท = Model:
+        {Object.entries(MODEL_COLOR).map(([m, c]) => (
+          <span key={m} className="flex items-center gap-0.5">
+            <i className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: c }} />
+            {m}
+          </span>
+        ))}
+      </span>
+      {editMode && <span className="font-semibold text-blue-700">โหมดแก้ไข: ลากโซนเพื่อย้าย</span>}
+    </>
   )
 }
