@@ -16,23 +16,27 @@ export interface LoadedLayout {
 export async function loadLayout(): Promise<LoadedLayout> {
   if (!supabase) return { layout: sampleLayout, source: 'sample' }
 
-  const [floors, zones, nodes, edges] = await Promise.all([
-    supabase.from('floors').select('id, name, level, elevation, area, x, z, width, depth').order('level'),
-    supabase.from('zones').select('id, code, name, floorId:floor_id, kind, x, z, width, depth, accessNodeId:access_node_id'),
+  const [floors, zones, nodes, edges, sites, landmarks] = await Promise.all([
+    supabase.from('floors').select('id, name, level, elevation, area, x, z, rotation, width, depth').order('level'),
+    supabase.from('zones').select('id, code, name, floorId:floor_id, kind, x, z, width, depth, accessNodeId:access_node_id, stores'),
     supabase.from('nav_nodes').select('id, floorId:floor_id, x, z'),
     supabase.from('nav_edges').select('from:from_node_id, to:to_node_id, mode'),
+    supabase.from('sites').select('id, name, boundary').limit(1),
+    supabase.from('site_landmarks').select('id, name, kind, x, z, width, depth, rotation, height'),
   ])
-  const error = floors.error ?? zones.error ?? nodes.error ?? edges.error
+  const error = floors.error ?? zones.error ?? nodes.error ?? edges.error ?? sites.error ?? landmarks.error
   if (error) {
     console.warn('โหลดผังจาก Supabase ไม่สำเร็จ ใช้ผังตัวอย่างแทน:', error.message)
     return { layout: sampleLayout, source: 'sample' }
   }
   if (!floors.data?.length) return { layout: sampleLayout, source: 'sample' }
 
+  const site = sites.data?.[0]
   return {
     source: 'supabase',
     layout: {
-      siteName: sampleLayout.siteName,
+      siteName: site?.name ?? sampleLayout.siteName,
+      site: site ? { boundary: site.boundary, landmarks: landmarks.data ?? [] } : undefined,
       floors: floors.data,
       zones: zones.data,
       nodes: nodes.data,

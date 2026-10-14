@@ -1,4 +1,5 @@
 import type { FactoryLayout, NavNode, TravelMode } from '../types/layout'
+import { toSite } from './geometry'
 
 /** สมมติฐานความเร็ว — ปรับให้ตรงกับการจับเวลาจริงหน้างาน */
 export const TRAVEL_ASSUMPTIONS = {
@@ -37,7 +38,14 @@ interface Arc {
 
 function buildGraph(layout: FactoryLayout, opts: Required<RouteOptions>) {
   const nodes = new Map(layout.nodes.map((n) => [n.id, n]))
+  const floors = new Map(layout.floors.map((f) => [f.id, f]))
   const elevation = new Map(layout.floors.map((f) => [f.id, f.elevation]))
+  // ชั้นของอาคารอาจวางเอียง จึงคำนวณระยะจากพิกัด site เสมอ
+  const sitePos = (n: NavNode) => {
+    const floor = floors.get(n.floorId)
+    if (!floor) throw new Error(`Node ${n.id} อ้างถึงชั้น ${n.floorId} ที่ไม่มีอยู่`)
+    return toSite(floor, n.x, n.z)
+  }
   const a = opts.assumptions
   const adj = new Map<string, Arc[]>()
 
@@ -47,7 +55,9 @@ function buildGraph(layout: FactoryLayout, opts: Required<RouteOptions>) {
     const to = nodes.get(e.to)
     if (!from || !to) throw new Error(`Edge ${e.from} → ${e.to} อ้างถึงโหนดที่ไม่มีอยู่`)
 
-    const horizontal = Math.hypot(to.x - from.x, to.z - from.z)
+    const [fx, fz] = sitePos(from)
+    const [tx, tz] = sitePos(to)
+    const horizontal = Math.hypot(tx - fx, tz - fz)
     const vertical = Math.abs((elevation.get(to.floorId) ?? 0) - (elevation.get(from.floorId) ?? 0))
     let arc: Omit<Arc, 'to'>
     if (e.mode === 'walk') {

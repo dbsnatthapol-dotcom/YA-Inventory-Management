@@ -1,7 +1,12 @@
-// โมเดลข้อมูลผังโรงงาน — ตรงกับตารางใน supabase/migrations/0001_init.sql
+// โมเดลข้อมูลผังโรงงาน — ตรงกับตารางใน supabase/migrations/
 
 export type FloorId = string
 
+/**
+ * ระบบพิกัด: หน่วยเมตร มุมมองจากด้านบน แกน x ชี้ไปทางขวาของภาพดาวเทียม และแกน z ชี้ลงล่าง (ไปทางถนน)
+ * แต่ละชั้นมีพิกัดภายใน (local) ของตัวเอง จุด (0,0) ของชั้นอยู่ที่ตำแหน่ง (x, z) ของ site
+ * และหมุนตาม rotation (องศา) เพื่อให้อาคารที่วางเอียงยังวาด rack/ทางเดินแบบตั้งฉากได้
+ */
 export interface Floor {
   id: FloorId
   name: string
@@ -9,11 +14,14 @@ export interface Floor {
   level: number
   /** ความสูงพื้นจากระดับดิน (เมตร) */
   elevation: number
-  /** อาคารหลัก หรือ ลานภายนอก */
+  /** ชั้นของอาคาร หรือ ลานภายนอก (ลานใช้พิกัด site โดยตรง) */
   area: 'building' | 'yard'
-  /** ขนาดพื้น (เมตร) และตำแหน่งมุม */
+  /** จุดเริ่มต้นของพิกัดภายในชั้น (พิกัด site) */
   x: number
   z: number
+  /** หมุนรอบจุดเริ่มต้น (องศา, ตามเข็มนาฬิกาเมื่อมองจากด้านบน) */
+  rotation?: number
+  /** ขนาดพื้น (พิกัดภายใน) */
   width: number
   depth: number
 }
@@ -32,18 +40,21 @@ export interface Zone {
   name: string
   floorId: FloorId
   kind: ZoneKind
-  /** มุมซ้ายบนของโซน (เมตร) */
+  /** มุมของโซนในพิกัดภายในชั้น (เมตร) */
   x: number
   z: number
   width: number
   depth: number
   /** โหนดทางเดินที่ใช้เข้า-ออกโซนนี้ */
   accessNodeId: string
+  /** ประเภทของที่เก็บ เช่น FG, Component */
+  stores?: string[]
 }
 
 export interface NavNode {
   id: string
   floorId: FloorId
+  /** พิกัดภายในชั้น */
   x: number
   z: number
 }
@@ -56,8 +67,29 @@ export interface NavEdge {
   mode: TravelMode
 }
 
+/** สิ่งประกอบฉากที่ไม่ใช่พื้นที่เก็บของ เช่น สำนักงาน ถนน อาคารข้างเคียง */
+export interface Landmark {
+  id: string
+  name: string
+  kind: 'office' | 'building' | 'road' | 'area'
+  /** จุดกึ่งกลาง (พิกัด site) */
+  x: number
+  z: number
+  width: number
+  depth: number
+  rotation: number
+  height: number
+}
+
+export interface Site {
+  /** เส้นขอบที่ดิน (พิกัด site) */
+  boundary: [number, number][]
+  landmarks: Landmark[]
+}
+
 export interface FactoryLayout {
   siteName: string
+  site?: Site
   floors: Floor[]
   zones: Zone[]
   nodes: NavNode[]

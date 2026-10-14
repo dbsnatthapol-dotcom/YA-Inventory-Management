@@ -19,6 +19,7 @@ export default function App() {
   const [tripsPerDay, setTripsPerDay] = useState(40)
   const [explode, setExplode] = useState(2.5)
   const [hiddenFloors, setHiddenFloors] = useState<Set<string>>(new Set())
+  const [topView, setTopView] = useState(false)
 
   useEffect(() => {
     loadLayout().then(setLoaded)
@@ -62,6 +63,10 @@ export default function App() {
             แยกชั้น
             <input type="range" min={1} max={5} step={0.5} value={explode} onChange={(e) => setExplode(Number(e.target.value))} />
           </label>
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={topView} onChange={(e) => setTopView(e.target.checked)} />
+            มุมมองด้านบน
+          </label>
         </div>
         <div className="ml-auto flex flex-wrap gap-2 text-[11px]">
           {Object.entries(ZONE_STYLE).map(([kind, s]) => (
@@ -81,6 +86,7 @@ export default function App() {
             selectedZoneIds={[sourceId, targetId]}
             route={route}
             onZoneClick={handleZoneClick}
+            topView={topView}
           />
         </div>
         <RoutePanel
