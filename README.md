@@ -66,6 +66,7 @@ npm run build
 
 ## เอกสาร
 
+- [docs/roadmap.md](docs/roadmap.md) — **แผนงานแบ่ง Phase และสถานะปัจจุบัน** (เริ่มอ่านที่นี่)
 - [docs/inventory-process.md](docs/inventory-process.md) — กระบวนการรับเข้า → BOI → MI3/MRA → NG, กฎของระบบ และขั้นตอนเปิดใช้ Qwen
 
 - [docs/requirements.md](docs/requirements.md) — แบบฟอร์มเก็บ requirement และแผนแบ่งเฟส
