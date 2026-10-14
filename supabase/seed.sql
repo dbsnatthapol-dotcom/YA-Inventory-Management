@@ -304,7 +304,9 @@ insert into public.sites (id, name, boundary) values
   ('UAM1', 'Union Autoparts Manufacturing', '[[2,86],[28,16],[98,17],[100,8.4],[220,10],[221,34],[171,23],[129,160]]');
 
 insert into public.site_landmarks (id, site_id, name, kind, x, z, width, depth, rotation, height) values
-  ('E', 'UAM1', 'สำนักงานใหญ่ (E)', 'office', 101.4, 134, 35, 18.6, 25.4, 8),
+  ('E', 'UAM1', 'โรงอาหาร (Canteen)', 'canteen', 101.4, 134, 35, 18.6, 25.4, 3.6),
+  ('GATE-1', 'UAM1', 'ทางเข้ารถขนส่ง 1 (ขวา)', 'gate', 122, 155.5, 8, 24, 210.2, 0),
+  ('GATE-2', 'UAM1', 'ทางเข้ารถขนส่ง 2 (ซ้าย-หลังโรงอาหาร)', 'gate', 73.2, 127.2, 7, 18, 210.2, 0),
   ('G', 'UAM1', 'พื้นที่ G', 'area', 44, 98, 66, 24, 4, 0.2),
   ('F', 'UAM1', 'พื้นที่ F', 'area', 174, 21, 92, 14, 6, 0.2),
   ('ROAD', 'UAM1', 'ถ.ปู่เจ้าสมิงพราย', 'road', 55.4, 140.3, 260, 35, 30.2, 0.05);

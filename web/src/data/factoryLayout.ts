@@ -116,7 +116,12 @@ const boundary: [number, number][] = [
 ]
 
 const landmarks: Landmark[] = [
-  { id: 'E', name: 'สำนักงานใหญ่ (E)', kind: 'office', x: 101.4, z: 134, width: 35, depth: 18.6, rotation: 25.4, height: 8 },
+  // E = โรงอาหาร (canteen) ชั้นเดียว อยู่หน้าอาคาร A ติดถนน (ยืนยันจากเจ้าของ)
+  { id: 'E', name: 'โรงอาหาร (Canteen)', kind: 'canteen', x: 101.4, z: 134, width: 35, depth: 18.6, rotation: 25.4, height: 3.6 },
+  // ทางเข้ารถขนส่ง 2 ทางจากถนนด้านหน้า (ตำแหน่งประมาณจากภาพดาวเทียม — รอยืนยัน)
+  // rotation 210.2° = หันเข้าโรงงาน ตั้งฉากกับแนวรั้วด้านถนน
+  { id: 'GATE-1', name: 'ทางเข้ารถขนส่ง 1 (ขวา)', kind: 'gate', x: 122, z: 155.5, width: 8, depth: 24, rotation: 210.2, height: 0 },
+  { id: 'GATE-2', name: 'ทางเข้ารถขนส่ง 2 (ซ้าย-หลังโรงอาหาร)', kind: 'gate', x: 73.2, z: 127.2, width: 7, depth: 18, rotation: 210.2, height: 0 },
   { id: 'G', name: 'พื้นที่ G', kind: 'area', x: 44, z: 98, width: 66, depth: 24, rotation: 4, height: 0.2 },
   { id: 'F', name: 'พื้นที่ F', kind: 'area', x: 174, z: 21, width: 92, depth: 14, rotation: 6, height: 0.2 },
   { id: 'ROAD', name: 'ถ.ปู่เจ้าสมิงพราย', kind: 'road', x: 55.4, z: 140.3, width: 260, depth: 35, rotation: 30.2, height: 0.05 },

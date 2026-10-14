@@ -30,7 +30,7 @@ import {
   YardWalkway,
   ZoneOutline,
 } from './models/Interior'
-import { ArchTent, OfficeBuilding, PavedArea, Road, SiteGround, Trees, TwinGableTent, Warehouse } from './models/SiteModels'
+import { ArchTent, Canteen, OfficeBuilding, PavedArea, Road, SiteGround, Trees, TruckGate, TwinGableTent, Warehouse } from './models/SiteModels'
 import { AISLE_WIDTH, type FloorPaint } from './models/textures'
 
 export type ViewMode = 'exterior' | 'interior'
@@ -86,7 +86,7 @@ export interface MapPinSpec {
 const FLOOR_LIFT = 0.12
 
 const CAMERA: Record<ViewMode | 'top', [number, number, number]> = {
-  exterior: [-45, 55, 140],
+  exterior: [28, 88, 150],
   interior: [90, 130, 160],
   top: [0, 260, 0.01],
 }
@@ -368,6 +368,10 @@ export function FactoryScene(props: Props) {
 
   return (
     <Canvas camera={{ position: CAMERA.exterior, fov: 42, far: 2000 }} shadows="soft" frameloop={active ? 'always' : 'never'}>
+      {/* ป้าย Html ตัวแรกของฉากไม่ถูกวาดเนื้อหา (พฤติกรรมของ drei Html ตอน mount พร้อมกันหลายตัว) จึงวางตัวเปล่าไว้ก่อน */}
+      <Html className="pointer-events-none">
+        <span />
+      </Html>
       <CameraRig view={topView ? 'top' : mode} />
       <CameraAnimator command={cameraCommand} view={topView ? 'top' : mode} points={zonePoints} shiftPx={focusShiftPx} />
       <DragController start={drag} groups={floorRefs} onMove={moveDrag} onEnd={endDrag} />
@@ -399,7 +403,7 @@ export function FactoryScene(props: Props) {
           <>
             <SiteGround boundary={layout.site.boundary} />
             {layout.site.landmarks
-              .filter((l) => showSurroundings || l.kind === 'office' || l.kind === 'building')
+              .filter((l) => showSurroundings || l.kind === 'office' || l.kind === 'building' || l.kind === 'canteen' || l.kind === 'gate')
               .map((l) => (
                 <LandmarkModel key={l.id} landmark={l} />
               ))}
@@ -777,10 +781,18 @@ function LandmarkModel({ landmark: l }: { landmark: Landmark }) {
   return (
     <group position={[l.x, 0, l.z]} rotation={[0, -toRadians(l.rotation), 0]}>
       {l.kind === 'office' && <OfficeBuilding width={l.width} depth={l.depth} />}
+      {l.kind === 'canteen' && (
+        <>
+          <Label position={[0, l.height + 3, 0]} title={l.name} muted />
+          <Canteen width={l.width} depth={l.depth} height={l.height} />
+        </>
+      )}
+      {l.kind === 'gate' && <TruckGate width={l.width} depth={l.depth} />}
       {l.kind === 'building' && <Warehouse width={l.width} depth={l.depth} height={Math.max(l.height, 6)} />}
       {l.kind === 'road' && <Road width={l.width} depth={l.depth} />}
       {l.kind === 'area' && <PavedArea width={l.width} depth={l.depth} />}
-      {l.kind !== 'road' && l.kind !== 'area' && <Label position={[0, l.height + 5, 0]} title={l.name} />}
+      {(l.kind === 'office' || l.kind === 'building') && <Label position={[0, l.height + 5, 0]} title={l.name} />}
+      {l.kind === 'gate' && <Label position={[0, 4, 0]} title={l.name} />}
       {l.kind === 'road' && <Label position={[-l.width / 4, 1, 0]} title={l.name} muted />}
     </group>
   )

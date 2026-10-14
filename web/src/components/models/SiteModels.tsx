@@ -259,3 +259,73 @@ export function Trees({ points }: { points: [number, number][] }) {
     </group>
   )
 }
+
+/**
+ * โรงอาหาร (canteen) ชั้นเดียว: ผนังขาว หน้าต่างยาว หลังคาเมทัลชีทสีเทาอ่อนลาดต่ำ
+ * ตั้งใจให้เตี้ยและสีอ่อน ไม่บังอาคารโรงงานด้านหลัง — x/z คือจุดกึ่งกลาง, ความยาวตามแกน x
+ */
+export function Canteen({ width, depth, height = 3.6 }: { width: number; depth: number; height?: number }) {
+  const wallMap = useMemo(() => tiled(windowBay(BRAND.white), width / 6, 0.8), [width])
+  return (
+    <group>
+      <mesh position={[0, height / 2, 0]} castShadow receiveShadow>
+        <boxGeometry args={[width, height, depth]} />
+        <meshStandardMaterial map={wallMap} roughness={0.7} />
+      </mesh>
+      <mesh position={[0, 0.3, 0]}>
+        <boxGeometry args={[width + 0.1, 0.6, depth + 0.1]} />
+        <meshStandardMaterial color={BRAND.green} roughness={0.6} />
+      </mesh>
+      {/* หลังคาจั่วต่ำ สันหลังคาตามแนวยาว */}
+      <group position={[0, height, 0]} rotation={[0, Math.PI / 2, 0]}>
+        <GableRoof width={depth + 1.2} depth={width + 1.2} rise={1.4} color="#d5dbe2" />
+      </group>
+    </group>
+  )
+}
+
+/**
+ * ทางเข้ารถขนส่ง: เสาประตู 2 ต้น + ไม้กั้นเหลือง-ดำ + ถนนภายในยาว depth (แกน +z = เข้าสู่โรงงาน)
+ * x/z ของ landmark = กึ่งกลางแนวประตู
+ */
+export function TruckGate({ width, depth }: { width: number; depth: number }) {
+  const lane = useMemo(() => tiled(roadSurface(2), 1, Math.max(1, depth / 12)), [depth])
+  return (
+    <group>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.07, depth / 2]} receiveShadow>
+        <planeGeometry args={[width, depth]} />
+        <meshStandardMaterial map={lane} roughness={0.9} polygonOffset polygonOffsetFactor={-3} />
+      </mesh>
+      {[-1, 1].map((side) => (
+        <group key={side} position={[(side * (width + 0.8)) / 2, 0, 0]}>
+          <mesh position={[0, 1.2, 0]} castShadow>
+            <boxGeometry args={[0.5, 2.4, 0.5]} />
+            <meshStandardMaterial color="#e9edf1" roughness={0.6} />
+          </mesh>
+          <mesh position={[0, 2.5, 0]}>
+            <boxGeometry args={[0.6, 0.2, 0.6]} />
+            <meshStandardMaterial color={BRAND.trimBlue} />
+          </mesh>
+        </group>
+      ))}
+      {/* ไม้กั้นยกขึ้นครึ่งหนึ่ง (ประตูเปิด) */}
+      <group position={[-(width + 0.8) / 2, 1.1, 0.4]} rotation={[0, 0, 0.5]}>
+        <mesh position={[width * 0.42, 0, 0]}>
+          <boxGeometry args={[width * 0.84, 0.12, 0.12]} />
+          <meshStandardMaterial color="#f2c200" />
+        </mesh>
+      </group>
+      {/* ป้อมยาม */}
+      <group position={[-(width + 0.8) / 2 - 1.8, 0, 1.6]}>
+        <mesh position={[0, 1.3, 0]} castShadow>
+          <boxGeometry args={[2, 2.6, 2]} />
+          <meshStandardMaterial color="#f4f6f8" roughness={0.6} />
+        </mesh>
+        <mesh position={[0, 2.7, 0]} castShadow>
+          <boxGeometry args={[2.4, 0.2, 2.4]} />
+          <meshStandardMaterial color={BRAND.roofBlue} />
+        </mesh>
+      </group>
+    </group>
+  )
+}

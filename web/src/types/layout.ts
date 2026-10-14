@@ -74,7 +74,8 @@ export interface NavEdge {
 export interface Landmark {
   id: string
   name: string
-  kind: 'office' | 'building' | 'road' | 'area'
+  /** canteen = อาคารชั้นเดียวเตี้ย, gate = ทางเข้ารถขนส่ง (x/z = กึ่งกลางแนวประตู, หมุนให้แกน +z ชี้เข้าโรงงาน, depth = ความยาวถนนภายใน) */
+  kind: 'office' | 'building' | 'road' | 'area' | 'canteen' | 'gate'
   /** จุดกึ่งกลาง (พิกัด site) */
   x: number
   z: number
