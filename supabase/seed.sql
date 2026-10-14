@@ -305,3 +305,108 @@ insert into public.site_landmarks (id, site_id, name, kind, x, z, width, depth, 
   ('G', 'UAM1', 'พื้นที่ G', 'area', 44, 98, 66, 24, 4, 0.2),
   ('F', 'UAM1', 'พื้นที่ F', 'area', 174, 21, 92, 14, 6, 0.2),
   ('ROAD', 'UAM1', 'ถ.ปู่เจ้าสมิงพราย', 'road', 55.4, 140.3, 260, 35, 30.2, 0.05);
+
+-- Master: ลูกค้า, Model, Part (Royal Enfield K1G) และกฎแนะนำโซน
+insert into public.customers (id, name) values
+  ('RE', 'Royal Enfield');
+
+insert into public.product_models (code, customer_id, requires_inspection) values
+  ('K1G', 'RE', 'false'),
+  ('J1D', 'RE', 'true'),
+  ('J1A', 'RE', 'true'),
+  ('J1C', 'RE', 'true'),
+  ('TWIN', 'RE', 'true'),
+  ('P4D', 'RE', 'true');
+
+insert into public.parts (part_no, name, part_type, customer_id) values
+  ('RAJ00537/B', 'RIM, FRONT, TUBELESS,21X 2.15"', 'RIM', 'RE'),
+  ('RAT00587/B', 'RIM, REAR, TUBELESS, 17" X 3.5"', 'RIM', 'RE'),
+  ('RAJ00995/A', 'RIM, FRONT, TUBELESS,21X 2.15" BLACK', 'RIM', 'RE'),
+  ('RAT1088/A', 'RIM, REAR, TUBELESS, 17" X 3.5" BLACK', 'RIM', 'RE'),
+  ('PK1G0021', 'RIM,FRONT 21x2.15" GOLD', 'RIM', 'RE'),
+  ('PK1G0022', 'RIM,REAR,TL,17x3.5" GOLD', 'RIM', 'RE'),
+  ('RAJ00994/B', 'RIM,FRONT 21x2.15" JF,GOLD', 'RIM', 'RE'),
+  ('RAT01087/B', 'RIM,REAR,TL,17x3.5" JF,GOLD', 'RIM', 'RE'),
+  ('RAJ00536/B', 'HUB, FRONT, TUBELESS, 21X 2.15"', 'HUB', 'RE'),
+  ('RAT00586/B', 'HUB, REAR, TUBELESS, K1G', 'HUB', 'RE'),
+  ('RAJ00875/B', 'HUB, FRONT,TL, 21x2.15, OLIVE', 'HUB', 'RE'),
+  ('RAT00952/A', 'HUB, REAR, TL, K1G, OLIVE', 'HUB', 'RE'),
+  ('RAJ00239/B', 'BEARING, WHEEL, 6004', 'BEARING', 'RE'),
+  ('RAJ00238/D', 'SPACER, WHEEL, INTERNAL', 'SPACER', 'RE'),
+  ('RAT00282/D', 'SPACER, WHEEL, INTERNAL', 'SPACER', 'RE'),
+  ('RAJ00240/B', 'SEAL, WHEEL, 44, 30', 'SEAL', 'RE'),
+  ('RAT00283/A', 'SEAL, WHEEL, 42, 30', 'SEAL', 'RE'),
+  ('RAJ00538/B', 'SPOKE, FRONT, TUBELESS,21X 2.15"', 'SPOKE', 'RE'),
+  ('RAT00566/B', 'SPOKE 1, REAR, TUBELESS. 17" X 3.5"', 'SPOKE', 'RE'),
+  ('RAT00567/B', 'SPOKE 2, REAR, TUBELESS. 17" X 3.5"', 'SPOKE', 'RE'),
+  ('RAT00568/B', 'SPOKE 3, REAR, TUBELESS. 17" X 3.5"', 'SPOKE', 'RE'),
+  ('RAT00592/B', 'SPOKE 4, REAR, TUBELESS. 17" X 3.5"', 'SPOKE', 'RE'),
+  ('RAJ00550/B', 'NIPPLE, SPOKE, LOCKING', 'NIPPLE', 'RE'),
+  ('RAB00587/B', 'BRAKE DISC, SOLID, 320', 'DISC', 'RE'),
+  ('RAB00479/C', 'BRAKE DISC, SOLID, 270', 'DISC', 'RE'),
+  ('RAJ00539/B', 'TONER RING, FRONT', 'TONER', 'RE'),
+  ('RAJ00288/B', 'TONER RING', 'TONER', 'RE'),
+  ('RAT00467/A', 'BOLT, M8x1.25x 21, SHOULDERED', 'BOLT', 'RE'),
+  ('RAJ00757/A', 'CUSH RUBBER P4D /K1G', 'RUBBER', 'RE'),
+  ('RAT01154/B', 'VALVE, WHEEL, TUBELESS', 'VALVE', 'RE'),
+  ('RAJ00570/B', 'VALVE, WHEEL, TUBELESS', 'VALVE', 'RE'),
+  ('RAJ00301/D', 'TYRE 90/90-21 FRONT', 'TYRE', 'RE'),
+  ('RAT00322/D', 'TYRE 140/80-17 REAR', 'TYRE', 'RE'),
+  ('150324/A', 'WHEEL BEARING 6203 (17x40x12) K1G , J1D, J1A ,J1C ,TWIN, P4D,M', 'BEARING', 'RE');
+
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00537/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAT00587/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00995/A';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAT1088/A';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'PK1G0021';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'PK1G0022';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00994/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAT01087/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00536/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAT00586/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00875/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAT00952/A';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00239/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00238/D';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAT00282/D';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00240/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAT00283/A';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00538/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAT00566/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAT00567/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAT00568/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAT00592/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00550/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAB00587/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAB00479/C';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00539/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00288/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAT00467/A';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00757/A';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAJ00757/A';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAT01154/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00570/B';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00301/D';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAT00322/D';
+insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = '150324/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = '150324/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = '150324/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = '150324/A';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '150324/A';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = '150324/A';
+
+insert into public.zone_rules (customer_id, part_type, zone_id) values
+  ('RE', 'RIM', 'F1-RK-C'),
+  ('RE', 'HUB', 'F1-RK-B'),
+  ('RE', 'DISC', 'F1-RK-B'),
+  ('RE', 'TONER', 'F1-RK-B'),
+  ('RE', 'SPOKE', 'F1-RK-A'),
+  ('RE', 'NIPPLE', 'F1-RK-A'),
+  ('RE', 'BOLT', 'F1-RK-A'),
+  ('RE', 'BEARING', 'F2-RK-E'),
+  ('RE', 'SPACER', 'F2-RK-E'),
+  ('RE', 'SEAL', 'F2-RK-E'),
+  ('RE', 'VALVE', 'F2-RK-E'),
+  ('RE', 'RUBBER', 'F2-RK-E'),
+  ('RE', 'TYRE', 'TENT-C'),
+  ('RE', null, 'TENT-D');

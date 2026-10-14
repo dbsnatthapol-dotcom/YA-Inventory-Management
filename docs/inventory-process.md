@@ -53,6 +53,11 @@
 3. ระบบเทียบรหัสกับ Part Master: แก้ตัวอักษรที่ OCR สับสนบ่อย (O↔0, I/L↔1) และหาค่าที่ใกล้ที่สุด
 4. พนักงานยืนยัน → ระบบเก็บผลดิบจาก AI ไว้ใน `inbound_receipts.extraction` เพื่อตรวจย้อนหลัง
 
+สถานะการติดตั้ง (14 ต.ค. 2026):
+- โปรเจกต์ Supabase: `lgjuokwwsjpicqljimpq` (เดิมชื่อ UAM Incoming Inspection — ใช้ร่วมกับตารางของระบบตรวจรับเดิม ชื่อตารางไม่ชนกัน)
+- ติดตั้ง migration 0001–0003 และข้อมูล seed แล้ว · deploy function `extract-invoice` แล้ว (verify_jwt เปิดอยู่)
+- **รอ**: ตั้ง secret `QWEN_API_KEY` ใน Dashboard → Edge Functions → Secrets
+
 ขั้นตอนเปิดใช้ Qwen จริง:
 1. สมัคร Alibaba Cloud Model Studio (DashScope) แล้วสร้าง API key
 2. `supabase secrets set QWEN_API_KEY=<key>` (ห้ามส่ง key ในแชทหรือใส่ในโค้ด)
