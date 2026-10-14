@@ -255,17 +255,17 @@ export function floorMarkings(paint: FloorPaint): CanvasTexture {
   const m = (v: number) => v * PX
 
   // พื้น epoxy + รอยต่อแผ่นพื้นทุก 6 ม.
-  g.fillStyle = '#5b9a78'
+  g.fillStyle = '#93c2a8'
   g.fillRect(0, 0, canvas.width, canvas.height)
   let seed = 7
   const rand = () => ((seed = (seed * 9301 + 49297) % 233280), seed / 233280)
   for (let i = 0; i < 260; i++) {
-    g.fillStyle = `rgba(255,255,255,${0.015 + rand() * 0.03})`
+    g.fillStyle = `rgba(255,255,255,${0.01 + rand() * 0.02})`
     g.beginPath()
     g.ellipse(rand() * canvas.width, rand() * canvas.height, 20 + rand() * 90, 10 + rand() * 50, rand() * Math.PI, 0, Math.PI * 2)
     g.fill()
   }
-  g.strokeStyle = 'rgba(20,50,35,0.18)'
+  g.strokeStyle = 'rgba(30,70,50,0.10)'
   g.lineWidth = 1
   for (let x = 6; x < paint.width; x += 6) line(g, m(x), 0, m(x), canvas.height)
   for (let z = 6; z < paint.depth; z += 6) line(g, 0, m(z), canvas.width, m(z))
@@ -275,11 +275,11 @@ export function floorMarkings(paint: FloorPaint): CanvasTexture {
   g.strokeStyle = '#f2c200'
   g.lineWidth = m(AISLE_WIDTH + 0.24)
   for (const [ax, az, bx, bz] of paint.aisles) line(g, m(ax), m(az), m(bx), m(bz))
-  g.strokeStyle = '#4c8a69'
+  g.strokeStyle = '#80b598'
   g.lineWidth = m(AISLE_WIDTH)
   for (const [ax, az, bx, bz] of paint.aisles) line(g, m(ax), m(az), m(bx), m(bz))
   g.lineCap = 'butt'
-  g.strokeStyle = 'rgba(255,255,255,0.75)'
+  g.strokeStyle = 'rgba(255,255,255,0.9)'
   g.lineWidth = m(0.1)
   g.setLineDash([m(1), m(1)])
   for (const [ax, az, bx, bz] of paint.aisles) line(g, m(ax), m(az), m(bx), m(bz))

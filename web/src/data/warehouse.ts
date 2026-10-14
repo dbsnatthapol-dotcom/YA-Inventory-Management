@@ -114,12 +114,22 @@ export function planRack(width: number, depth: number): RackPlan {
 export interface PalletLoad {
   model: string
   partNo: string
+  lotId: string
+  /** จำนวนชิ้นบนพาเลทนี้ (พาเลทสุดท้ายของ lot อาจไม่เต็ม) */
+  qty: number
 }
 
 /** แปลงของในโซนเป็นรายการพาเลท (ปัดขึ้นต่อ lot) เรียงตาม Model */
 export function palletsFor(stock: ZoneContents | undefined): PalletLoad[] {
   if (!stock) return []
-  return stock.items.flatMap((i) =>
-    Array.from({ length: Math.ceil(i.qty / piecesPerPallet(i.part?.type)) }, () => ({ model: i.lot.model, partNo: i.lot.partNo })),
-  )
+  return stock.items.flatMap((i) => {
+    const per = piecesPerPallet(i.part?.type)
+    const count = Math.ceil(i.qty / per)
+    return Array.from({ length: count }, (_, k) => ({
+      model: i.lot.model,
+      partNo: i.lot.partNo,
+      lotId: i.lot.id,
+      qty: k < count - 1 ? per : i.qty - per * (count - 1),
+    }))
+  })
 }
