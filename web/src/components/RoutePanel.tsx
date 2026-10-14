@@ -1,3 +1,4 @@
+import { BRAND } from '../data/brand'
 import type { FactoryLayout, Zone } from '../types/layout'
 import { findRoute, type RouteOptions, type RouteResult } from '../lib/pathfinding'
 
@@ -34,12 +35,12 @@ export function RoutePanel(props: Props) {
     : []
 
   return (
-    <aside className="flex h-full w-full flex-col gap-4 overflow-y-auto border-l border-slate-800 bg-slate-950/90 p-4 text-sm md:w-96">
+    <aside className="flex h-full w-full flex-col gap-4 overflow-y-auto border-l border-slate-200 bg-white p-4 text-sm text-slate-700 md:w-96">
       <section className="space-y-2">
-        <h2 className="text-base font-semibold text-sky-300">วิเคราะห์ระยะเดินส่ง Part</h2>
+        <h2 className="border-b-2 pb-1 text-base font-bold" style={{ color: BRAND.navy, borderColor: BRAND.navy }}>วิเคราะห์ระยะเดินส่ง Part</h2>
         <label className="block">
-          <span className="text-slate-400">จาก (จุดเก็บ)</span>
-          <select className="mt-1 w-full rounded bg-slate-800 p-2" value={sourceId} onChange={(e) => props.onSourceChange(e.target.value)}>
+          <span className="text-slate-500">จาก (จุดเก็บ)</span>
+          <select className="mt-1 w-full rounded border border-slate-300 bg-slate-50 p-2" value={sourceId} onChange={(e) => props.onSourceChange(e.target.value)}>
             {sources.map((z) => (
               <option key={z.id} value={z.id}>
                 {floorName(z)} · {z.code} · {z.name}
@@ -48,8 +49,8 @@ export function RoutePanel(props: Props) {
           </select>
         </label>
         <label className="block">
-          <span className="text-slate-400">ไปยัง (ไลน์ประกอบ)</span>
-          <select className="mt-1 w-full rounded bg-slate-800 p-2" value={targetId} onChange={(e) => props.onTargetChange(e.target.value)}>
+          <span className="text-slate-500">ไปยัง (ไลน์ประกอบ)</span>
+          <select className="mt-1 w-full rounded border border-slate-300 bg-slate-50 p-2" value={targetId} onChange={(e) => props.onTargetChange(e.target.value)}>
             {targets.map((z) => (
               <option key={z.id} value={z.id}>
                 {floorName(z)} · {z.name}
@@ -86,11 +87,11 @@ export function RoutePanel(props: Props) {
           ห้ามใช้ลิฟต์ (ใช้บันไดเท่านั้น)
         </label>
         <label className="block">
-          <span className="text-slate-400">จำนวนเที่ยวต่อวัน</span>
+          <span className="text-slate-500">จำนวนเที่ยวต่อวัน</span>
           <input
             type="number"
             min={0}
-            className="mt-1 w-full rounded bg-slate-800 p-2"
+            className="mt-1 w-full rounded border border-slate-300 bg-slate-50 p-2"
             value={tripsPerDay}
             onChange={(e) => props.onTripsChange(Math.max(0, Number(e.target.value)))}
           />
@@ -108,15 +109,15 @@ export function RoutePanel(props: Props) {
             <Stat label="ใช้ลิฟต์" value={`${route.liftRides} ครั้ง`} />
           </>
         ) : (
-          <p className="col-span-2 text-rose-400">ไม่พบเส้นทาง</p>
+          <p className="col-span-2 text-rose-600">ไม่พบเส้นทาง</p>
         )}
       </section>
 
       {target && (
         <section>
-          <h3 className="mb-1 font-semibold text-slate-300">จัดอันดับจุดเก็บ → {target.name}</h3>
+          <h3 className="mb-1 font-semibold" style={{ color: BRAND.navy }}>จัดอันดับจุดเก็บ → {target.name}</h3>
           <table className="w-full text-left text-xs">
-            <thead className="text-slate-500">
+            <thead className="text-slate-400">
               <tr>
                 <th className="py-1">จุดเก็บ</th>
                 <th>ระยะ</th>
@@ -127,7 +128,7 @@ export function RoutePanel(props: Props) {
               {ranking.map(({ zone, r }) => (
                 <tr
                   key={zone.id}
-                  className={`cursor-pointer border-t border-slate-800 hover:bg-slate-800 ${zone.id === sourceId ? 'text-orange-400' : ''}`}
+                  className={`cursor-pointer border-t border-slate-100 hover:bg-slate-50 ${zone.id === sourceId ? 'font-semibold text-orange-600' : ''}`}
                   onClick={() => props.onSourceChange(zone.id)}
                 >
                   <td className="py-1">
@@ -142,7 +143,7 @@ export function RoutePanel(props: Props) {
         </section>
       )}
 
-      <p className="mt-auto text-xs text-slate-500">
+      <p className="mt-auto text-xs text-slate-400">
         * ผังและความเร็วเดินเป็นค่าสมมติ — ปรับได้ที่ src/data/factoryLayout.ts และ src/lib/pathfinding.ts
       </p>
     </aside>
@@ -151,9 +152,11 @@ export function RoutePanel(props: Props) {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded border border-slate-800 bg-slate-900 p-2">
-      <div className="text-[11px] text-slate-400">{label}</div>
-      <div className="text-lg font-semibold text-slate-100">{value}</div>
+    <div className="rounded-md border border-slate-200 bg-slate-50 p-2">
+      <div className="text-[11px] text-slate-500">{label}</div>
+      <div className="text-lg font-bold" style={{ color: BRAND.navy }}>
+        {value}
+      </div>
     </div>
   )
 }
