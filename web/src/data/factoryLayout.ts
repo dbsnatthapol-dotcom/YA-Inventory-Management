@@ -100,7 +100,7 @@ const zones: Zone[] = [
   // ชั้น 2 — ไลน์ประกอบวงล้อ
   { id: 'F2-RK-D', code: 'RK-D', name: 'Rack D - Supermarket ชั้น 2', floorId: 'F2', kind: 'storage', x: 10, z: 66, width: 14, depth: 10, accessNodeId: node('F2', 3, 1), stores: ['Component'] },
   { id: 'F2-RK-E', code: 'RK-E', name: 'Rack E', floorId: 'F2', kind: 'storage', x: 34, z: 12, width: 18, depth: 10, accessNodeId: node('F2', 1, 3), stores: ['Component'] },
-  { id: 'F2-ASM', code: 'ASM-W2', name: 'ไลน์ประกอบวงล้อ ชั้น 2', floorId: 'F2', kind: 'assembly', x: 30, z: 48, width: 24, depth: 10, accessNodeId: node('F2', 2, 3) },
+  { id: 'F2-ASM', code: 'ASM-W2', name: 'ไลน์ประกอบ Bigbike ชั้น 2 (นำร่อง)', floorId: 'F2', kind: 'assembly', x: 30, z: 48, width: 24, depth: 10, accessNodeId: node('F2', 2, 3) },
   // ชั้น 3 — ไลน์ประกอบวงล้อ
   { id: 'F3-RK-F', code: 'RK-F', name: 'Rack F', floorId: 'F3', kind: 'storage', x: 10, z: 30, width: 18, depth: 10, accessNodeId: node('F3', 1, 1), stores: ['Component'] },
   { id: 'F3-ASM', code: 'ASM-W3', name: 'ไลน์ประกอบวงล้อ ชั้น 3', floorId: 'F3', kind: 'assembly', x: 30, z: 66, width: 24, depth: 10, accessNodeId: node('F3', 3, 3) },

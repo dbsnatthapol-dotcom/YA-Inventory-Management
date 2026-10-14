@@ -293,7 +293,7 @@ insert into public.zones (id, code, name, floor_id, kind, x, z, width, depth, ac
   ('F1-RK-C', 'RK-C', 'Rack C', 'F1', 'storage', 10, 48, 18, 10, 'F1-r2c1', array['Component']::text[]),
   ('F2-RK-D', 'RK-D', 'Rack D - Supermarket ชั้น 2', 'F2', 'storage', 10, 66, 14, 10, 'F2-r3c1', array['Component']::text[]),
   ('F2-RK-E', 'RK-E', 'Rack E', 'F2', 'storage', 34, 12, 18, 10, 'F2-r1c3', array['Component']::text[]),
-  ('F2-ASM', 'ASM-W2', 'ไลน์ประกอบวงล้อ ชั้น 2', 'F2', 'assembly', 30, 48, 24, 10, 'F2-r2c3', null),
+  ('F2-ASM', 'ASM-W2', 'ไลน์ประกอบ Bigbike ชั้น 2 (นำร่อง)', 'F2', 'assembly', 30, 48, 24, 10, 'F2-r2c3', null),
   ('F3-RK-F', 'RK-F', 'Rack F', 'F3', 'storage', 10, 30, 18, 10, 'F3-r1c1', array['Component']::text[]),
   ('F3-ASM', 'ASM-W3', 'ไลน์ประกอบวงล้อ ชั้น 3', 'F3', 'assembly', 30, 66, 24, 10, 'F3-r3c3', null),
   ('TENT-B', 'TENT-B', 'เต็นท์ B', 'YARD', 'tent', 36, 23, 31, 25, 'Y-B', array['FG', 'Component']::text[]),
