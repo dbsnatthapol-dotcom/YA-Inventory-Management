@@ -30,7 +30,7 @@ function GableRoof({ width, depth, rise, color }: { width: number; depth: number
 
 /** โกดังผนังเมทัลชีทสีฟ้า (อาคาร D) — x/z คือจุดกึ่งกลาง */
 export function Warehouse({ width, depth, height }: { width: number; depth: number; height: number }) {
-  const wallMap = useMemo(() => tiled(corrugated(BRAND.cladBlue), Math.max(width, depth)), [width, depth])
+  const wallMap = useMemo(() => tiled(corrugated(BRAND.trimBlue), Math.max(width, depth)), [width, depth])
   return (
     <group>
       <mesh position={[0, height / 2, 0]} castShadow receiveShadow>
@@ -154,13 +154,13 @@ export function OfficeBuilding({ width, depth }: { width: number; depth: number 
       </mesh>
       <mesh position={[0, floorH, 0]}>
         <boxGeometry args={[width + 0.6, 0.4, depth + 0.6]} />
-        <meshStandardMaterial color={BRAND.cladBlue} />
+        <meshStandardMaterial color={BRAND.trimBlue} />
       </mesh>
       {/* หลังคาปั้นหยา */}
       <group position={[0, floorH * 2 + 1.2, 0]} scale={[(width + 2) / Math.SQRT2, 1, (depth + 2) / Math.SQRT2]}>
         <mesh rotation={[0, Math.PI / 4, 0]} castShadow>
           <coneGeometry args={[1, 2.4, 4]} />
-          <meshStandardMaterial color={BRAND.steelBlue} metalness={0.35} roughness={0.5} flatShading />
+          <meshStandardMaterial color={BRAND.roofBlue} metalness={0.35} roughness={0.5} flatShading />
         </mesh>
       </group>
       {/* ป้ายบริษัท */}

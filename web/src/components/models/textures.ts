@@ -1,4 +1,5 @@
 import { CanvasTexture, RepeatWrapping, SRGBColorSpace, type Texture } from 'three'
+import logoUrl from '../../assets/uam-logo.png'
 import { BRAND } from '../../data/brand'
 
 // สร้าง texture ด้วย canvas เพื่อไม่ต้องโหลดไฟล์ภาพจากภายนอก
@@ -45,73 +46,92 @@ export function corrugated(color: string, vertical = true) {
   })
 }
 
-/** ผนัง 1 ชั้น (สูง 4.5 ม.) ช่วงละ 6 ม.: ผนังลอนสีครีม + หน้าต่างกระจกบานยาว */
-export function windowBay(wall: string = BRAND.cream) {
+/** ผนัง 1 ชั้น (สูง 4.5 ม.) ช่วงละ 6 ม.: เมทัลชีทสีขาวลอนแนวนอน + หน้าต่างกรอบดำบานเลื่อน (ตามภาพหน้าโรงงาน) */
+export function windowBay(wall: string = BRAND.siding) {
   return make(`bay-${wall}`, 192, 144, (g) => {
     g.fillStyle = wall
     g.fillRect(0, 0, 192, 144)
-    for (let x = 0; x < 192; x += 6) {
-      g.fillStyle = 'rgba(0,0,0,0.07)'
-      g.fillRect(x, 0, 2, 144)
+    // ลอนแนวนอน: เงาบาง ๆ ทุก 6 px
+    for (let y = 0; y < 144; y += 6) {
+      g.fillStyle = 'rgba(40,60,80,0.08)'
+      g.fillRect(0, y, 192, 2)
+      g.fillStyle = 'rgba(255,255,255,0.5)'
+      g.fillRect(0, y + 2, 192, 1)
     }
-    // หน้าต่าง: กรอบอะลูมิเนียม + กระจกสะท้อนฟ้า
-    g.fillStyle = '#c9ccd0'
-    g.fillRect(24, 44, 144, 58)
-    const glass = g.createLinearGradient(0, 48, 0, 98)
-    glass.addColorStop(0, '#5d7896')
-    glass.addColorStop(1, '#22344a')
+    // หน้าต่าง: กรอบดำ แบ่ง 4 บาน กระจกสะท้อนฟ้า
+    g.fillStyle = '#2b2f36'
+    g.fillRect(20, 40, 152, 62)
+    const glass = g.createLinearGradient(0, 44, 0, 98)
+    glass.addColorStop(0, '#8fb4d6')
+    glass.addColorStop(0.45, '#45627f')
+    glass.addColorStop(1, '#1f2d3d')
     g.fillStyle = glass
-    g.fillRect(28, 48, 136, 50)
-    g.fillStyle = '#c9ccd0'
-    for (let x = 28 + 34; x < 164; x += 34) g.fillRect(x, 48, 3, 50)
-    // ขอบล่างเปื้อนฝุ่นเล็กน้อย
-    const dirt = g.createLinearGradient(0, 120, 0, 144)
-    dirt.addColorStop(0, 'rgba(0,0,0,0)')
-    dirt.addColorStop(1, 'rgba(60,50,40,0.18)')
-    g.fillStyle = dirt
-    g.fillRect(0, 120, 192, 24)
+    g.fillRect(24, 44, 144, 54)
+    g.fillStyle = '#2b2f36'
+    for (let x = 24 + 36; x < 168; x += 36) g.fillRect(x - 2, 44, 4, 54)
+    g.fillRect(24, 69, 144, 3)
+    // คราบฝนใต้หน้าต่าง
+    const streak = g.createLinearGradient(0, 102, 0, 140)
+    streak.addColorStop(0, 'rgba(90,90,80,0.12)')
+    streak.addColorStop(1, 'rgba(90,90,80,0)')
+    g.fillStyle = streak
+    g.fillRect(24, 102, 144, 38)
   })
 }
 
-/** ชั้นล่าง: ผนังปูนสีขาว + ประตูม้วน/ประตูทางเข้า */
+/** ชั้นล่าง: ผนังขาว + แถบเขียวด้านล่าง + ประตูม้วนเหล็ก (ตามภาพหน้าโรงงาน) */
 export function groundBay() {
   return make('ground-bay', 192, 144, (g) => {
     g.fillStyle = BRAND.white
     g.fillRect(0, 0, 192, 144)
-    g.fillStyle = 'rgba(0,0,0,0.05)'
-    for (let y = 0; y < 144; y += 12) g.fillRect(0, y, 192, 1)
-    g.fillStyle = '#a7adb5' // ประตูม้วนเหล็ก
-    g.fillRect(40, 40, 112, 104)
-    g.fillStyle = 'rgba(0,0,0,0.12)'
-    for (let y = 40; y < 144; y += 5) g.fillRect(40, y, 112, 1)
-    g.fillStyle = BRAND.cladBlue
-    g.fillRect(0, 0, 192, 10)
+    g.fillStyle = BRAND.green
+    g.fillRect(0, 112, 192, 32)
+    g.fillStyle = '#9aa0a6' // ประตูม้วนเหล็ก
+    g.fillRect(36, 30, 120, 114)
+    for (let y = 30; y < 144; y += 4) {
+      g.fillStyle = 'rgba(0,0,0,0.14)'
+      g.fillRect(36, y, 120, 1)
+    }
+    g.fillStyle = '#6b7178'
+    g.fillRect(32, 24, 128, 8) // กล่องม้วนประตู
   })
 }
 
-/** ป้ายชื่อบริษัทพร้อมโลโก้ */
+let logoImage: HTMLImageElement | null = null
+const logoWaiters: (() => void)[] = []
+
+/** โหลดโลโก้ครั้งเดียว แล้ววาดลง texture ที่รออยู่ */
+function withLogo(draw: (img: HTMLImageElement) => void) {
+  if (logoImage?.complete && logoImage.naturalWidth) return draw(logoImage)
+  logoWaiters.push(() => draw(logoImage!))
+  if (!logoImage) {
+    logoImage = new Image()
+    logoImage.onload = () => logoWaiters.splice(0).forEach((fn) => fn())
+    logoImage.src = logoUrl
+  }
+}
+
+/** ป้ายชื่อบริษัท: โลโก้ UAM + ชื่อบริษัทสีน้ำเงินบนผนังขาว */
 export function companySign(text: string = BRAND.companyName) {
-  return make(`sign-${text}`, 2048, 256, (g) => {
-    g.fillStyle = BRAND.cream
+  const tex = make(`sign-${text}`, 2048, 256, (g) => {
+    g.fillStyle = BRAND.siding
     g.fillRect(0, 0, 2048, 256)
-    // โลโก้ (ใกล้เคียง): กรอบสี่เหลี่ยมกรมท่า ตัว U สีขาว
-    g.fillStyle = BRAND.navy
-    g.beginPath()
-    g.roundRect(40, 38, 180, 180, 24)
-    g.fill()
-    g.strokeStyle = '#ffffff'
-    g.lineWidth = 26
-    g.beginPath()
-    g.moveTo(88, 70)
-    g.lineTo(88, 140)
-    g.arc(130, 140, 42, Math.PI, 0, true)
-    g.lineTo(172, 70)
-    g.stroke()
-    g.fillStyle = BRAND.navy
-    g.font = 'bold 120px "Arial Black", Arial, sans-serif'
+    g.fillStyle = BRAND.signBlue
+    g.font = 'bold 118px "Arial Black", Arial, sans-serif'
     g.textBaseline = 'middle'
-    g.fillText(text, 270, 136, 1740)
+    g.fillText(text, 280, 136, 1740)
   })
+  if (!tex.userData.logo) {
+    tex.userData.logo = true
+    withLogo((img) => {
+      const g = (tex.image as HTMLCanvasElement).getContext('2d')!
+      const h = 210
+      const w = (img.naturalWidth / img.naturalHeight) * h
+      g.drawImage(img, 30 + (230 - w) / 2, 23, w, h)
+      tex.needsUpdate = true
+    })
+  }
+  return tex
 }
 
 /** พื้นถนนยางมะตอยพร้อมเส้นแบ่งช่องจราจร (ความกว้างถนน = ความสูง texture) */

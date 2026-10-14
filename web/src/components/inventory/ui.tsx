@@ -6,7 +6,7 @@ export function Panel({ title, action, children }: { title: string; action?: Rea
   return (
     <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-2.5">
-        <h3 className="text-sm font-bold" style={{ color: BRAND.navy }}>
+        <h3 className="text-sm font-bold" style={{ color: BRAND.primary }}>
           {title}
         </h3>
         {action}
@@ -43,7 +43,7 @@ export function Button({
     <button
       {...props}
       className={`inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-40 ${cls} ${props.className ?? ''}`}
-      style={variant === 'primary' ? { background: BRAND.navy, ...props.style } : props.style}
+      style={variant === 'primary' ? { background: BRAND.primary, ...props.style } : props.style}
     >
       {children}
     </button>

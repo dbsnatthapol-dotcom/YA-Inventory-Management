@@ -44,7 +44,7 @@ export function InventoryPage({ api, zones, onShowZone }: Props) {
                 key={t.key}
                 onClick={() => setTab(t.key)}
                 className={`rounded-md px-3 py-1.5 text-sm transition ${tab === t.key ? 'font-semibold text-white' : 'text-slate-600 hover:bg-slate-100'}`}
-                style={tab === t.key ? { background: BRAND.navy } : undefined}
+                style={tab === t.key ? { background: BRAND.primary } : undefined}
               >
                 {t.label}
               </button>

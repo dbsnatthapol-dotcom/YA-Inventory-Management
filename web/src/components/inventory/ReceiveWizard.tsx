@@ -141,7 +141,7 @@ export function ReceiveWizard({ api, zones, onShowZone, onOpenReport }: Props) {
             <li
               key={s.key}
               className={`flex items-center gap-1.5 rounded-full px-3 py-1 ring-1 ${active ? 'font-semibold text-white ring-transparent' : done ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-white text-slate-500 ring-slate-200'}`}
-              style={active ? { background: BRAND.navy } : undefined}
+              style={active ? { background: BRAND.primary } : undefined}
             >
               <span className="tabular-nums">{i + 1}</span> {s.label}
             </li>

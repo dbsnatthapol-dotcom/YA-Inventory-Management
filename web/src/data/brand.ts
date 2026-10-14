@@ -1,21 +1,23 @@
 /**
- * โทนสีองค์กรและวัสดุอาคาร — สกัดจากภาพถ่ายหน้าโรงงาน UAM1 และภาพดาวเทียม
- * ถ้ามีรหัสสี CI หรือไฟล์โลโก้ทางการ ให้แก้ค่าที่ไฟล์นี้ที่เดียว
+ * โทนสีองค์กรและวัสดุอาคาร — สกัดจากโลโก้ UAM และภาพถ่ายหน้าโรงงาน
+ * ถ้ามีรหัสสี CI ทางการ ให้แก้ค่าที่ไฟล์นี้ที่เดียว
  */
 export const BRAND = {
   companyName: 'UNION AUTOPARTS MANUFACTURING CO.,LTD.',
   shortName: 'UAM',
-  navy: '#1d3768', // โลโก้และตัวอักษรบนป้าย
-  steelBlue: '#6d8db3', // ชายคาและแถบระหว่างชั้น
-  cladBlue: '#3f6e9f', // ผนังเมทัลชีทสีฟ้า
-  cream: '#e4ded0', // ผนังเมทัลชีทอาคาร A
-  white: '#eeede8', // ผนังปูนชั้นล่าง / สำนักงาน
-  safetyYellow: '#f2b51d', // ป้ายประตู
+  logoBlue: '#0099ff', // สีโลโก้
+  primary: '#0b5aa8', // สีหลักของหน้าจอ (น้ำเงินเข้มจากโลโก้ เพื่อให้อ่านตัวอักษรขาวได้ชัด)
+  signBlue: '#1565c5', // ตัวอักษรป้ายบนอาคาร
+  roofBlue: '#2f8fdf', // หลังคา ชายคา และแถบระหว่างชั้น
+  trimBlue: '#1f74c9', // แถบคั่นชั้นด้านล่าง
+  siding: '#eef2f5', // ผนังเมทัลชีทสีขาว ลอนแนวนอน
+  white: '#f4f6f8', // ผนังปูน / เสา
+  green: '#2baf75', // แถบผนังล่างและพื้น epoxy
+  safetyYellow: '#f4a20d', // ทางเดินพื้น epoxy และป้ายประตู
 } as const
 
 export const MATERIAL = {
-  roofRust: '#8b685d', // หลังคาอาคาร A (ภาพดาวเทียม)
-  roofSkylight: '#b9b2a6',
+  roofSkylight: '#cfe3f3',
   tentGrey: '#9aa1ad',
   tentDark: '#5c606d',
   glass: '#2f4157',
@@ -23,7 +25,8 @@ export const MATERIAL = {
   asphalt: '#3a3d43',
   grass: '#7f9268',
   fenceGreen: '#3f6a45',
+  epoxyGreen: '#1f8a52',
   trunk: '#6b4f3a',
   foliage: '#4f7a3c',
-  sky: '#d6e6f4',
+  sky: '#d6e9f8',
 } as const

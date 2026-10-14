@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { FactoryScene, type ViewMode } from './components/FactoryScene'
 import { InventoryPage } from './components/inventory/InventoryPage'
 import { RoutePanel } from './components/RoutePanel'
+import logoUrl from './assets/uam-logo.png'
 import { BRAND } from './data/brand'
 import { sampleLayout } from './data/factoryLayout'
 import { ZONE_STYLE } from './data/zoneStyle'
@@ -64,7 +65,7 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2 text-white shadow" style={{ background: BRAND.navy }}>
+      <header className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2 text-white shadow" style={{ background: BRAND.primary }}>
         <div className="flex items-center gap-3">
           <BrandMark />
           <div className="leading-tight">
@@ -84,7 +85,7 @@ export default function App() {
               key={value}
               onClick={() => setPage(value)}
               className={`rounded px-3 py-1 transition ${page === value ? 'bg-white font-semibold' : 'text-white/80 hover:bg-white/10'}`}
-              style={page === value ? { color: BRAND.navy } : undefined}
+              style={page === value ? { color: BRAND.primary } : undefined}
             >
               {label}
             </button>
@@ -104,7 +105,7 @@ export default function App() {
               key={value}
               onClick={() => setMode(value)}
               className={`rounded px-3 py-1 transition ${mode === value ? 'bg-white font-semibold' : 'text-white/80 hover:bg-white/10'}`}
-              style={mode === value ? { color: BRAND.navy } : undefined}
+              style={mode === value ? { color: BRAND.primary } : undefined}
             >
               {label}
             </button>
@@ -188,13 +189,11 @@ export default function App() {
   )
 }
 
-/** โลโก้ย่อ (ใกล้เคียง) — แทนที่ด้วยไฟล์โลโก้ทางการได้ภายหลัง */
+/** โลโก้ UAM บนพื้นขาว เพื่อให้สีฟ้าของโลโก้เด่นบนแถบสีน้ำเงินเข้ม */
 function BrandMark() {
   return (
-    <svg width="34" height="34" viewBox="0 0 34 34" aria-label={BRAND.shortName}>
-      <rect x="1" y="1" width="32" height="32" rx="5" fill="#ffffff" />
-      <rect x="4" y="4" width="26" height="26" rx="3" fill={BRAND.navy} />
-      <path d="M11 9v9a6 6 0 0 0 12 0V9" fill="none" stroke="#ffffff" strokeWidth="3.6" />
-    </svg>
+    <span className="flex h-10 w-12 items-center justify-center rounded-md bg-white p-1 shadow-sm">
+      <img src={logoUrl} alt={BRAND.shortName} className="h-full w-full object-contain" />
+    </span>
   )
 }

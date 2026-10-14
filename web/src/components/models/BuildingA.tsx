@@ -50,8 +50,8 @@ export function BuildingA({ width: W, depth: D, floors, floorHeight: H, onClick 
     s.closePath()
     return s
   }, [W])
-  const gableMap = useMemo(() => tiled(corrugated(BRAND.cream), W, ROOF_RISE), [W])
-  const roofMap = useMemo(() => tiled(corrugated(MATERIAL.roofRust, false), 1, D), [D])
+  const gableMap = useMemo(() => tiled(corrugated(BRAND.siding), W, ROOF_RISE), [W])
+  const roofMap = useMemo(() => tiled(corrugated(BRAND.roofBlue, false), 1, D), [D])
 
   return (
     <group onClick={onClick} onPointerOver={() => (document.body.style.cursor = 'pointer')} onPointerOut={() => (document.body.style.cursor = '')}>
@@ -71,14 +71,36 @@ export function BuildingA({ width: W, depth: D, floors, floorHeight: H, onClick 
       {Array.from({ length: floors }, (_, i) => (
         <mesh key={i} position={[W / 2, (i + 1) * H - 0.15, D / 2]} castShadow>
           <boxGeometry args={[W + 0.7, i === floors - 1 ? 0.9 : 0.5, D + 0.7]} />
-          <meshStandardMaterial color={i === floors - 1 ? BRAND.steelBlue : BRAND.cladBlue} roughness={0.5} metalness={0.3} />
+          <meshStandardMaterial color={i === floors - 1 ? BRAND.roofBlue : BRAND.trimBlue} roughness={0.5} metalness={0.3} />
         </mesh>
       ))}
 
-      {/* กันสาดหน้าอาคารชั้นล่าง */}
+      {/* กันสาดหน้าอาคารชั้นล่าง + เสาสีขาว (ตามภาพหน้าโรงงาน) */}
       <mesh position={[W / 2, 3.3, D + 1.6]} castShadow>
         <boxGeometry args={[W, 0.25, 3.2]} />
-        <meshStandardMaterial color={BRAND.steelBlue} metalness={0.3} roughness={0.5} />
+        <meshStandardMaterial color={BRAND.roofBlue} metalness={0.3} roughness={0.5} />
+      </mesh>
+      {Array.from({ length: Math.floor(W / 10) + 1 }, (_, i) => i * (W / Math.floor(W / 10))).map((x) => (
+        <group key={x} position={[x, 0, D + 3]}>
+          <mesh position={[0, 1.6, 0]} castShadow>
+            <cylinderGeometry args={[0.32, 0.32, 3.2, 16]} />
+            <meshStandardMaterial color={BRAND.white} roughness={0.6} />
+          </mesh>
+          <mesh position={[0, 0.3, 0]}>
+            <cylinderGeometry args={[0.36, 0.36, 0.6, 16]} />
+            <meshStandardMaterial color={BRAND.green} />
+          </mesh>
+        </group>
+      ))}
+
+      {/* พื้น epoxy หน้าอาคาร: เขียว พร้อมทางเดินสีเหลือง */}
+      <mesh position={[W / 2, 0.03, D + 3]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[W, 6]} />
+        <meshStandardMaterial color={MATERIAL.epoxyGreen} roughness={0.35} />
+      </mesh>
+      <mesh position={[W / 2, 0.04, D + 5.2]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[W, 1.6]} />
+        <meshStandardMaterial color={BRAND.safetyYellow} roughness={0.35} />
       </mesh>
 
       {/* หน้าจั่ว */}
@@ -108,14 +130,14 @@ export function BuildingA({ width: W, depth: D, floors, floorHeight: H, onClick 
           {/* ชายคาสีฟ้าเหล็ก */}
           <mesh position={[(side * slopeLen) / 2, -0.1, 0]}>
             <boxGeometry args={[0.35, 0.55, D + OVERHANG * 2]} />
-            <meshStandardMaterial color={BRAND.steelBlue} metalness={0.3} roughness={0.5} />
+            <meshStandardMaterial color={BRAND.roofBlue} metalness={0.3} roughness={0.5} />
           </mesh>
         </group>
       ))}
       {/* สันหลังคา */}
       <mesh position={[W / 2, top + ROOF_RISE + 0.1, D / 2]}>
         <boxGeometry args={[1, 0.3, D + OVERHANG * 2]} />
-        <meshStandardMaterial color={BRAND.steelBlue} />
+        <meshStandardMaterial color={BRAND.roofBlue} />
       </mesh>
 
       {/* ป้ายชื่อบริษัท ชั้นบนสุดด้านหน้า */}

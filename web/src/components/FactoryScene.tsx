@@ -186,7 +186,7 @@ function Label({ position, title, sub, muted }: { position: [number, number, num
     <Html position={position} center className="pointer-events-none" zIndexRange={[10, 0]}>
       <div
         className={`whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-semibold shadow ${muted ? 'bg-white/60 text-slate-600' : 'bg-white/90'}`}
-        style={muted ? undefined : { color: BRAND.navy }}
+        style={muted ? undefined : { color: BRAND.primary }}
       >
         {title}
         {sub && <span className="ml-1 font-normal text-slate-500">· {sub}</span>}
@@ -212,7 +212,7 @@ function FloorSlab({ floor }: { floor: Floor }) {
         <meshStandardMaterial color="#c9d3df" transparent opacity={0.75} />
       </mesh>
       <Html position={[0, 0.5, 0]} className="pointer-events-none" zIndexRange={[10, 0]}>
-        <div className="whitespace-nowrap rounded px-2 py-0.5 text-xs font-semibold text-white shadow" style={{ background: BRAND.navy }}>
+        <div className="whitespace-nowrap rounded px-2 py-0.5 text-xs font-semibold text-white shadow" style={{ background: BRAND.primary }}>
           {floor.name}
         </div>
       </Html>

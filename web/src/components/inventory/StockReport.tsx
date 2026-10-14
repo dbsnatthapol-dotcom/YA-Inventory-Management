@@ -43,7 +43,7 @@ export function StockReport({ api, zones, onShowZone, onTrace }: Props) {
       <div className="overflow-x-auto">
         <table className="w-full min-w-[980px] border-collapse text-left text-[13px]">
           <thead className="text-xs">
-            <tr className="text-white" style={{ background: BRAND.navy }}>
+            <tr className="text-white" style={{ background: BRAND.primary }}>
               <th className="px-2 py-1.5" rowSpan={2}>
                 #
               </th>
@@ -99,7 +99,7 @@ export function StockReport({ api, zones, onShowZone, onTrace }: Props) {
                     </td>
                     <td className="border-l px-2 text-right text-rose-700">{fmt(r.ngCustomer)}</td>
                     <td className="px-2 text-right text-rose-700">{fmt(r.ngSupplier)}</td>
-                    <td className="border-l px-2 text-right font-bold" style={{ color: BRAND.navy }}>
+                    <td className="border-l px-2 text-right font-bold" style={{ color: BRAND.primary }}>
                       {fmt(r.balance)}
                     </td>
                   </tr>

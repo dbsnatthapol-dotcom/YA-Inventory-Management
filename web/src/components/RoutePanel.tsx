@@ -37,7 +37,7 @@ export function RoutePanel(props: Props) {
   return (
     <aside className="flex h-full w-full flex-col gap-4 overflow-y-auto border-l border-slate-200 bg-white p-4 text-sm text-slate-700 md:w-96">
       <section className="space-y-2">
-        <h2 className="border-b-2 pb-1 text-base font-bold" style={{ color: BRAND.navy, borderColor: BRAND.navy }}>วิเคราะห์ระยะเดินส่ง Part</h2>
+        <h2 className="border-b-2 pb-1 text-base font-bold" style={{ color: BRAND.primary, borderColor: BRAND.primary }}>วิเคราะห์ระยะเดินส่ง Part</h2>
         <label className="block">
           <span className="text-slate-500">จาก (จุดเก็บ)</span>
           <select className="mt-1 w-full rounded border border-slate-300 bg-slate-50 p-2" value={sourceId} onChange={(e) => props.onSourceChange(e.target.value)}>
@@ -115,7 +115,7 @@ export function RoutePanel(props: Props) {
 
       {target && (
         <section>
-          <h3 className="mb-1 font-semibold" style={{ color: BRAND.navy }}>จัดอันดับจุดเก็บ → {target.name}</h3>
+          <h3 className="mb-1 font-semibold" style={{ color: BRAND.primary }}>จัดอันดับจุดเก็บ → {target.name}</h3>
           <table className="w-full text-left text-xs">
             <thead className="text-slate-400">
               <tr>
@@ -154,7 +154,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-slate-200 bg-slate-50 p-2">
       <div className="text-[11px] text-slate-500">{label}</div>
-      <div className="text-lg font-bold" style={{ color: BRAND.navy }}>
+      <div className="text-lg font-bold" style={{ color: BRAND.primary }}>
         {value}
       </div>
     </div>
