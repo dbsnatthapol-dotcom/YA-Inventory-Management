@@ -28,10 +28,12 @@ function loadOperator(): string {
 
 export type ActionResult = { ok: true } | { ok: false; error: string }
 
-export function useInventory() {
+/** lockedOperator = ชื่อพนักงานที่ login อยู่ (ระบบจริง) — ถ้ามีจะใช้แทนผู้บันทึกที่เลือกเอง */
+export function useInventory(lockedOperator?: string) {
   const [state, setState] = useState<InventoryState>(load)
   /** ผู้บันทึกรายการ — ติดไปกับทุก movement เพื่อตรวจย้อนหลังได้ว่าใครทำ */
-  const [operator, setOperatorState] = useState(loadOperator)
+  const [chosenOperator, setOperatorState] = useState(loadOperator)
+  const operator = lockedOperator ?? chosenOperator
 
   useEffect(() => {
     try {

@@ -57,7 +57,7 @@ export function buildDemoState(today: string, now: string = `${today}T09:00:00.0
     [{ partNo: '150324/A', invoiceQty: 800, countedQty: 800, damagedQty: 0, zoneId: zoneOf('150324/A') }],
   )
   const MRA = 'MRA ไลน์ประกอบ'
-  const QC = 'QC MI3'
+  const QC = 'MI3 คัดงาน'
   s = moveLot(s, { lotId: 'RE-INV-2610-0141#1', kind: 'issue_mra', qty: 120, at: ago(420), by: MRA })
   s = moveLot(s, { lotId: 'RE-INV-2610-0141#3', kind: 'issue_mra', qty: 4320, at: ago(415), by: MRA })
   s = moveLot(s, { lotId: 'RE-INV-2610-0141#4', kind: 'issue_mra', qty: 8640, at: ago(410), by: MRA })

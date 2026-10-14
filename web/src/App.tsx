@@ -1,4 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
+import { AuthProvider } from './auth/AuthProvider'
+import { ChangePasswordScreen, LoadingScreen, LoginScreen } from './auth/AuthScreens'
+import { can, ROLE_LABEL } from './auth/staff'
+import { useAuth } from './auth/useAuth'
+import { UsersPage } from './components/admin/UsersPage'
 import { FactoryScene, type ViewMode } from './components/FactoryScene'
 import { InventoryPage } from './components/inventory/InventoryPage'
 import { RoutePanel } from './components/RoutePanel'
@@ -17,6 +22,27 @@ import { LayoutEditorPanel } from './components/LayoutEditorPanel'
 import type { Zone } from './types/layout'
 
 export default function App() {
+  return (
+    <AuthProvider>
+      <AuthGate />
+    </AuthProvider>
+  )
+}
+
+/** ต่อ Supabase แล้ว = ต้อง login ก่อนทุกหน้า · ไม่ได้ต่อ (หน้าสาธิต) = เข้าได้เลย */
+function AuthGate() {
+  const auth = useAuth()
+  if (!auth.enabled) return <FactoryApp />
+  if (auth.loading) return <LoadingScreen />
+  if (!auth.session || !auth.profile?.active) return <LoginScreen />
+  if (auth.profile.must_change_password) return <ChangePasswordScreen />
+  return <FactoryApp />
+}
+
+function FactoryApp() {
+  const auth = useAuth()
+  const role = auth.enabled ? (auth.profile?.role ?? null) : null
+  const staffName = auth.profile ? `${auth.profile.full_name} (${auth.profile.employee_code})` : undefined
   const [loaded, setLoaded] = useState<LoadedLayout>({ layout: sampleLayout, source: 'sample' })
   const layoutEdits = useLayoutEdits()
   // ผังที่ใช้งานจริง = ผังหลัก + ตำแหน่งที่ผู้ใช้ปรับ (ทางเดินที่ถูกขวางถูกปิด, จุดเข้า-ออกคำนวณใหม่)
@@ -37,8 +63,8 @@ export default function App() {
   const [sideTab, setSideTab] = useState<'zone' | 'route' | 'edit'>('zone')
   const [editZoneId, setEditZoneId] = useState<string | null>(null)
   const editMode = sideTab === 'edit'
-  const [page, setPage] = useState<'map' | 'inventory'>('map')
-  const inventory = useInventory()
+  const [page, setPage] = useState<'map' | 'inventory' | 'users'>('map')
+  const inventory = useInventory(staffName)
 
   useEffect(() => {
     loadLayout().then(setLoaded)
@@ -100,6 +126,7 @@ export default function App() {
             [
               ['map', 'ผังโรงงาน 3D'],
               ['inventory', 'รับเข้า & สต็อก'],
+              ...(auth.enabled && can(role, 'viewAccessLog') ? ([['users', 'ผู้ใช้งาน']] as const) : []),
             ] as const
           ).map(([value, label]) => (
             <button
@@ -163,11 +190,31 @@ export default function App() {
         <span className="ml-auto rounded bg-white/10 px-2 py-0.5 text-[11px] text-white/80">
           ข้อมูล: {loaded.source === 'supabase' ? 'Supabase' : 'ผังตัวอย่าง'}
         </span>
+        {auth.profile ? (
+          <span className="flex items-center gap-2 text-xs">
+            <span className="text-right leading-tight">
+              <span className="block font-semibold">{auth.profile.full_name}</span>
+              <span className="text-white/70">
+                {auth.profile.employee_code} · {ROLE_LABEL[auth.profile.role]}
+              </span>
+            </span>
+            <button className="rounded border border-white/40 px-2 py-1 hover:bg-white/10" onClick={() => void auth.signOut()}>
+              ออกจากระบบ
+            </button>
+          </span>
+        ) : (
+          <span className="rounded bg-amber-400/90 px-2 py-0.5 text-[11px] font-semibold text-slate-900">โหมดสาธิต</span>
+        )}
       </header>
 
       {page === 'inventory' && (
         <main className="min-h-0 flex-1">
-          <InventoryPage api={inventory} zones={layout.zones} onShowZone={showZone} />
+          <InventoryPage api={inventory} zones={layout.zones} onShowZone={showZone} lockedOperator={staffName} />
+        </main>
+      )}
+      {page === 'users' && (
+        <main className="min-h-0 flex-1">
+          <UsersPage />
         </main>
       )}
       {/* ซ่อนผัง 3D แทนการ unmount เพื่อคงมุมกล้องและไม่ต้องสร้างฉากใหม่ */}
@@ -204,7 +251,7 @@ export default function App() {
               [
                 ['zone', 'ของในโซน'],
                 ['route', 'ระยะเดินส่ง Part'],
-                ['edit', 'แก้ไขผัง'],
+                ...(can(role, 'editLayout') ? ([['edit', 'แก้ไขผัง']] as const) : []),
               ] as const
             ).map(([key, label]) => (
               <button

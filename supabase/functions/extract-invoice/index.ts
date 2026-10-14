@@ -1,9 +1,11 @@
 // Supabase Edge Function: อ่านภาพ invoice ด้วย Qwen-VL แล้วคืนรายการในรูปแบบ ExtractedInvoice
-// ⚠️ ยังไม่ได้ทดสอบกับ API จริง — ต้องตั้ง secret ก่อน:
+// เรียกได้เฉพาะพนักงานที่ login แล้ว · ⚠️ ยังไม่ได้ทดสอบกับ API จริง — ต้องตั้ง secret ก่อน:
 //   supabase secrets set QWEN_API_KEY=... [QWEN_MODEL=qwen-vl-max] [QWEN_BASE_URL=...]
 // API key อยู่ฝั่ง server เท่านั้น ห้ามใส่ไว้ในโค้ดหน้าเว็บ
 //
 // เรียกจากหน้าเว็บ: supabase.functions.invoke('extract-invoice', { body: { imageBase64, mimeType } })
+
+import { CORS, json, staffCaller } from '../_shared/staff.ts'
 
 const BASE_URL = Deno.env.get('QWEN_BASE_URL') ?? 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1'
 const MODEL = Deno.env.get('QWEN_MODEL') ?? 'qwen-vl-max'
@@ -40,17 +42,11 @@ function parseInvoice(text: string) {
   }
 }
 
-// หน้าเว็บเรียกจากโดเมนอื่น จึงต้องตอบ CORS (รวม preflight OPTIONS)
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-}
-const json = (body: unknown, status = 200) => Response.json(body, { status, headers: CORS })
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
+  // เฉพาะพนักงานที่ login แล้ว — กันคนนอกใช้เครดิต Qwen ด้วย anon key
+  if (!(await staffCaller(req))) return json({ error: 'ต้องเข้าสู่ระบบด้วยบัญชีพนักงานก่อน' }, 401)
   const apiKey = Deno.env.get('QWEN_API_KEY')
   if (!apiKey) return json({ error: 'QWEN_API_KEY is not set on the server' }, 500)
 

@@ -24,15 +24,17 @@ const TABS: { key: Tab; label: string }[] = [
 ]
 
 /** บทบาทผู้บันทึกใน demo — ระบบจริงใช้บัญชีผู้ใช้จาก Supabase Auth */
-const OPERATORS = ['ทีมรับเข้า', 'MRA ไลน์ประกอบ', 'QC MI3', 'Inspection', 'หัวหน้าคลัง']
+const OPERATORS = ['ทีมรับเข้า', 'MRA ไลน์ประกอบ', 'MI3 คัดงาน', 'หัวหน้าคลัง']
 
 interface Props {
   api: InventoryApi
   zones: Zone[]
   onShowZone: (zoneId: string) => void
+  /** ชื่อพนักงานที่ login อยู่ — แสดงแทนช่องเลือกผู้บันทึก */
+  lockedOperator?: string
 }
 
-export function InventoryPage({ api, zones, onShowZone }: Props) {
+export function InventoryPage({ api, zones, onShowZone, lockedOperator }: Props) {
   const [tab, setTab] = useState<Tab>('dashboard')
   const [traceQuery, setTraceQuery] = useState('')
 
@@ -57,16 +59,22 @@ export function InventoryPage({ api, zones, onShowZone }: Props) {
               </button>
             ))}
           </nav>
-          <label className="ml-auto flex items-center gap-1 whitespace-nowrap text-xs text-slate-600" title="ชื่อนี้จะถูกบันทึกกับทุกรายการที่ทำ">
-            ผู้บันทึก
-            <select id="operator" className={inputBase} value={api.operator} onChange={(e) => api.setOperator(e.target.value)}>
-              {OPERATORS.map((o) => (
-                <option key={o} value={o}>
-                  {o}
-                </option>
-              ))}
-            </select>
-          </label>
+          {lockedOperator ? (
+            <span className="ml-auto whitespace-nowrap text-xs text-slate-600" title="ชื่อนี้จะถูกบันทึกกับทุกรายการที่ทำ">
+              ผู้บันทึก: <b>{lockedOperator}</b>
+            </span>
+          ) : (
+            <label className="ml-auto flex items-center gap-1 whitespace-nowrap text-xs text-slate-600" title="ชื่อนี้จะถูกบันทึกกับทุกรายการที่ทำ">
+              ผู้บันทึก
+              <select id="operator" className={inputBase} value={api.operator} onChange={(e) => api.setOperator(e.target.value)}>
+                {OPERATORS.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <span className="text-xs text-slate-500" title="ระบบจริงจะเก็บใน Supabase และอัปเดตทุกเครื่องพร้อมกัน">
             ข้อมูลตัวอย่าง · เก็บในเบราว์เซอร์นี้
           </span>
