@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { FactoryScene, type ViewMode } from './components/FactoryScene'
+import { InventoryPage } from './components/inventory/InventoryPage'
 import { RoutePanel } from './components/RoutePanel'
 import { BRAND } from './data/brand'
 import { sampleLayout } from './data/factoryLayout'
 import { ZONE_STYLE } from './data/zoneStyle'
 import { loadLayout, type LoadedLayout } from './lib/layoutSource'
 import { findRoute, type RouteOptions } from './lib/pathfinding'
+import { useInventory } from './inventory/useInventory'
 import type { Zone } from './types/layout'
 
 export default function App() {
@@ -22,6 +24,8 @@ export default function App() {
   const [explode, setExplode] = useState(2.5)
   const [hiddenFloors, setHiddenFloors] = useState<Set<string>>(new Set())
   const [topView, setTopView] = useState(false)
+  const [page, setPage] = useState<'map' | 'inventory'>('map')
+  const inventory = useInventory()
 
   useEffect(() => {
     loadLayout().then(setLoaded)
@@ -49,6 +53,15 @@ export default function App() {
 
   const buildingFloors = layout.floors.filter((f) => f.area === 'building')
 
+  /** เปิดผัง 3D ที่โซนจัดเก็บ (เรียกจากหน้ารับเข้า/สต็อก) */
+  const showZone = (zoneId: string) => {
+    const zone = layout.zones.find((z) => z.id === zoneId)
+    if (!zone) return
+    handleZoneClick(zone)
+    setMode(layout.floors.find((f) => f.id === zone.floorId)?.area === 'building' ? 'interior' : 'exterior')
+    setPage('map')
+  }
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2 text-white shadow" style={{ background: BRAND.navy }}>
@@ -60,6 +73,26 @@ export default function App() {
           </div>
         </div>
 
+        <nav className="flex rounded-md bg-white/10 p-0.5 text-sm" aria-label="เมนูหลัก">
+          {(
+            [
+              ['map', 'ผังโรงงาน 3D'],
+              ['inventory', 'รับเข้า & สต็อก'],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              onClick={() => setPage(value)}
+              className={`rounded px-3 py-1 transition ${page === value ? 'bg-white font-semibold' : 'text-white/80 hover:bg-white/10'}`}
+              style={page === value ? { color: BRAND.navy } : undefined}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        {page === 'map' && (
+          <>
         <div className="flex rounded-md bg-white/10 p-0.5 text-xs">
           {(
             [
@@ -98,13 +131,21 @@ export default function App() {
             มุมมองด้านบน
           </label>
         </div>
+          </>
+        )}
 
         <span className="ml-auto rounded bg-white/10 px-2 py-0.5 text-[11px] text-white/80">
           ข้อมูล: {loaded.source === 'supabase' ? 'Supabase' : 'ผังตัวอย่าง'}
         </span>
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col md:flex-row">
+      {page === 'inventory' && (
+        <main className="min-h-0 flex-1">
+          <InventoryPage api={inventory} zones={layout.zones} onShowZone={showZone} />
+        </main>
+      )}
+      {/* ซ่อนผัง 3D แทนการ unmount เพื่อคงมุมกล้องและไม่ต้องสร้างฉากใหม่ */}
+      <main className={`min-h-0 flex-1 flex-col md:flex-row ${page === 'map' ? 'flex' : 'hidden'}`}>
         <div className="relative min-h-[50vh] flex-1">
           <FactoryScene
             layout={layout}

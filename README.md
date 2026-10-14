@@ -51,9 +51,20 @@ npm run build
 - คลิก rack/เต็นท์ เพื่อเลือกต้นทาง และคลิกไลน์ประกอบเพื่อเลือกปลายทาง ระบบจะวาดเส้นทางเดินให้
 - คำนวณระยะเดิน, เวลา, ระยะเดินบนบันได, จำนวนครั้งที่ใช้ลิฟต์ และระยะเดินรวมต่อวัน
 - จัดอันดับทุกจุดเก็บตามระยะห่างจากไลน์ประกอบ เพื่อช่วยตัดสินใจว่าควรย้าย part ไปไว้ที่ไหน
-- Schema ฐานข้อมูล: part, location, stock, ใบรับเข้า, movement ledger และ `post_receipt()` สำหรับยืนยันใบรับเข้า
+- Schema ฐานข้อมูล: part, location, stock, ใบรับเข้า, movement ledger, `post_receipt()` และ `move_lot()` ที่บังคับกฎการเบิก/ตรวจ
+
+## รับเข้า & สต็อก (Demo)
+
+- **รับสินค้าเข้า**: ถ่ายภาพ invoice → AI อ่านรายการ (ตอนนี้จำลอง, เตรียม Qwen-VL ไว้ที่ `supabase/functions/extract-invoice`)
+  → เทียบ Part Master (แก้รหัส OCR ผิดให้อัตโนมัติ) → แนะนำโซนตามลูกค้า + กลุ่มสินค้า → นับของจริง → ยืนยันรับเข้า
+- **ใบรายงาน STOCK ประจำวัน**: หน้าตาเดียวกับฟอร์มเดิมของแผนก W/H ASSY คำนวณจากรายการเคลื่อนไหว แยกตามวัน
+- **การเคลื่อนไหวของ lot**: MRA เบิก, ส่งตรวจ MI3, ผลตรวจดี/NG, เจอ NG ในกระบวนการ, ส่งคืน NG — Model อื่นที่ไม่ใช่ K1G ต้องผ่าน MI3 ก่อนเบิก
+- **รายงานความต่าง** invoice กับของจริง (ขาด/เกิน/เสียหาย) และ **ติดตาม Lot** ย้อนกลับไปหา invoice ต้นทาง
+- Master ตัวอย่าง: Royal Enfield K1G 34 รายการ · รายละเอียดการออกแบบที่ [docs/inventory-process.md](docs/inventory-process.md)
 
 ## เอกสาร
+
+- [docs/inventory-process.md](docs/inventory-process.md) — กระบวนการรับเข้า → BOI → MI3/MRA → NG, กฎของระบบ และขั้นตอนเปิดใช้ Qwen
 
 - [docs/requirements.md](docs/requirements.md) — แบบฟอร์มเก็บ requirement และแผนแบ่งเฟส
 - [docs/architecture.md](docs/architecture.md) — สถาปัตยกรรม, เหตุผลที่เลือก Supabase, วิธีคำนวณระยะเดิน และข้อเสนอแนะ
