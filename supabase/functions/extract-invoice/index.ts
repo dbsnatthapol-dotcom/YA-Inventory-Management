@@ -40,13 +40,22 @@ function parseInvoice(text: string) {
   }
 }
 
+// หน้าเว็บเรียกจากโดเมนอื่น จึงต้องตอบ CORS (รวม preflight OPTIONS)
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+const json = (body: unknown, status = 200) => Response.json(body, { status, headers: CORS })
+
 Deno.serve(async (req) => {
-  if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 })
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
+  if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
   const apiKey = Deno.env.get('QWEN_API_KEY')
-  if (!apiKey) return Response.json({ error: 'QWEN_API_KEY is not set on the server' }, { status: 500 })
+  if (!apiKey) return json({ error: 'QWEN_API_KEY is not set on the server' }, 500)
 
   const { imageBase64, mimeType = 'image/jpeg' } = await req.json()
-  if (!imageBase64) return Response.json({ error: 'imageBase64 is required' }, { status: 400 })
+  if (!imageBase64) return json({ error: 'imageBase64 is required' }, 400)
 
   const res = await fetch(`${BASE_URL}/chat/completions`, {
     method: 'POST',
@@ -65,14 +74,14 @@ Deno.serve(async (req) => {
       ],
     }),
   })
-  if (!res.ok) return Response.json({ error: `Qwen API ${res.status}: ${await res.text()}` }, { status: 502 })
+  if (!res.ok) return json({ error: `Qwen API ${res.status}: ${await res.text()}` }, 502)
 
   const data = await res.json()
   const text: string = data.choices?.[0]?.message?.content ?? ''
   try {
     // ส่งข้อความดิบกลับไปด้วย เพื่อเก็บใน inbound_receipts.extraction เป็นหลักฐาน
-    return Response.json({ invoice: parseInvoice(text), raw: text })
+    return json({ invoice: parseInvoice(text), raw: text })
   } catch (e) {
-    return Response.json({ error: `อ่านผลจาก AI ไม่ได้: ${(e as Error).message}`, raw: text }, { status: 422 })
+    return json({ error: `อ่านผลจาก AI ไม่ได้: ${(e as Error).message}`, raw: text }, 422)
   }
 })

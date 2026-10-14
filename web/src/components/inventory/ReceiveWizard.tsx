@@ -3,6 +3,8 @@ import { BRAND } from '../../data/brand'
 import { matchInvoice, mockInvoiceReader, modelRequiresInspection, suggestZone, type MatchStatus } from '../../inventory/extraction'
 import { MODELS, PARTS } from '../../inventory/masterData'
 import type { InventoryApi } from '../../inventory/useInventory'
+import { qwenAvailable, readInvoiceWithQwen } from '../../inventory/qwenReader'
+import { bangkokDate } from '../../inventory/reports'
 import type { ExtractedInvoice } from '../../inventory/types'
 import type { Zone } from '../../types/layout'
 import { fmt, inputCls } from './format'
@@ -60,10 +62,21 @@ export function ReceiveWizard({ api, zones, onShowZone, onOpenReport }: Props) {
   const zoneName = (id: string) => zones.find((z) => z.id === id)?.name ?? id
   const update = (i: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)))
 
-  async function read() {
+  /** อ่าน invoice: ใช้ Qwen จริงเมื่อมีภาพและตั้งค่า Supabase ไว้ ไม่เช่นนั้นใช้ invoice ตัวอย่าง */
+  async function read(useSample = false) {
     setReading(true)
     setError(null)
-    const result = await mockInvoiceReader.read(image, sample)
+    let result: ExtractedInvoice
+    try {
+      result = qwenAvailable && image && !useSample ? (await readInvoiceWithQwen(image)).invoice : await mockInvoiceReader.read(image, sample)
+    } catch (e) {
+      setError(`อ่านด้วย Qwen ไม่สำเร็จ: ${(e as Error).message} — ถ่ายใหม่ให้ชัดขึ้น หรือใช้ invoice ตัวอย่างแทน`)
+      setReading(false)
+      return
+    }
+    // ค่าที่ AI อ่านไม่ได้: ใช้ค่าเริ่มต้นแล้วให้พนักงานแก้ในขั้นตอนตรวจ
+    if (!MODELS.some((m) => m.code === result.model)) result.model = 'K1G'
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(result.invoiceDate)) result.invoiceDate = bangkokDate()
     setInvoice(result)
     setLines(
       matchInvoice(result).map((m) => ({
@@ -177,9 +190,15 @@ export function ReceiveWizard({ api, zones, onShowZone, onOpenReport }: Props) {
               />
             </label>
             <div className="flex flex-col gap-3 text-sm">
-              <p className="rounded-md bg-amber-50 px-3 py-2 text-amber-800 ring-1 ring-amber-200">
-                <b>โหมดจำลอง:</b> ยังไม่ได้ต่อ Qwen-VL จริง ระบบจะคืนข้อมูล invoice ตัวอย่างที่เลือกด้านล่างไม่ว่าภาพจะเป็นอะไร
-              </p>
+              {qwenAvailable ? (
+                <p className="rounded-md bg-sky-50 px-3 py-2 text-sky-800 ring-1 ring-sky-200">
+                  ระบบจะส่งภาพให้ <b>Qwen-VL</b> อ่านรายการ แล้วให้คุณตรวจทุกบรรทัดก่อนรับเข้า
+                </p>
+              ) : (
+                <p className="rounded-md bg-amber-50 px-3 py-2 text-amber-800 ring-1 ring-amber-200">
+                  <b>โหมดจำลอง:</b> ยังไม่ได้ต่อ Qwen-VL จริง ระบบจะคืนข้อมูล invoice ตัวอย่างที่เลือกด้านล่างไม่ว่าภาพจะเป็นอะไร
+                </p>
+              )}
               <label className="flex flex-col gap-1">
                 <span className="text-slate-500">Invoice ตัวอย่าง</span>
                 <select id="sample-invoice" className={inputCls} value={sample} onChange={(e) => setSample(e.target.value as 'k1g' | 'j1d')}>
@@ -187,9 +206,21 @@ export function ReceiveWizard({ api, zones, onShowZone, onOpenReport }: Props) {
                   <option value="j1d">Royal Enfield J1D — ลูกปืน 150324/A (ต้องผ่าน MI3)</option>
                 </select>
               </label>
-              <Button onClick={read} disabled={reading}>
-                {reading ? 'กำลังอ่าน invoice…' : 'อ่าน invoice ด้วย AI (จำลอง)'}
-              </Button>
+              {qwenAvailable ? (
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={() => read()} disabled={reading || !image}>
+                    {reading ? 'Qwen กำลังอ่าน invoice…' : 'อ่าน invoice ด้วย Qwen'}
+                  </Button>
+                  <Button variant="secondary" onClick={() => read(true)} disabled={reading}>
+                    ใช้ invoice ตัวอย่าง
+                  </Button>
+                </div>
+              ) : (
+                <Button onClick={() => read(true)} disabled={reading}>
+                  {reading ? 'กำลังอ่าน invoice…' : 'อ่าน invoice ด้วย AI (จำลอง)'}
+                </Button>
+              )}
+              <ErrorNote message={error} />
             </div>
           </div>
         </Panel>
