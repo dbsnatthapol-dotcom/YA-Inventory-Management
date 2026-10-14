@@ -105,6 +105,7 @@ insert into public.nav_nodes (id, floor_id, x, z) values
   ('F1-DOOR', 'F1', 8, 98),
   ('Y-B', 'YARD', 62, 51),
   ('Y-C', 'YARD', 58, 64),
+  ('Y-D', 'YARD', 76.5, 66),
   ('Y-J1', 'YARD', 63, 72),
   ('Y-J2', 'YARD', 83, 80),
   ('Y-J3', 'YARD', 83, 113);
@@ -272,7 +273,9 @@ insert into public.nav_edges (from_node_id, to_node_id, mode) values
   ('Y-J3', 'Y-J2', 'walk'),
   ('Y-J2', 'Y-J1', 'walk'),
   ('Y-J1', 'Y-B', 'walk'),
-  ('Y-J1', 'Y-C', 'walk');
+  ('Y-J1', 'Y-C', 'walk'),
+  ('Y-D', 'Y-J1', 'walk'),
+  ('Y-D', 'Y-J2', 'walk');
 
 insert into public.zones (id, code, name, floor_id, kind, x, z, width, depth, access_node_id, stores) values
   ('F1-STAIRS', 'F1-STAIRS', 'บันได', 'F1', 'stairs', 0, 87, 4, 10, 'F1-ST', null),
@@ -291,14 +294,14 @@ insert into public.zones (id, code, name, floor_id, kind, x, z, width, depth, ac
   ('F3-RK-F', 'RK-F', 'Rack F', 'F3', 'storage', 10, 30, 18, 10, 'F3-r1c1', array['Component']::text[]),
   ('F3-ASM', 'ASM-W3', 'ไลน์ประกอบวงล้อ ชั้น 3', 'F3', 'assembly', 30, 66, 24, 10, 'F3-r3c3', null),
   ('TENT-B', 'TENT-B', 'เต็นท์ B', 'YARD', 'tent', 36, 23, 31, 25, 'Y-B', array['FG', 'Component']::text[]),
-  ('TENT-C', 'TENT-C', 'เต็นท์ C', 'YARD', 'tent', 27, 49, 29, 30, 'Y-C', array['FG', 'Component']::text[]);
+  ('TENT-C', 'TENT-C', 'เต็นท์ C', 'YARD', 'tent', 27, 49, 29, 30, 'Y-C', array['FG', 'Component']::text[]),
+  ('TENT-D', 'TENT-D', 'เต็นท์ D', 'YARD', 'tent', 68, 25, 17, 38, 'Y-D', array['Component']::text[]);
 
 insert into public.sites (id, name, boundary) values
   ('UAM1', 'Union Autoparts Manufacturing', '[[2,86],[28,16],[98,17],[100,8.4],[220,10],[221,34],[171,23],[129,160]]');
 
 insert into public.site_landmarks (id, site_id, name, kind, x, z, width, depth, rotation, height) values
   ('E', 'UAM1', 'สำนักงานใหญ่ (E)', 'office', 101.4, 134, 35, 18.6, 25.4, 8),
-  ('D', 'UAM1', 'อาคาร D', 'building', 76.5, 44, 17, 38, 0, 6),
   ('G', 'UAM1', 'พื้นที่ G', 'area', 44, 98, 66, 24, 4, 0.2),
   ('F', 'UAM1', 'พื้นที่ F', 'area', 174, 21, 92, 14, 6, 0.2),
   ('ROAD', 'UAM1', 'ถ.ปู่เจ้าสมิงพราย', 'road', 55.4, 140.3, 260, 35, 30.2, 0.05);

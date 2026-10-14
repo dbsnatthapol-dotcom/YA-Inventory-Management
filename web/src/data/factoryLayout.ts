@@ -6,6 +6,7 @@ import type { FactoryLayout, Floor, Landmark, NavEdge, NavNode, Zone } from '../
  * ที่มา: ภาพดาวเทียม docs/site/site-zones-draft.png
  * สเกลประมาณ 0.2 ม./พิกเซล (เทียบจากขนาดรถยนต์/รถบรรทุกบนถนน) ⇒ คลาดเคลื่อนได้ ±20%
  * ยืนยันกับเจ้าของแล้ว: อาคาร A = อาคารหลัก 3 ชั้น, B และ C = เต็นท์เก็บ FG/Component,
+ *                   D = เต็นท์ที่ใช้วาง Component เป็นบางครั้ง,
  *                   ทางเดินจากเต็นท์เข้าอาคาร A ใช้ประตูด้านหน้า (ฝั่งถนน)
  * ⚠️ สมมติฐาน (รอยืนยันหน้างาน): ตำแหน่งประตู, บันได, ลิฟต์, rack และไลน์ประกอบภายในอาคาร A
  *
@@ -64,6 +65,7 @@ const yardNodes: NavNode[] = [
   { id: 'F1-DOOR', floorId: 'F1', x: 8, z: 98 }, // สมมติ: ประตูหน้าอาคาร A ฝั่งซ้าย
   { id: 'Y-B', floorId: 'YARD', x: 62, z: 51 }, // หน้าเต็นท์ B
   { id: 'Y-C', floorId: 'YARD', x: 58, z: 64 }, // หน้าเต็นท์ C
+  { id: 'Y-D', floorId: 'YARD', x: 76.5, z: 66 }, // ปลายด้านหน้าเต็นท์ D
   { id: 'Y-J1', floorId: 'YARD', x: 63, z: 72 },
   { id: 'Y-J2', floorId: 'YARD', x: 83, z: 80 }, // ทางเดินระหว่างพื้นที่ G กับอาคาร A
   { id: 'Y-J3', floorId: 'YARD', x: 83, z: 113 },
@@ -75,6 +77,8 @@ const yardEdges: NavEdge[] = [
   { from: 'Y-J2', to: 'Y-J1', mode: 'walk' },
   { from: 'Y-J1', to: 'Y-B', mode: 'walk' },
   { from: 'Y-J1', to: 'Y-C', mode: 'walk' },
+  { from: 'Y-D', to: 'Y-J1', mode: 'walk' },
+  { from: 'Y-D', to: 'Y-J2', mode: 'walk' },
 ]
 
 const coreZones: Zone[] = buildingFloors.flatMap((f) => [
@@ -99,6 +103,7 @@ const zones: Zone[] = [
   // ลานนอก — เต็นท์ (พิกัด site)
   { id: 'TENT-B', code: 'TENT-B', name: 'เต็นท์ B', floorId: 'YARD', kind: 'tent', x: 36, z: 23, width: 31, depth: 25, accessNodeId: 'Y-B', stores: ['FG', 'Component'] },
   { id: 'TENT-C', code: 'TENT-C', name: 'เต็นท์ C', floorId: 'YARD', kind: 'tent', x: 27, z: 49, width: 29, depth: 30, accessNodeId: 'Y-C', stores: ['FG', 'Component'] },
+  { id: 'TENT-D', code: 'TENT-D', name: 'เต็นท์ D', floorId: 'YARD', kind: 'tent', x: 68, z: 25, width: 17, depth: 38, accessNodeId: 'Y-D', stores: ['Component'] },
 ]
 
 // เส้นขอบที่ดินตามเส้นสีแดงในภาพดาวเทียม
@@ -108,7 +113,6 @@ const boundary: [number, number][] = [
 
 const landmarks: Landmark[] = [
   { id: 'E', name: 'สำนักงานใหญ่ (E)', kind: 'office', x: 101.4, z: 134, width: 35, depth: 18.6, rotation: 25.4, height: 8 },
-  { id: 'D', name: 'อาคาร D', kind: 'building', x: 76.5, z: 44, width: 17, depth: 38, rotation: 0, height: 6 },
   { id: 'G', name: 'พื้นที่ G', kind: 'area', x: 44, z: 98, width: 66, depth: 24, rotation: 4, height: 0.2 },
   { id: 'F', name: 'พื้นที่ F', kind: 'area', x: 174, z: 21, width: 92, depth: 14, rotation: 6, height: 0.2 },
   { id: 'ROAD', name: 'ถ.ปู่เจ้าสมิงพราย', kind: 'road', x: 55.4, z: 140.3, width: 260, depth: 35, rotation: 30.2, height: 0.05 },

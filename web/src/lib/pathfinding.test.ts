@@ -36,6 +36,12 @@ describe('findRoute', () => {
     expect(r.floorChanges).toBe(1)
   })
 
+  it('reaches tent D (occasional component storage) from the yard', () => {
+    const r = findRoute(sampleLayout, zone('TENT-D').accessNodeId, zone('F3-ASM').accessNodeId)!
+    expect(r.nodes.some((n) => n.id === 'F1-DOOR')).toBe(true)
+    expect(r.walkDistance).toBeGreaterThan(0)
+  })
+
   it('keeps distances correct on a rotated building', () => {
     const layout: FactoryLayout = {
       siteName: 't',
