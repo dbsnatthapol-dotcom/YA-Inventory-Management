@@ -99,7 +99,7 @@ export function receiveInvoice(
     }
     lots.push(lot)
     const good = l.countedQty - l.damagedQty
-    if (good > 0) movements.push({ id: newId('MV'), lotId: lot.id, kind: 'receive', from: null, to: 'BOI', qty: good, at })
+    if (good > 0) movements.push({ id: newId('MV'), lotId: lot.id, kind: 'receive', from: null, to: 'BOI', qty: good, at, by: receipt.receivedBy })
     if (l.damagedQty > 0)
       movements.push({
         id: newId('MV'),
@@ -110,6 +110,7 @@ export function receiveInvoice(
         qty: l.damagedQty,
         at,
         note: 'เสียหายตอนรับเข้า',
+        by: receipt.receivedBy,
       })
   })
   return { receipts: [...state.receipts, r], lots: [...state.lots, ...lots], movements: [...state.movements, ...movements] }
@@ -125,6 +126,8 @@ export interface MoveInput {
   from?: Bucket
   note?: string
   at?: string
+  /** ผู้บันทึก */
+  by?: string
 }
 
 /** บันทึกการเคลื่อนไหวของ lot พร้อมตรวจกฎทุกข้อ */
@@ -163,6 +166,7 @@ export function moveLot(state: InventoryState, input: MoveInput): InventoryState
     qty: input.qty,
     at: input.at ?? new Date().toISOString(),
     note: input.note,
+    by: input.by,
   }
   return { ...state, movements: [...state.movements, movement] }
 }

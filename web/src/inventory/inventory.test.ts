@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { buildDemoState } from './demoSeed'
 import { matchInvoice, matchPart, mockInvoiceReader, suggestZone } from './extraction'
 import { availableForMra, bucketBalance, emptyState, InventoryError, moveLot, receiveInvoice } from './ledger'
-import { PARTS } from './masterData'
-import { dailyStockReport, discrepancyReport, lotTrace } from './reports'
+import { PARTS, STOCK_SHEETS } from './masterData'
+import { dailyStockReport, dashboardSummary, discrepancyReport, lotTrace, movementLog, zoneContents } from './reports'
 
 const base = { invoiceDate: '2026-10-14', supplier: 'S', customerId: 'RE', provider: 'mock' as const, receivedBy: 'test' }
 const at = '2026-10-14T02:00:00.000Z'
@@ -91,7 +91,55 @@ describe('daily stock report', () => {
     expect(rimFront).toMatchObject({ invoiceQty: 0, actualReceive: 0, mraIssued: 120, boi: 177, ngCustomer: 2, ngSupplier: 3 })
     const yesterday = dailyStockReport(s, '2026-10-13').find((r) => r.part.partNo === 'RAJ00537/B')!
     expect(yesterday).toMatchObject({ invoiceQty: 300, actualReceive: 297, mraIssued: 0, balance: 297 })
-    const bearing = rows.find((r) => r.part.partNo === '150324/A')!
-    expect(bearing).toMatchObject({ boi: 790, mi3: 0, pendingQc: 400, ngSupplier: 10, balance: 790 })
+    // ใบรายงาน J1D นับเฉพาะ lot ของ invoice J1D/J1D4
+    const j1d = STOCK_SHEETS.find((sh) => sh.id === 'RE-J1D')!
+    const bearingJ1D = dailyStockReport(s, '2026-10-14', j1d).find((r) => r.part.partNo === '150324/A')!
+    expect(bearingJ1D).toMatchObject({ boi: 590, mi3: 0, mraIssued: 200, pendingQc: 400, ngSupplier: 10, balance: 590 })
+    // ภาพรวมทุก Model รวม lot ของ TWIN ที่อยู่ระหว่างตรวจ MI3 ด้วย
+    expect(rows.find((r) => r.part.partNo === '150324/A')).toMatchObject({ boi: 590, mi3: 240, balance: 830 })
+  })
+})
+
+describe('multi-model master', () => {
+  it('merges shared parts across model sheets into one part', () => {
+    expect(STOCK_SHEETS.map((sh) => sh.id)).toEqual(['RE-K1G', 'RE-J1D', 'RE-J1A', 'RE-J1C', 'RE-TWIN', 'RE-P4'])
+    expect(PARTS.filter((p) => p.partNo === '150324/A')).toHaveLength(1)
+    expect(PARTS.find((p) => p.partNo === '150324/A')!.models).toEqual(['K1G', 'J1D', 'J1D4', 'J1A', 'J1C', 'TWIN', 'P4M', 'P4D'])
+    expect(new Set(PARTS.map((p) => p.partNo)).size).toBe(PARTS.length)
+  })
+})
+
+describe('dashboard and movement log', () => {
+  const s = buildDemoState('2026-10-14')
+
+  it('summarises today by Bangkok day', () => {
+    const d = dashboardSummary(s, '2026-10-14')
+    expect(d.receipts).toBe(2)
+    expect(d.issuedQty).toBe(120 + 4320 + 8640 + 100 + 200)
+    expect(d.ngFoundQty).toBe(2 + 10 + 2)
+    expect(d.hourly.reduce((a, h) => a + h.issued, 0)).toBe(d.issuedQty)
+    expect(d.byModel.map((m) => m.model)).toEqual(['J1A', 'J1D', 'K1G', 'TWIN'])
+  })
+
+  it('tags every movement back to lot, invoice and model, newest first', () => {
+    const log = movementLog(s, { from: '2026-10-14', to: '2026-10-14' })
+    expect(log[0].movement.kind).toBe('issue_mra')
+    expect(log.every((r) => r.receipt?.invoiceNo === r.lot.invoiceNo)).toBe(true)
+    expect(movementLog(s, { q: 'RE-INV-2610-0152' }).every((r) => r.lot.model === 'TWIN')).toBe(true)
+    expect(movementLog(s, { model: 'J1A', kind: 'mi3_ng' })).toHaveLength(1)
+  })
+})
+
+describe('zone contents', () => {
+  it('lists what is stored in a zone by model and lot', () => {
+    const s = buildDemoState('2026-10-14')
+    // Rack E ชั้น 2 เก็บลูกปืน/วาล์ว: ลูกปืน J1D (เหลือ 590) และวาล์ว J1A 300 · ลูกปืน TWIN อยู่ระหว่างตรวจ MI3 จึงไม่อยู่ในชั้นวาง
+    const z = zoneContents(s, 'F2-RK-E')
+    expect(z.models).toEqual([
+      { model: 'J1D', qty: 590 },
+      { model: 'J1A', qty: 300 },
+    ])
+    expect(z.totalQty).toBe(890)
+    expect(z.pendingQcQty).toBe(400 + 300)
   })
 })

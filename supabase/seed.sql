@@ -313,9 +313,11 @@ insert into public.customers (id, name) values
 insert into public.product_models (code, customer_id, requires_inspection) values
   ('K1G', 'RE', 'false'),
   ('J1D', 'RE', 'true'),
+  ('J1D4', 'RE', 'true'),
   ('J1A', 'RE', 'true'),
   ('J1C', 'RE', 'true'),
   ('TWIN', 'RE', 'true'),
+  ('P4M', 'RE', 'true'),
   ('P4D', 'RE', 'true');
 
 insert into public.parts (part_no, name, part_type, customer_id) values
@@ -352,7 +354,137 @@ insert into public.parts (part_no, name, part_type, customer_id) values
   ('RAJ00570/B', 'VALVE, WHEEL, TUBELESS', 'VALVE', 'RE'),
   ('RAJ00301/D', 'TYRE 90/90-21 FRONT', 'TYRE', 'RE'),
   ('RAT00322/D', 'TYRE 140/80-17 REAR', 'TYRE', 'RE'),
-  ('150324/A', 'WHEEL BEARING 6203 (17x40x12) K1G , J1D, J1A ,J1C ,TWIN, P4D,M', 'BEARING', 'RE');
+  ('150324/A', 'WHEEL BEARING 6203 (17x40x12)', 'BEARING', 'RE'),
+  ('1100246/D', 'ALLOY RIM - FRONT - BLACK ALLOY', 'ALLOY RIM', 'RE'),
+  ('1100247/D', 'ALLOY RIM REAR - BLACK', 'ALLOY RIM', 'RE'),
+  ('RAJ00176/B', 'ALLOY RIM - FRONT - BLACK/MACHINING', 'ALLOY RIM', 'RE'),
+  ('RAT00199/B', 'ALLOY RIM REAR - BLACK/MACHINING', 'ALLOY RIM', 'RE'),
+  ('RAJ00177/C', 'STICKER RIM FRONT - YELLOW', 'STICKER', 'RE'),
+  ('RAT00200/C', 'STICKER RIM - YELLOW', 'STICKER', 'RE'),
+  ('RAJ00178/C', 'STICKER RIM FRONT - RED', 'STICKER', 'RE'),
+  ('RAT00201/C', 'STICKER RIM - RED', 'STICKER', 'RE'),
+  ('RAJ00510/A', 'DECAL 2D STRIPE LAGOON YELLOW', 'STICKER', 'RE'),
+  ('RAT00531/A', 'STICKER - FIREBALL LAGOON YELLOW', 'STICKER', 'RE'),
+  ('RAJ00513/A', 'DECAL 2D STRIPE PINE GREEN', 'STICKER', 'RE'),
+  ('RAT00534/A', 'STICKER RIM - FIREBALL PINE GREEN', 'STICKER', 'RE'),
+  ('1100237/C', 'SPACER ASSEMBLY - FRONT HUB', 'SPACER', 'RE'),
+  ('146499/B', 'BEARING SPACER ASSEMBLY - REAR HUB', 'SPACER', 'RE'),
+  ('141109/1', 'GREASE SEAL 25X40X7', 'SEAL', 'RE'),
+  ('1100712/D', 'FRONT DISC PLATE', 'DISC', 'RE'),
+  ('1100700/D', 'REAR DISC PLATE', 'DISC', 'RE'),
+  ('1100713/B', 'TONER-FRONT WHEEL', 'TONER', 'RE'),
+  ('RAT00087/A', 'TONER - REAR WHEEL', 'TONER', 'RE'),
+  ('1100263/E', 'BOLT, M8 x 1.25 x 21, SHOULDERED', 'BOLT', 'RE'),
+  ('RAT00255/A', 'CAP HEAD SHOULDERED-M6X1-20', 'BOLT', 'RE'),
+  ('RAT00570/A', 'RUBBER CUSHION', 'RUBBER', 'RE'),
+  ('RAJ00285/A', 'FRONT TUBELESS TYRE 100/90-19', 'TYRE', 'RE'),
+  ('RAT00315/A', 'REAR TUBELESS TYRE 140/70-17', 'TYRE', 'RE'),
+  ('1120064/A', 'VALVE - ALLOY WHEEL', 'VALVE', 'RE'),
+  ('RAT01502/A', '2D DECAL. FRONT &REAR RH YELLOW (J1C)', 'STICKER', 'RE'),
+  ('RAT01352/A', '2D DECAL. FRONT &REAR RH YELLOW (J1C)', 'STICKER', 'RE'),
+  ('RAJ00296/A', 'ALLOY RIM, FRONT, MATTE BLACK', 'ALLOY RIM', 'RE'),
+  ('RAT00328/A', 'ALLOY RIM, REAR, MATTE BLACK', 'ALLOY RIM', 'RE'),
+  ('1100351/B', 'FRONT WHEEL RIM 2.15X19" Silver', 'RIM', 'RE'),
+  ('RAT00181/A', 'REAR WHEEL RIM 3.00 X 18" Silver', 'RIM', 'RE'),
+  ('RAJ00182/B', 'FRONT WHEEL RIM 2.15x18"- MATTE BLACK', 'RIM', 'RE'),
+  ('RAT00208/B', 'REAR WHEEL RIM 3.00 X 18" - MATTE BLACK', 'RIM', 'RE'),
+  ('RAT00538/B', 'REAR WHEEL RIM17X3.50 MT SILVER', 'RIM', 'RE'),
+  ('1100187/C', 'HUB-FRONT', 'HUB', 'RE'),
+  ('RAT00037/C', 'REAR HUB', 'HUB', 'RE'),
+  ('RAJ00184/B', 'FRONT HUB - BLACK', 'HUB', 'RE'),
+  ('RAT00210/B', 'REAR HUB - BLACK', 'HUB', 'RE'),
+  ('RAJ00415/C', 'DAMPER RUBBER, FRONT WHEEL ASSY', 'RUBBER', 'RE'),
+  ('140355/B', 'RIM TAPE', 'RIM TAPE', 'RE'),
+  ('148650/D', 'RIM TAPE TWIN', 'RIM TAPE', 'RE'),
+  ('587851/B', 'RIM TAPE', 'RIM TAPE', 'RE'),
+  ('RAT00337/A', 'TYRE-REAR 120/80 - 18"', 'TYRE', 'RE'),
+  ('RAJ00593/A', 'FRONT TUBE 100/90-19', 'TUBE', 'RE'),
+  ('RAT00627/A', 'REAR TUBE 120/80-18"', 'TUBE', 'RE'),
+  ('RAT00345/A', 'DECAL 2D - REAR WHEEL STRIPE RE RED', 'STICKER', 'RE'),
+  ('RAJ00313/A', 'DECAL 2D - FRONT WHEEL STRIPE DARK BLUE', 'STICKER', 'RE'),
+  ('RAT00346/A', 'DECAL 2D - REAR WHEEL STRIPE DARK BLUE', 'STICKER', 'RE'),
+  ('RAJ00575/A', 'SPOKE-FRONT', 'SPOKE', 'RE'),
+  ('RAT00606/A', 'SPOKE -REAR', 'SPOKE', 'RE'),
+  ('RAT00329/A', 'SPOKE -REAR', 'SPOKE', 'RE'),
+  ('RAJ00298/A', 'NIPPLE', 'NIPPLE', 'RE'),
+  ('RAJ00268/A/A', 'FRONT TUBE 100/90-19', 'TUBE', 'RE'),
+  ('591984/A', 'REAR TUBE 120/80-18"', 'TUBE', 'RE'),
+  ('RAT00322/A', 'REAR TUBE 140/70-17', 'TUBE', 'RE'),
+  ('RAJ01035/A', 'DECAL 2D - FRONT WHEEL RE COPPER(J1A3)', 'STICKER', 'RE'),
+  ('RAT01131/A', 'DECAL 2D - REAR WHEEL RE COPPER (J1A3)', 'STICKER', 'RE'),
+  ('RAJ00024/B', 'ALLOY RIM - 17x1.40 FRONT', 'ALLOY RIM', 'RE'),
+  ('RAT00077/B', 'ALLOY RIM 17x3.00 REAR', 'ALLOY RIM', 'RE'),
+  ('RAB00728/A', 'REAR DISC PLATE', 'DISC', 'RE'),
+  ('RAJ00725/A', 'FRONT TUBELESS TYRE 110/70-17', 'TYRE', 'RE'),
+  ('RAT00811/A', 'REAR TUBELESS TYRE 140/70-17', 'TYRE', 'RE'),
+  ('RAJ00372/B', 'DECAL 2D, WHEEL PINSTRIPE, RH', 'STICKER', 'RE'),
+  ('RAJ00373/B', 'DECAL 2D, WHEEL PINSTRIPE, LH', 'STICKER', 'RE'),
+  ('RAJ00497/A', 'DECAL 2D, WHEEL, RH TORQUOISE/WHITE', 'STICKER', 'RE'),
+  ('RAJ00486/A', 'DECAL 2D, WHEEL, LH TORQUOISE/WHITE', 'STICKER', 'RE'),
+  ('RAJ00500/A', 'DECAL 2D, WHEEL, RH SILVER/PAN 102 C', 'STICKER', 'RE'),
+  ('RAJ00489/A', 'DECAL 2D, WHEEL, LH SILVER/PAN 102 C', 'STICKER', 'RE'),
+  ('RAJ00499/A', 'DECAL 2D, WHEEL, RH WHITE/PAN 2935 C', 'STICKER', 'RE'),
+  ('RAJ00488/A', 'DECAL 2D, WHEEL, LH WHITE/PAN 2935 C', 'STICKER', 'RE'),
+  ('RAJ00498/A', 'DECAL 2D, WHEEL, RH RE GOLD/RED', 'STICKER', 'RE'),
+  ('RAJ00487/A', 'DECAL 2D, WHEEL, LH RE GOLD/RED', 'STICKER', 'RE'),
+  ('RAJ00889/A', 'DECAL 2D, WHEEL, WHITE LH. PANTO WHI C.375C', 'STICKER', 'RE'),
+  ('RAJ00890/A', 'DECAL 2D, WHEEL, WHITE RH. PANTO WHI C.375C', 'STICKER', 'RE'),
+  ('RAJ00891/A', 'DECAL 2D, WHEEL, WHITE. LH PANTO WHI.172C', 'STICKER', 'RE'),
+  ('RAJ00892/A', 'DECAL 2D, WHEEL, WHITE RH. PANTO WHI .172 C', 'STICKER', 'RE'),
+  ('RAJ01087/A', 'DECAL 2D, WHEEL, RE LIGHT SAND.RH', 'STICKER', 'RE'),
+  ('RAJ01088/A', 'DECAL 2D, WHEEL, RE LIGHT SAND.LH', 'STICKER', 'RE'),
+  ('RAJ01085/A', 'DECAL 2D, WHEEL, RE MARBLE WHITE.RH', 'STICKER', 'RE'),
+  ('RAJ01086/A', 'DECAL 2D, WHEEL, RE MARBLE WHITE.LH', 'STICKER', 'RE'),
+  ('RAT00035/C', 'RUBBER CUSHION', 'RUBBER', 'RE'),
+  ('RAT00450/A', 'TONER - REAR WHEEL', 'TONER', 'RE'),
+  ('RAJ00669/A', 'FRONT WHEEL CAST BLACK 18x2.5', 'ALLOY RIM', 'RE'),
+  ('RAT00728/A', 'REAR WHEEL CAST BLACK 18x3.5', 'ALLOY RIM', 'RE'),
+  ('585514/A', 'BEARING SPACER ASSEMBLY - FRONT HUB', 'SPACER', 'RE'),
+  ('RAB00076/A', 'BRAKE DISC 320MM', 'DISC', 'RE'),
+  ('587395/B', 'REAR DISC PLATE', 'DISC', 'RE'),
+  ('RAB00374/A', 'TONER - FRONT WHEEL - DF30 WSS', 'TONER', 'RE'),
+  ('585216/C', 'TONER - REAR WHEEL', 'TONER', 'RE'),
+  ('H6906002/A', 'HEX HEAD BOLT M8x1.25x30', 'BOLT', 'RE'),
+  ('587605/B', 'SOCKET HEAD BOLT M8x1.25x20', 'BOLT', 'RE'),
+  ('148543/A', 'TYRE FRONT 100/90-18', 'TYRE', 'RE'),
+  ('148544/A', 'TYRE REAR 130/70-18', 'TYRE', 'RE'),
+  ('148537/A', 'RIM FR. 18X2.50 BLACK', 'RIM', 'RE'),
+  ('148532/A', 'RIM RR. 18X3.50 BLACK', 'RIM', 'RE'),
+  ('148529/F', 'HUB REAR WHEEL BLACK', 'HUB', 'RE'),
+  ('RAJ00030/A', 'HUB FRONT WHEEL BLACK', 'HUB', 'RE'),
+  ('148640/A', 'SPOKE. WHEEL', 'SPOKE', 'RE'),
+  ('RAT00259/A', 'SPOKE. REAR WHEEL', 'SPOKE', 'RE'),
+  ('585179/A', 'NR61 NIPPLE 3.6 MM.', 'NIPPLE', 'RE'),
+  ('593393/A', 'NIPPLE', 'NIPPLE', 'RE'),
+  ('585304/B', 'NR61 REAR TUBE -130/80-18', 'TUBE', 'RE'),
+  ('RAJ0005/B', 'TUBE TYRE 3X18', 'TUBE', 'RE'),
+  ('585328/C', 'RIM TAPE', 'RIM TAPE', 'RE'),
+  ('1050171', 'RIM - FRONT WHEEL,CAST 19x2.50', 'CAST', 'RE'),
+  ('RAJ00009/B', 'SPACER ASSEMBLY - FRONT HUB', 'SPACER', 'RE'),
+  ('RAB00009/B', 'BRAKE DISC FRONT', 'DISC', 'RE'),
+  ('H6906048/A', 'BOLT,BUT.SHLD M8x30.10.9.wht.l', 'BOLT', 'RE'),
+  ('RAJ00058/B', 'TYRE FRONT 100/90-90', 'TYRE', 'RE'),
+  ('1050172/F', 'RIM REAR WHEEL .CAST.E16x3.50', 'CAST', 'RE'),
+  ('RAT00011/B', 'SPACER INTERAL.REAR WHEEL', 'SPACER', 'RE'),
+  ('RAB00012/B', 'BRAKE DISC REAR', 'DISC', 'RE'),
+  ('RAB00013/B', 'ABS TONER RING.REAR WHEEL', 'TONER', 'RE'),
+  ('RAT00007/D', 'CUSH RUBBER', 'RUBBER', 'RE'),
+  ('RAT00067/G', 'TYRE REAR TUBELESS 150/80-16', 'TYRE', 'RE'),
+  ('RAT00068/B', 'TYRE REAR 150/70-17', 'TYRE', 'RE'),
+  ('RAJ00057/B', 'TYRE FRONT 100/90-18', 'TYRE', 'RE'),
+  ('RAJ00008/H', 'RIM - FRONT WHEEL,CAST 18x2.50', 'CAST', 'RE'),
+  ('RAT00010/G', 'RIM REAR WHEEL .CAST.E17x4.25', 'CAST', 'RE'),
+  ('RAJ00481/D', 'HUB FRONT WHEEL', 'HUB', 'RE'),
+  ('RAT00507/E', 'HUB REAR WHEEL', 'HUB', 'RE'),
+  ('RAJ00482/C', 'RIM FRONT WHEEL 19x2.50', 'RIM', 'RE'),
+  ('RAT00508/C', 'RIM REAR WHEEL 18x4.00', 'RIM', 'RE'),
+  ('RAJ00483/B', 'SPOKE FRONT WHEEL', 'SPOKE', 'RE'),
+  ('RAJ00592/B', 'TYRE FRONT 100/90-19', 'TYRE', 'RE'),
+  ('RAT00165/C', 'NIPPLE SPOKE', 'NIPPLE', 'RE'),
+  ('RAT00509/B', 'SPOKE REAR WHEEL', 'SPOKE', 'RE'),
+  ('RAT00624/B', 'TYRE FRONT 140/70-R18', 'TYRE', 'RE'),
+  ('RAT00849/A', 'TUBE FRONT 140/70-R19', 'TUBE', 'RE'),
+  ('RAT01069/A', 'RIM TAPE REAR', 'RIM TAPE', 'RE');
 
 insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00537/B';
 insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAT00587/B';
@@ -382,18 +514,235 @@ insert into public.part_models (part_id, model_code) select id, 'K1G' from publi
 insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00539/B';
 insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00288/B';
 insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAT00467/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAT00467/A';
 insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00757/A';
-insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAJ00757/A';
 insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAT01154/B';
 insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00570/B';
 insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAJ00301/D';
 insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = 'RAT00322/D';
 insert into public.part_models (part_id, model_code) select id, 'K1G' from public.parts where part_no = '150324/A';
 insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = '150324/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = '150324/A';
 insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = '150324/A';
 insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = '150324/A';
 insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '150324/A';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = '150324/A';
 insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = '150324/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = '1100246/D';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = '1100246/D';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = '1100247/D';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = '1100247/D';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = 'RAJ00176/B';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = 'RAJ00176/B';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = 'RAT00199/B';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = 'RAT00199/B';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = 'RAJ00177/C';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = 'RAJ00177/C';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = 'RAT00200/C';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = 'RAT00200/C';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = 'RAJ00178/C';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = 'RAJ00178/C';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAJ00178/C';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = 'RAT00201/C';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = 'RAT00201/C';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = 'RAJ00510/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = 'RAJ00510/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = 'RAT00531/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = 'RAT00531/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = 'RAJ00513/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = 'RAJ00513/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = 'RAT00534/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = 'RAT00534/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = '1100237/C';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = '1100237/C';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = '1100237/C';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = '1100237/C';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = '146499/B';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = '146499/B';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = '146499/B';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = '146499/B';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '146499/B';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = '141109/1';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = '141109/1';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = '141109/1';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = '141109/1';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '141109/1';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = '141109/1';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = '141109/1';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = '1100712/D';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = '1100712/D';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = '1100712/D';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = '1100712/D';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = '1100700/D';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = '1100700/D';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = '1100700/D';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = '1100713/B';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = '1100713/B';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = '1100713/B';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = '1100713/B';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = '1100713/B';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = '1100713/B';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = 'RAT00087/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = 'RAT00087/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAT00087/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = '1100263/E';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = '1100263/E';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = '1100263/E';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = '1100263/E';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = 'RAT00255/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = 'RAT00255/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAT00255/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = 'RAT00570/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = 'RAT00570/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAT00570/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = 'RAJ00285/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = 'RAJ00285/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAJ00285/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = 'RAT00315/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = 'RAT00315/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAT00315/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = '1120064/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = '1120064/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = '1120064/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = '1120064/A';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '1120064/A';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = '1120064/A';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = '1120064/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = 'RAT01502/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = 'RAT01502/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D' from public.parts where part_no = 'RAT01352/A';
+insert into public.part_models (part_id, model_code) select id, 'J1D4' from public.parts where part_no = 'RAT01352/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAJ00296/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAT00328/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = '1100351/B';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAT00181/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAJ00182/B';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAT00208/B';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAT00538/B';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = '1100187/C';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAT00037/C';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAJ00184/B';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAT00210/B';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAJ00415/C';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = '140355/B';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = '148650/D';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '148650/D';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = '587851/B';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAT00337/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAJ00593/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAT00627/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAT00345/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAJ00313/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAT00346/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAJ00575/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAT00606/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAT00329/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAJ00298/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAJ00268/A/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = '591984/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAT00322/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAJ01035/A';
+insert into public.part_models (part_id, model_code) select id, 'J1A' from public.parts where part_no = 'RAT01131/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ00024/B';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAT00077/B';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAB00728/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ00725/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAT00811/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ00372/B';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ00373/B';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ00497/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ00486/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ00500/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ00489/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ00499/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ00488/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ00498/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ00487/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ00889/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ00890/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ00891/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ00892/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ01087/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ01088/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ01085/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAJ01086/A';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAT00035/C';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = 'RAT00035/C';
+insert into public.part_models (part_id, model_code) select id, 'J1C' from public.parts where part_no = 'RAT00450/A';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = 'RAJ00669/A';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = 'RAT00728/A';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '585514/A';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = 'RAB00076/A';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '587395/B';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = 'RAB00374/A';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '585216/C';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = 'H6906002/A';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '587605/B';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '148543/A';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '148544/A';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '148537/A';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '148532/A';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '148529/F';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = 'RAJ00030/A';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '148640/A';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = 'RAT00259/A';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '585179/A';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '593393/A';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '585304/B';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = 'RAJ0005/B';
+insert into public.part_models (part_id, model_code) select id, 'TWIN' from public.parts where part_no = '585328/C';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = '1050171';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = '1050171';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAJ00009/B';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAJ00009/B';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAB00009/B';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAB00009/B';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'H6906048/A';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'H6906048/A';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAJ00058/B';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAJ00058/B';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = '1050172/F';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = '1050172/F';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAT00011/B';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAT00011/B';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAB00012/B';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAB00012/B';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAB00013/B';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAB00013/B';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAT00007/D';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAT00007/D';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAT00067/G';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAT00067/G';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAT00068/B';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAT00068/B';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAJ00057/B';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAJ00057/B';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAJ00008/H';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAJ00008/H';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAT00010/G';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAT00010/G';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAJ00481/D';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAJ00481/D';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAT00507/E';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAT00507/E';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAJ00482/C';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAJ00482/C';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAT00508/C';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAT00508/C';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAJ00483/B';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAJ00483/B';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAJ00592/B';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAJ00592/B';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAT00165/C';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAT00165/C';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAT00509/B';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAT00509/B';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAT00624/B';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAT00624/B';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAT00849/A';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAT00849/A';
+insert into public.part_models (part_id, model_code) select id, 'P4M' from public.parts where part_no = 'RAT01069/A';
+insert into public.part_models (part_id, model_code) select id, 'P4D' from public.parts where part_no = 'RAT01069/A';
 
 insert into public.zone_rules (customer_id, part_type, zone_id) values
   ('RE', 'RIM', 'F1-RK-C'),
@@ -409,4 +758,9 @@ insert into public.zone_rules (customer_id, part_type, zone_id) values
   ('RE', 'VALVE', 'F2-RK-E'),
   ('RE', 'RUBBER', 'F2-RK-E'),
   ('RE', 'TYRE', 'TENT-C'),
+  ('RE', 'TUBE', 'TENT-C'),
+  ('RE', 'ALLOY RIM', 'F1-RK-C'),
+  ('RE', 'CAST', 'F1-RK-C'),
+  ('RE', 'STICKER', 'F2-RK-D'),
+  ('RE', 'RIM TAPE', 'F2-RK-D'),
   ('RE', null, 'TENT-D');

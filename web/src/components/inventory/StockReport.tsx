@@ -2,6 +2,7 @@ import { Fragment, useState } from 'react'
 import { BRAND } from '../../data/brand'
 import { availableForMra, BUCKET_LABEL, bucketBalance, FLOW, pendingInspection, type MoveInput } from '../../inventory/ledger'
 import { modelRequiresInspection } from '../../inventory/extraction'
+import { PARTS, STOCK_SHEETS } from '../../inventory/masterData'
 import { dailyStockReport, bangkokDate } from '../../inventory/reports'
 import type { InventoryApi } from '../../inventory/useInventory'
 import type { Bucket, Lot } from '../../inventory/types'
@@ -21,14 +22,30 @@ export function StockReport({ api, zones, onShowZone, onTrace }: Props) {
   const [date, setDate] = useState(bangkokDate())
   const [openPart, setOpenPart] = useState<string | null>(null)
   const [onlyActive, setOnlyActive] = useState(true)
-  const rows = dailyStockReport(api.state, date)
+  const [sheetId, setSheetId] = useState<string>('ALL')
+  const sheet = STOCK_SHEETS.find((sh) => sh.id === sheetId)
+  const common = sheetId === 'COMMON'
+  // มุมมอง "Part ใช้ร่วม": part เดียวกันที่ใช้หลาย Model รวมยอดทุก Model ไว้ในแถวเดียว
+  const rows = dailyStockReport(api.state, date, sheet).filter((r) => !common || shared.has(r.part.partNo))
   const visible = onlyActive ? rows.filter((r) => r.invoiceQty || r.actualReceive || r.mraIssued || r.balance || r.ngCustomer || r.ngSupplier) : rows
 
   return (
     <Panel
-      title="ใบรายงาน STOCK ประจำวัน แผนก W/H ASSY · ROYAL ENFIELD"
+      title={`ใบรายงาน STOCK ประจำวัน แผนก W/H ASSY · ${sheet ? sheet.title : common ? 'PART ใช้ร่วมหลาย MODEL' : 'ROYAL ENFIELD ทุก Model'}`}
       action={
         <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+          <label className="flex items-center gap-1 whitespace-nowrap">
+            ใบรายงาน
+            <select id="report-sheet" className={inputBase} value={sheetId} onChange={(e) => setSheetId(e.target.value)}>
+              <option value="ALL">ทุก Model (รวม)</option>
+              <option value="COMMON">Part ใช้ร่วมหลาย Model — {shared.size} รายการ</option>
+              {STOCK_SHEETS.map((sh) => (
+                <option key={sh.id} value={sh.id}>
+                  {sh.models.join(', ')} — {sh.partNos.length} รายการ
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="flex items-center gap-1 whitespace-nowrap">
             วันที่
             <input id="report-date" type="date" className={inputBase} value={date} onChange={(e) => setDate(e.target.value)} />
@@ -83,13 +100,20 @@ export function StockReport({ api, zones, onShowZone, onTrace }: Props) {
               return (
                 <Fragment key={r.part.partNo}>
                   <tr
-                    className={`cursor-pointer border-b border-slate-100 hover:bg-sky-50 ${open ? 'bg-sky-50' : ''}`}
+                    className={`cursor-pointer border-b border-slate-100 hover:bg-sky-50 ${open ? 'bg-sky-50' : sheet && shared.has(r.part.partNo) ? 'bg-amber-50/70' : ''}`}
                     onClick={() => setOpenPart(open ? null : r.part.partNo)}
                   >
                     <td className="px-2 py-1.5 text-slate-400">{i + 1}</td>
                     <td className="px-2">{r.part.type}</td>
                     <td className="px-2 font-mono text-xs">{r.part.partNo}</td>
-                    <td className="px-2 text-xs text-slate-600">{r.part.description}</td>
+                    <td className="px-2 text-xs text-slate-600">
+                      {r.part.description}
+                      {r.part.models.length > 1 && (
+                        <span className="ml-1 whitespace-nowrap rounded bg-amber-100 px-1 text-[10px] text-amber-800" title={r.part.models.join(', ')}>
+                          ใช้ร่วม {r.part.models.length} Model
+                        </span>
+                      )}
+                    </td>
                     <td className="border-l px-2 text-right">{fmt(r.invoiceQty)}</td>
                     <td className="border-l px-2 text-right">{fmt(r.actualReceive)}</td>
                     <td className="px-2 text-right">{fmt(r.mraIssued)}</td>
@@ -106,7 +130,7 @@ export function StockReport({ api, zones, onShowZone, onTrace }: Props) {
                   {open && (
                     <tr>
                       <td colSpan={11} className="bg-slate-50 px-3 py-3">
-                        <LotList api={api} partNo={r.part.partNo} zones={zones} onShowZone={onShowZone} onTrace={onTrace} />
+                        <LotList api={api} partNo={r.part.partNo} models={sheet?.models} zones={zones} onShowZone={onShowZone} onTrace={onTrace} />
                       </td>
                     </tr>
                   )}
@@ -117,11 +141,14 @@ export function StockReport({ api, zones, onShowZone, onTrace }: Props) {
         </table>
       </div>
       <p className="mt-3 text-xs text-slate-500">
-        คลิกแถวเพื่อดู lot และบันทึกการเบิก / ส่งตรวจ / แจ้ง NG · ยอดเข้าออกนับเฉพาะวันที่เลือก · Balance = ของที่อยู่ในคลังจริง (BOI + MI3) ณ สิ้นวัน
+        คลิกแถวเพื่อดู lot และบันทึกการเบิก / ส่งตรวจ / แจ้ง NG · {sheet && 'แถวสีเหลือง = part ที่ใช้ร่วมกับ Model อื่น · ยอดนับเฉพาะ invoice ของ Model ในใบนี้ · '} ยอดเข้าออกนับเฉพาะวันที่เลือก · Balance = ของที่อยู่ในคลังจริง (BOI + MI3) ณ สิ้นวัน
       </p>
     </Panel>
   )
 }
+
+/** part ที่ใช้ร่วมหลาย Model (แบบฟอร์มเดิมระบายสีเหลือง) */
+const shared = new Set(PARTS.filter((p) => p.models.length > 1).map((p) => p.partNo))
 
 const ACTIONS: { kind: MoveInput['kind']; label: string }[] = [
   { kind: 'issue_mra', label: 'MRA เบิก' },
@@ -132,8 +159,8 @@ const ACTIONS: { kind: MoveInput['kind']; label: string }[] = [
   { kind: 'return_ng', label: 'ส่งคืน NG' },
 ]
 
-function LotList({ api, partNo, zones, onShowZone, onTrace }: { api: InventoryApi; partNo: string } & Omit<Props, 'api'>) {
-  const lots = api.state.lots.filter((l) => l.partNo === partNo)
+function LotList({ api, partNo, models, zones, onShowZone, onTrace }: { api: InventoryApi; partNo: string; models?: string[] } & Omit<Props, 'api'>) {
+  const lots = api.state.lots.filter((l) => l.partNo === partNo && (!models || models.includes(l.model)))
   if (!lots.length) return <p className="text-sm text-slate-500">ยังไม่มี lot ของ part นี้ — รับเข้าได้ที่แท็บ "รับสินค้าเข้า"</p>
   return (
     <div className="flex flex-col gap-3">

@@ -43,7 +43,7 @@ export function ReceiveWizard({ api, zones, onShowZone, onOpenReport }: Props) {
   const [step, setStep] = useState<Step>('capture')
   const [image, setImage] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
-  const [sample, setSample] = useState<'k1g' | 'j1d'>('k1g')
+  const [sample, setSample] = useState<'k1g' | 'j1a' | 'j1d'>('k1g')
   const [reading, setReading] = useState(false)
   const [invoice, setInvoice] = useState<ExtractedInvoice | null>(null)
   const [lines, setLines] = useState<Line[]>([])
@@ -60,6 +60,11 @@ export function ReceiveWizard({ api, zones, onShowZone, onOpenReport }: Props) {
   }
 
   const zoneName = (id: string) => zones.find((z) => z.id === id)?.name ?? id
+  const storageZones = zones.filter((z) => z.kind === 'storage' || z.kind === 'tent' || z.kind === 'receiving')
+  const suggested = (partNo: string) => {
+    const part = PARTS.find((p) => p.partNo === partNo)
+    return part ? suggestZone(part) : null
+  }
   const update = (i: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)))
 
   /** อ่าน invoice: ใช้ Qwen จริงเมื่อมีภาพและตั้งค่า Supabase ไว้ ไม่เช่นนั้นใช้ invoice ตัวอย่าง */
@@ -123,7 +128,6 @@ export function ReceiveWizard({ api, zones, onShowZone, onOpenReport }: Props) {
         customerId: 'RE',
         model: invoice.model,
         provider: invoice.provider,
-        receivedBy: 'ทีมรับเข้า (demo)',
       },
       lines.map((l) => ({ partNo: l.partNo, invoiceQty: l.invoiceQty, countedQty: l.counted, damagedQty: l.damaged, zoneId: l.zoneId })),
     )
@@ -201,8 +205,9 @@ export function ReceiveWizard({ api, zones, onShowZone, onOpenReport }: Props) {
               )}
               <label className="flex flex-col gap-1">
                 <span className="text-slate-500">Invoice ตัวอย่าง</span>
-                <select id="sample-invoice" className={inputCls} value={sample} onChange={(e) => setSample(e.target.value as 'k1g' | 'j1d')}>
+                <select id="sample-invoice" className={inputCls} value={sample} onChange={(e) => setSample(e.target.value as 'k1g' | 'j1a' | 'j1d')}>
                   <option value="k1g">Royal Enfield K1G — 8 รายการ (เบิก MRA ได้ทันที)</option>
+                  <option value="j1a">Royal Enfield J1A — 6 รายการ (ต้องผ่าน MI3)</option>
                   <option value="j1d">Royal Enfield J1D — ลูกปืน 150324/A (ต้องผ่าน MI3)</option>
                 </select>
               </label>
@@ -258,7 +263,7 @@ export function ReceiveWizard({ api, zones, onShowZone, onOpenReport }: Props) {
                   <th className="py-2 pr-2">อ่านได้</th>
                   <th className="pr-2">Part ใน Master</th>
                   <th className="pr-2 text-right">จำนวน</th>
-                  <th className="pr-2">โซนที่แนะนำ</th>
+                  <th className="pr-2">โซนจัดเก็บ</th>
                   <th>สถานะ</th>
                 </tr>
               </thead>
@@ -284,12 +289,18 @@ export function ReceiveWizard({ api, zones, onShowZone, onOpenReport }: Props) {
                       </td>
                       <td className="pr-2 text-right tabular-nums">{fmt(l.invoiceQty)}</td>
                       <td className="pr-2">
-                        {l.zoneId ? (
-                          <button className="text-left text-xs text-sky-700 underline-offset-2 hover:underline" onClick={() => onShowZone(l.zoneId)}>
-                            {zoneName(l.zoneId)} ↗
+                        <select id={`zone-${i}`} aria-label="โซนจัดเก็บ" className={inputCls} value={l.zoneId} onChange={(e) => update(i, { zoneId: e.target.value })}>
+                          <option value="">— เลือกโซน —</option>
+                          {storageZones.map((z) => (
+                            <option key={z.id} value={z.id}>
+                              {z.name}
+                            </option>
+                          ))}
+                        </select>
+                        {l.zoneId && (
+                          <button className="mt-0.5 text-[11px] text-sky-700 underline-offset-2 hover:underline" onClick={() => onShowZone(l.zoneId)}>
+                            {l.zoneId === suggested(l.partNo) ? 'ระบบแนะนำ' : 'เลือกเอง'} · ดูบนผัง ↗
                           </button>
-                        ) : (
-                          '–'
                         )}
                       </td>
                       <td className="text-xs">

@@ -35,7 +35,7 @@ export function RoutePanel(props: Props) {
     : []
 
   return (
-    <aside className="flex h-full w-full flex-col gap-4 overflow-y-auto border-l border-slate-200 bg-white p-4 text-sm text-slate-700 md:w-96">
+    <aside className="flex min-h-0 w-full flex-1 flex-col gap-4 overflow-y-auto bg-white p-4 text-sm text-slate-700">
       <section className="space-y-2">
         <h2 className="border-b-2 pb-1 text-base font-bold" style={{ color: BRAND.primary, borderColor: BRAND.primary }}>วิเคราะห์ระยะเดินส่ง Part</h2>
         <label className="block">

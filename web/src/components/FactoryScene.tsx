@@ -6,6 +6,8 @@ import { MAIN_BUILDING_FLOOR_ID, TENT_STYLE, TREE_POINTS } from '../data/siteApp
 import { ZONE_STYLE } from '../data/zoneStyle'
 import { toRadians, toSite } from '../lib/geometry'
 import type { RouteResult } from '../lib/pathfinding'
+import type { ZoneContents } from '../inventory/reports'
+import { modelColor } from '../data/modelColors'
 import type { FactoryLayout, Floor, Landmark, Zone } from '../types/layout'
 import { BuildingA } from './models/BuildingA'
 import { ArchTent, OfficeBuilding, PavedArea, Road, SiteGround, Trees, TwinGableTent, Warehouse } from './models/SiteModels'
@@ -26,6 +28,12 @@ interface Props {
   onBuildingClick?: () => void
   /** มองจากด้านบน (ใช้เทียบกับภาพดาวเทียม) */
   topView?: boolean
+  /** false = หน้าผังถูกซ่อนอยู่ หยุดวาดภาพเพื่อประหยัดเครื่อง */
+  active?: boolean
+  /** แสดงถนน ต้นไม้ และพื้นที่รอบโรงงาน (ปิดไว้เป็นค่าเริ่มต้นเพื่อให้ผังไม่รก) */
+  showSurroundings?: boolean
+  /** ของในแต่ละโซน — ใช้ติดป้ายยอดและแถบสีตาม Model */
+  zoneStock?: Map<string, ZoneContents>
 }
 
 const CAMERA: Record<ViewMode | 'top', [number, number, number]> = {
@@ -47,7 +55,7 @@ function CameraRig({ view }: { view: keyof typeof CAMERA }) {
 }
 
 export function FactoryScene(props: Props) {
-  const { layout, mode, explode, hiddenFloors, selectedZoneIds, route, onZoneClick, onBuildingClick, topView } = props
+  const { layout, mode, explode, hiddenFloors, selectedZoneIds, route, onZoneClick, onBuildingClick, topView, active = true, showSurroundings = false, zoneStock } = props
   const exterior = mode === 'exterior'
   const floorsById = new Map(layout.floors.map((f) => [f.id, f]))
   const floorY = (id: string) => (floorsById.get(id)?.elevation ?? 0) * (exterior ? 1 : explode)
@@ -63,7 +71,7 @@ export function FactoryScene(props: Props) {
   const yardZones = layout.zones.filter((z) => floorsById.get(z.floorId)?.area === 'yard')
 
   return (
-    <Canvas camera={{ position: CAMERA.exterior, fov: 42, far: 2000 }} shadows="soft">
+    <Canvas camera={{ position: CAMERA.exterior, fov: 42, far: 2000 }} shadows="soft" frameloop={active ? 'always' : 'never'}>
       <CameraRig view={topView ? 'top' : mode} />
       <color attach="background" args={[MATERIAL.sky]} />
       <fog attach="fog" args={[MATERIAL.sky, 320, 900]} />
@@ -82,20 +90,22 @@ export function FactoryScene(props: Props) {
       />
       <OrbitControls makeDefault target={[0, 5, 0]} maxPolarAngle={Math.PI / 2.1} maxDistance={600} minDistance={15} />
 
-      {/* พื้นหญ้ารอบที่ดิน */}
+      {/* พื้นรอบที่ดิน: หญ้าเมื่อแสดงสภาพแวดล้อม, สีเรียบเมื่อเน้นเฉพาะโรงงาน */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.05, 0]} receiveShadow>
         <planeGeometry args={[1600, 1600]} />
-        <meshStandardMaterial color={MATERIAL.grass} roughness={1} />
+        <meshStandardMaterial color={showSurroundings ? MATERIAL.grass : '#dde3ea'} roughness={1} />
       </mesh>
 
       <group position={[-center[0], 0, -center[1]]}>
         {layout.site && (
           <>
             <SiteGround boundary={layout.site.boundary} />
-            {layout.site.landmarks.map((l) => (
-              <LandmarkModel key={l.id} landmark={l} />
-            ))}
-            <Trees points={TREE_POINTS} />
+            {layout.site.landmarks
+              .filter((l) => showSurroundings || l.kind === 'office' || l.kind === 'building')
+              .map((l) => (
+                <LandmarkModel key={l.id} landmark={l} />
+              ))}
+            {showSurroundings && <Trees points={TREE_POINTS} />}
           </>
         )}
 
@@ -123,7 +133,7 @@ export function FactoryScene(props: Props) {
                 {layout.zones
                   .filter((z) => z.floorId === floor.id)
                   .map((zone) => (
-                    <ZoneBox key={zone.id} zone={zone} selected={selectedZoneIds.includes(zone.id)} onClick={() => onZoneClick(zone)} />
+                    <ZoneBox key={zone.id} zone={zone} stock={zoneStock?.get(zone.id)} selected={selectedZoneIds.includes(zone.id)} onClick={() => onZoneClick(zone)} />
                   ))}
               </group>
             ))}
@@ -142,10 +152,14 @@ export function FactoryScene(props: Props) {
               {zone.kind === 'tent' ? (
                 <Model width={zone.width} depth={zone.depth} onClick={select} />
               ) : (
-                <ZoneBox zone={zone} selected={selectedZoneIds.includes(zone.id)} onClick={() => onZoneClick(zone)} />
+                <ZoneBox zone={zone} stock={zoneStock?.get(zone.id)} selected={selectedZoneIds.includes(zone.id)} onClick={() => onZoneClick(zone)} />
               )}
               {selectedZoneIds.includes(zone.id) && <SelectionRing width={zone.width} depth={zone.depth} />}
-              <Label position={[zone.width / 2, 10, zone.depth / 2]} title={zone.name} sub={zone.stores?.join(' / ')} />
+              <Label
+                position={[zone.width / 2, 10, zone.depth / 2]}
+                title={zone.name}
+                sub={zoneStock?.get(zone.id)?.totalQty ? `${zoneStock.get(zone.id)!.totalQty.toLocaleString('th-TH')} ชิ้น · ${zoneStock.get(zone.id)!.models.map((m) => m.model).join(', ')}` : zone.stores?.join(' / ')}
+              />
             </group>
           )
         })}
@@ -220,7 +234,7 @@ function FloorSlab({ floor }: { floor: Floor }) {
   )
 }
 
-function ZoneBox({ zone, selected, onClick }: { zone: Zone; selected: boolean; onClick: () => void }) {
+function ZoneBox({ zone, stock, selected, onClick }: { zone: Zone; stock?: ZoneContents; selected: boolean; onClick: () => void }) {
   const style = ZONE_STYLE[zone.kind]
   const showLabel = zone.kind !== 'stairs' && zone.kind !== 'lift'
   return (
@@ -241,14 +255,36 @@ function ZoneBox({ zone, selected, onClick }: { zone: Zone; selected: boolean; o
           emissiveIntensity={selected ? 0.8 : 0}
         />
       </mesh>
+      {/* แถบสีบนชั้นวาง: สัดส่วนของแต่ละ Model ในโซน */}
+      {stock && stock.totalQty > 0 && <ModelStrip stock={stock} width={zone.width} depth={zone.depth} y={style.height / 2 + 0.08} />}
       {showLabel && (
         <Html position={[0, style.height / 2 + 0.8, 0]} center className="pointer-events-none" zIndexRange={[10, 0]}>
           <div className="whitespace-nowrap rounded bg-white/90 px-1.5 text-[10px] font-medium text-slate-700 shadow">
             {zone.code}
-            {zone.stores && <span className="text-slate-400"> · {zone.stores.join('/')}</span>}
+            {stock && stock.totalQty > 0 ? (
+              <span className="text-slate-500"> · {stock.totalQty.toLocaleString('th-TH')} ชิ้น</span>
+            ) : (
+              zone.stores && <span className="text-slate-400"> · ว่าง</span>
+            )}
           </div>
         </Html>
       )}
+    </group>
+  )
+}
+
+function ModelStrip({ stock, width, depth, y }: { stock: ZoneContents; width: number; depth: number; y: number }) {
+  // ความกว้างของแต่ละ Model ตามสัดส่วน และจุดเริ่มต้นสะสมจากซ้ายไปขวา
+  const widths = stock.models.map((m) => (m.qty / stock.totalQty) * width)
+  const starts = widths.map((_, i) => -width / 2 + widths.slice(0, i).reduce((a, b) => a + b, 0))
+  return (
+    <group position={[0, y, 0]}>
+      {stock.models.map((m, i) => (
+        <mesh key={m.model} position={[starts[i] + widths[i] / 2, 0, 0]}>
+          <boxGeometry args={[Math.max(widths[i] - 0.1, 0.05), 0.16, depth * 0.9]} />
+          <meshStandardMaterial color={modelColor(m.model)} />
+        </mesh>
+      ))}
     </group>
   )
 }

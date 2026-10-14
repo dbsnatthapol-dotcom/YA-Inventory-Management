@@ -9,6 +9,8 @@ import { ZONE_STYLE } from './data/zoneStyle'
 import { loadLayout, type LoadedLayout } from './lib/layoutSource'
 import { findRoute, type RouteOptions } from './lib/pathfinding'
 import { useInventory } from './inventory/useInventory'
+import { zoneContents, zoneTotals } from './inventory/reports'
+import { ZonePanel } from './components/ZonePanel'
 import type { Zone } from './types/layout'
 
 export default function App() {
@@ -25,6 +27,9 @@ export default function App() {
   const [explode, setExplode] = useState(2.5)
   const [hiddenFloors, setHiddenFloors] = useState<Set<string>>(new Set())
   const [topView, setTopView] = useState(false)
+  const [showSurroundings, setShowSurroundings] = useState(false)
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
+  const [sideTab, setSideTab] = useState<'zone' | 'route'>('zone')
   const [page, setPage] = useState<'map' | 'inventory'>('map')
   const inventory = useInventory()
 
@@ -40,6 +45,10 @@ export default function App() {
   )
 
   const handleZoneClick = (zone: Zone) => {
+    if (zone.kind !== 'stairs' && zone.kind !== 'lift' && zone.kind !== 'assembly') {
+      setSelectedZoneId(zone.id)
+      setSideTab('zone')
+    }
     if (zone.kind === 'assembly') setTargetId(zone.id)
     else if (zone.kind === 'storage' || zone.kind === 'receiving' || zone.kind === 'tent') setSourceId(zone.id)
   }
@@ -53,6 +62,7 @@ export default function App() {
     })
 
   const buildingFloors = layout.floors.filter((f) => f.area === 'building')
+  const zoneStock = useMemo(() => zoneTotals(inventory.state), [inventory.state])
 
   /** เปิดผัง 3D ที่โซนจัดเก็บ (เรียกจากหน้ารับเข้า/สต็อก) */
   const showZone = (zoneId: string) => {
@@ -131,6 +141,10 @@ export default function App() {
             <input type="checkbox" checked={topView} onChange={(e) => setTopView(e.target.checked)} />
             มุมมองด้านบน
           </label>
+          <label className="flex items-center gap-1" title="ถนน ต้นไม้ และพื้นที่รอบโรงงาน">
+            <input type="checkbox" checked={showSurroundings} onChange={(e) => setShowSurroundings(e.target.checked)} />
+            แสดงรอบโรงงาน
+          </label>
         </div>
           </>
         )}
@@ -153,11 +167,14 @@ export default function App() {
             mode={mode}
             explode={explode}
             hiddenFloors={hiddenFloors}
-            selectedZoneIds={[sourceId, targetId]}
+            selectedZoneIds={[sourceId, targetId, ...(selectedZoneId ? [selectedZoneId] : [])]}
             route={route}
             onZoneClick={handleZoneClick}
             onBuildingClick={() => setMode('interior')}
             topView={topView}
+            active={page === 'map'}
+            showSurroundings={showSurroundings}
+            zoneStock={zoneStock}
           />
           <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap gap-x-3 gap-y-1 rounded-md bg-white/90 px-3 py-1.5 text-[11px] text-slate-700 shadow">
             {mode === 'exterior' ? (
@@ -172,6 +189,44 @@ export default function App() {
             )}
           </div>
         </div>
+        <div className="flex w-full flex-col border-l border-slate-200 bg-white md:w-96">
+          <div className="flex gap-1 border-b border-slate-200 p-2 text-sm">
+            {(
+              [
+                ['zone', 'ของในโซน'],
+                ['route', 'ระยะเดินส่ง Part'],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setSideTab(key)}
+                className={`flex-1 rounded-md px-3 py-1.5 transition ${sideTab === key ? 'font-semibold text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                style={sideTab === key ? { background: BRAND.primary } : undefined}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {sideTab === 'zone' ? (
+            <div className="min-h-0 flex-1 overflow-y-auto p-4 text-sm text-slate-700">
+              <ZonePanel
+                layout={layout}
+                zoneId={selectedZoneId}
+                contents={selectedZoneId ? zoneContents(inventory.state, selectedZoneId) : null}
+                allZones={zoneStock}
+                onSelectZone={(id) => {
+                  setSelectedZoneId(id)
+                  const zone = layout.zones.find((z) => z.id === id)
+                  if (zone) setMode(layout.floors.find((f) => f.id === zone.floorId)?.area === 'building' ? 'interior' : 'exterior')
+                }}
+              />
+              {selectedZoneId && (
+                <button className="mt-3 text-xs text-sky-700 hover:underline" onClick={() => setSelectedZoneId(null)}>
+                  ← ดูทุกโซน
+                </button>
+              )}
+            </div>
+          ) : (
         <RoutePanel
           layout={layout}
           sourceId={sourceId}
@@ -184,6 +239,8 @@ export default function App() {
           onOptionsChange={setOptions}
           onTripsChange={setTripsPerDay}
         />
+          )}
+        </div>
       </main>
     </div>
   )

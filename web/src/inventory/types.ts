@@ -38,6 +38,16 @@ export interface Part {
   models: string[]
 }
 
+/** ใบรายงาน STOCK ของ Model กลุ่มหนึ่ง (เช่น J1D + J1D4) */
+export interface StockSheet {
+  id: string
+  title: string
+  customerId: string
+  models: string[]
+  /** ลำดับ part ตามแบบฟอร์มเดิม */
+  partNos: string[]
+}
+
 /** กฎแนะนำโซนจัดเก็บ: ลูกค้า + กลุ่มสินค้า (type = null คือค่าเริ่มต้นของลูกค้า) */
 export interface ZoneRule {
   customerId: string
@@ -92,6 +102,8 @@ export interface Movement {
   qty: number
   at: string
   note?: string
+  /** ผู้บันทึก (ใช้ติดตามย้อนหลัง) */
+  by?: string
 }
 
 export interface InventoryState {

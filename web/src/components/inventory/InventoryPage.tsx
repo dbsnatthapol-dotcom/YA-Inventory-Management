@@ -5,19 +5,26 @@ import { PARTS } from '../../inventory/masterData'
 import { discrepancyReport, lotTrace } from '../../inventory/reports'
 import type { InventoryApi } from '../../inventory/useInventory'
 import type { Zone } from '../../types/layout'
+import { Dashboard } from './Dashboard'
+import { MovementLog } from './MovementLog'
 import { ReceiveWizard } from './ReceiveWizard'
 import { StockReport } from './StockReport'
-import { fmt, fmtTime, inputCls } from './format'
+import { fmt, fmtTime, inputBase, inputCls } from './format'
 import { Button, Chip, Panel } from './ui'
 
-type Tab = 'receive' | 'stock' | 'discrepancy' | 'trace'
+type Tab = 'dashboard' | 'receive' | 'stock' | 'movements' | 'discrepancy' | 'trace'
 
 const TABS: { key: Tab; label: string }[] = [
+  { key: 'dashboard', label: 'Dashboard' },
   { key: 'receive', label: 'รับสินค้าเข้า' },
   { key: 'stock', label: 'ใบรายงาน STOCK' },
+  { key: 'movements', label: 'Movement' },
   { key: 'discrepancy', label: 'รายงานความต่าง' },
   { key: 'trace', label: 'ติดตาม Lot / Invoice' },
 ]
+
+/** บทบาทผู้บันทึกใน demo — ระบบจริงใช้บัญชีผู้ใช้จาก Supabase Auth */
+const OPERATORS = ['ทีมรับเข้า', 'MRA ไลน์ประกอบ', 'QC MI3', 'Inspection', 'หัวหน้าคลัง']
 
 interface Props {
   api: InventoryApi
@@ -26,7 +33,7 @@ interface Props {
 }
 
 export function InventoryPage({ api, zones, onShowZone }: Props) {
-  const [tab, setTab] = useState<Tab>('receive')
+  const [tab, setTab] = useState<Tab>('dashboard')
   const [traceQuery, setTraceQuery] = useState('')
 
   const openTrace = (lotId: string) => {
@@ -50,12 +57,26 @@ export function InventoryPage({ api, zones, onShowZone }: Props) {
               </button>
             ))}
           </nav>
-          <span className="ml-auto text-xs text-slate-500">ข้อมูลตัวอย่าง · เก็บในเบราว์เซอร์นี้เท่านั้น</span>
+          <label className="ml-auto flex items-center gap-1 whitespace-nowrap text-xs text-slate-600" title="ชื่อนี้จะถูกบันทึกกับทุกรายการที่ทำ">
+            ผู้บันทึก
+            <select id="operator" className={inputBase} value={api.operator} onChange={(e) => api.setOperator(e.target.value)}>
+              {OPERATORS.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="text-xs text-slate-500" title="ระบบจริงจะเก็บใน Supabase และอัปเดตทุกเครื่องพร้อมกัน">
+            ข้อมูลตัวอย่าง · เก็บในเบราว์เซอร์นี้
+          </span>
           <Button variant="secondary" onClick={api.resetDemo}>
             รีเซ็ตข้อมูลตัวอย่าง
           </Button>
         </div>
 
+        {tab === 'dashboard' && <Dashboard api={api} onTrace={openTrace} onOpenMovements={() => setTab('movements')} />}
+        {tab === 'movements' && <MovementLog api={api} onTrace={openTrace} />}
         {tab === 'receive' && <ReceiveWizard api={api} zones={zones} onShowZone={onShowZone} onOpenReport={() => setTab('stock')} />}
         {tab === 'stock' && <StockReport api={api} zones={zones} onShowZone={onShowZone} onTrace={openTrace} />}
         {tab === 'discrepancy' && <DiscrepancyList api={api} onTrace={openTrace} />}
