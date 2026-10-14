@@ -77,34 +77,30 @@ create policy "admin read access log" on public.access_log
   for select to authenticated using (public.staff_role() in ('admin', 'manager'));
 
 -- ===================== สิทธิ์ข้อมูลเดิม: ต้องเป็นพนักงานที่ active =====================
--- เดิม: ผังอ่านได้โดยไม่ login และทุกบัญชีที่ login เขียนได้ ⇒ เปลี่ยนเป็นตามบทบาท
+-- เดิม: ผังอ่านได้โดยไม่ login และทุกบัญชีที่ login เขียนได้ ⇒ แก้กฎเดิมให้เป็นตามบทบาท (alter + rename ไม่ลบกฎ)
 do $$
 declare
   t text;
 begin
-  foreach t in array array['floors', 'nav_nodes', 'nav_edges', 'zones', 'sites', 'site_landmarks',
-                           'locations', 'parts', 'stock', 'suppliers', 'inbound_receipts',
-                           'inbound_receipt_lines', 'stock_movements', 'part_demand', 'pick_trips',
-                           'customers', 'product_models', 'part_models', 'zone_rules'] loop
-    execute format('drop policy if exists "%s readable by everyone" on public.%I', t, t);
-    execute format('drop policy if exists "%s writable by staff" on public.%I', t, t);
-    execute format('drop policy if exists "%s staff access" on public.%I', t, t);
-    execute format('create policy "%s read by staff" on public.%I for select to authenticated using (public.is_staff())', t, t);
-  end loop;
-
-  -- ผังโรงงาน: แก้ได้เฉพาะผู้ดูแลระบบ
+  -- ผังโรงงาน: พนักงานอ่านได้, แก้ได้เฉพาะผู้ดูแลระบบ
   foreach t in array array['floors', 'nav_nodes', 'nav_edges', 'zones', 'sites', 'site_landmarks'] loop
-    execute format('create policy "%s write by admin" on public.%I for all to authenticated using (public.staff_role() = ''admin'') with check (public.staff_role() = ''admin'')', t, t);
+    execute format('alter policy "%s readable by everyone" on public.%I to authenticated using (public.is_staff())', t, t);
+    execute format('alter policy "%s readable by everyone" on public.%I rename to "%s read by staff"', t, t, t);
+    execute format('alter policy "%s writable by staff" on public.%I to authenticated using (public.staff_role() = ''admin'') with check (public.staff_role() = ''admin'')', t, t);
+    execute format('alter policy "%s writable by staff" on public.%I rename to "%s write by admin"', t, t, t);
   end loop;
 
-  -- ข้อมูลหลัก (part, Model, กฎโซน): ผู้ดูแลระบบและผู้จัดการ
+  -- ข้อมูลหลัก (part, Model, กฎโซน): พนักงานอ่านได้, แก้ได้เฉพาะผู้ดูแลระบบและผู้จัดการ
   foreach t in array array['locations', 'parts', 'suppliers', 'customers', 'product_models', 'part_models', 'zone_rules'] loop
-    execute format('create policy "%s write by admin or manager" on public.%I for all to authenticated using (public.staff_role() in (''admin'', ''manager'')) with check (public.staff_role() in (''admin'', ''manager''))', t, t);
+    execute format('create policy "%s read by staff" on public.%I for select to authenticated using (public.is_staff())', t, t);
+    execute format('alter policy "%s staff access" on public.%I to authenticated using (public.staff_role() in (''admin'', ''manager'')) with check (public.staff_role() in (''admin'', ''manager''))', t, t);
+    execute format('alter policy "%s staff access" on public.%I rename to "%s write by admin or manager"', t, t, t);
   end loop;
 
-  -- รายการเคลื่อนไหว: พนักงานทุกบทบาทบันทึกได้ (สิทธิ์รายขั้นตอนบังคับใน Step 0.4)
+  -- รายการเคลื่อนไหว: พนักงานที่ active ทุกบทบาท (สิทธิ์รายขั้นตอนบังคับใน Step 0.4)
   foreach t in array array['stock', 'inbound_receipts', 'inbound_receipt_lines', 'stock_movements', 'part_demand', 'pick_trips'] loop
-    execute format('create policy "%s write by staff" on public.%I for all to authenticated using (public.is_staff()) with check (public.is_staff())', t, t);
+    execute format('alter policy "%s staff access" on public.%I to authenticated using (public.is_staff()) with check (public.is_staff())', t, t);
+    execute format('alter policy "%s staff access" on public.%I rename to "%s access by staff"', t, t, t);
   end loop;
 end;
 $$;
