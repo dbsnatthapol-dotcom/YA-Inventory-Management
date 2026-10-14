@@ -1,0 +1,363 @@
+import { useEffect, useMemo, useState } from 'react'
+import { AuthProvider } from './auth/AuthProvider'
+import { ChangePasswordScreen, LoadingScreen, LoginScreen } from './auth/AuthScreens'
+import { can, ROLE_LABEL } from './auth/staff'
+import { useAuth } from './auth/useAuth'
+import { UsersPage } from './components/admin/UsersPage'
+import { FactoryScene, type ViewMode } from './components/FactoryScene'
+import { InventoryPage } from './components/inventory/InventoryPage'
+import { RoutePanel } from './components/RoutePanel'
+import logoUrl from './assets/uam-logo.png'
+import { BRAND } from './data/brand'
+import { sampleLayout } from './data/factoryLayout'
+import { MODEL_COLOR } from './data/modelColors'
+import { applyLayoutEdits, isEditable } from './lib/layoutEdit'
+import { loadLayout, type LoadedLayout } from './lib/layoutSource'
+import { useLayoutEdits } from './lib/useLayoutEdits'
+import { findRoute, type RouteOptions } from './lib/pathfinding'
+import { useInventory } from './inventory/useInventory'
+import { zoneContents, zoneTotals } from './inventory/reports'
+import { ZonePanel } from './components/ZonePanel'
+import { LayoutEditorPanel } from './components/LayoutEditorPanel'
+import type { Zone } from './types/layout'
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AuthGate />
+    </AuthProvider>
+  )
+}
+
+/** ต่อ Supabase แล้ว = ต้อง login ก่อนทุกหน้า · ไม่ได้ต่อ (หน้าสาธิต) = เข้าได้เลย */
+function AuthGate() {
+  const auth = useAuth()
+  if (!auth.enabled) return <FactoryApp />
+  if (auth.loading) return <LoadingScreen />
+  if (!auth.session || !auth.profile?.active) return <LoginScreen />
+  if (auth.profile.must_change_password) return <ChangePasswordScreen />
+  return <FactoryApp />
+}
+
+function FactoryApp() {
+  const auth = useAuth()
+  const role = auth.enabled ? (auth.profile?.role ?? null) : null
+  const staffName = auth.profile ? `${auth.profile.full_name} (${auth.profile.employee_code})` : undefined
+  const [loaded, setLoaded] = useState<LoadedLayout>({ layout: sampleLayout, source: 'sample' })
+  const layoutEdits = useLayoutEdits()
+  // ผังที่ใช้งานจริง = ผังหลัก + ตำแหน่งที่ผู้ใช้ปรับ (ทางเดินที่ถูกขวางถูกปิด, จุดเข้า-ออกคำนวณใหม่)
+  const layout = useMemo(() => applyLayoutEdits(loaded.layout, layoutEdits.edits), [loaded.layout, layoutEdits.edits])
+  const [sourceId, setSourceId] = useState('TENT-C')
+  const [targetId, setTargetId] = useState('F2-ASM')
+  const [options, setOptions] = useState<Required<Pick<RouteOptions, 'optimize' | 'avoid'>>>({
+    optimize: 'time',
+    avoid: [],
+  })
+  const [tripsPerDay, setTripsPerDay] = useState(40)
+  const [mode, setMode] = useState<ViewMode>('exterior')
+  const [explode, setExplode] = useState(2.5)
+  const [hiddenFloors, setHiddenFloors] = useState<Set<string>>(new Set())
+  const [topView, setTopView] = useState(false)
+  const [showSurroundings, setShowSurroundings] = useState(false)
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
+  const [sideTab, setSideTab] = useState<'zone' | 'route' | 'edit'>('zone')
+  const [editZoneId, setEditZoneId] = useState<string | null>(null)
+  const editMode = sideTab === 'edit'
+  const [page, setPage] = useState<'map' | 'inventory' | 'users'>('map')
+  const inventory = useInventory(staffName)
+
+  useEffect(() => {
+    loadLayout().then(setLoaded)
+  }, [])
+
+  const source = layout.zones.find((z) => z.id === sourceId)
+  const target = layout.zones.find((z) => z.id === targetId)
+  const route = useMemo(
+    () => (source && target ? findRoute(layout, source.accessNodeId, target.accessNodeId, options) : null),
+    [layout, source, target, options],
+  )
+
+  const handleZoneClick = (zone: Zone) => {
+    if (editMode) {
+      if (isEditable(zone, layout.floors.find((f) => f.id === zone.floorId))) setEditZoneId(zone.id)
+      return
+    }
+    if (zone.kind !== 'stairs' && zone.kind !== 'lift' && zone.kind !== 'assembly') {
+      setSelectedZoneId(zone.id)
+      setSideTab('zone')
+    }
+    if (zone.kind === 'assembly') setTargetId(zone.id)
+    else if (zone.kind === 'storage' || zone.kind === 'receiving' || zone.kind === 'tent') setSourceId(zone.id)
+  }
+
+  const toggleFloor = (id: string) =>
+    setHiddenFloors((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  const buildingFloors = layout.floors.filter((f) => f.area === 'building')
+  const zoneStock = useMemo(() => zoneTotals(inventory.state), [inventory.state])
+
+  /** เปิดผัง 3D ที่โซนจัดเก็บ (เรียกจากหน้ารับเข้า/สต็อก) */
+  const showZone = (zoneId: string) => {
+    const zone = layout.zones.find((z) => z.id === zoneId)
+    if (!zone) return
+    handleZoneClick(zone)
+    setMode(layout.floors.find((f) => f.id === zone.floorId)?.area === 'building' ? 'interior' : 'exterior')
+    setPage('map')
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      <header className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2 text-white shadow" style={{ background: BRAND.primary }}>
+        <div className="flex items-center gap-3">
+          <BrandMark />
+          <div className="leading-tight">
+            <div className="text-sm font-bold tracking-wide">{layout.siteName.toUpperCase()}</div>
+            <div className="text-[11px] text-white/70">ระบบบริหารคลังสินค้า · ผังโรงงาน 3 มิติ</div>
+          </div>
+        </div>
+
+        <nav className="flex rounded-md bg-white/10 p-0.5 text-sm" aria-label="เมนูหลัก">
+          {(
+            [
+              ['map', 'ผังโรงงาน 3D'],
+              ['inventory', 'รับเข้า & สต็อก'],
+              ...(auth.enabled && can(role, 'viewAccessLog') ? ([['users', 'ผู้ใช้งาน']] as const) : []),
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              onClick={() => setPage(value)}
+              className={`rounded px-3 py-1 transition ${page === value ? 'bg-white font-semibold' : 'text-white/80 hover:bg-white/10'}`}
+              style={page === value ? { color: BRAND.primary } : undefined}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        {page === 'map' && (
+          <>
+        <div className="flex rounded-md bg-white/10 p-0.5 text-xs">
+          {(
+            [
+              ['exterior', 'ภายนอก (สมจริง)'],
+              ['interior', 'ภายใน (ผังชั้น)'],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              onClick={() => setMode(value)}
+              className={`rounded px-3 py-1 transition ${mode === value ? 'bg-white font-semibold' : 'text-white/80 hover:bg-white/10'}`}
+              style={mode === value ? { color: BRAND.primary } : undefined}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3 text-xs text-white/90">
+          {mode === 'interior' && (
+            <>
+              {buildingFloors.map((f) => (
+                <label key={f.id} className="flex items-center gap-1">
+                  <input type="checkbox" checked={!hiddenFloors.has(f.id)} onChange={() => toggleFloor(f.id)} />
+                  {f.name.replace('อาคาร A ', '')}
+                </label>
+              ))}
+              <label className="flex items-center gap-1">
+                แยกชั้น
+                <input type="range" min={1} max={5} step={0.5} value={explode} onChange={(e) => setExplode(Number(e.target.value))} />
+              </label>
+            </>
+          )}
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={topView} onChange={(e) => setTopView(e.target.checked)} />
+            มุมมองด้านบน
+          </label>
+          <label className="flex items-center gap-1" title="ถนน ต้นไม้ และพื้นที่รอบโรงงาน">
+            <input type="checkbox" checked={showSurroundings} onChange={(e) => setShowSurroundings(e.target.checked)} />
+            แสดงรอบโรงงาน
+          </label>
+        </div>
+          </>
+        )}
+
+        <span className="ml-auto rounded bg-white/10 px-2 py-0.5 text-[11px] text-white/80">
+          ข้อมูล: {loaded.source === 'supabase' ? 'Supabase' : 'ผังตัวอย่าง'}
+        </span>
+        {auth.profile ? (
+          <span className="flex items-center gap-2 text-xs">
+            <span className="text-right leading-tight">
+              <span className="block font-semibold">{auth.profile.full_name}</span>
+              <span className="text-white/70">
+                {auth.profile.employee_code} · {ROLE_LABEL[auth.profile.role]}
+              </span>
+            </span>
+            <button className="rounded border border-white/40 px-2 py-1 hover:bg-white/10" onClick={() => void auth.signOut()}>
+              ออกจากระบบ
+            </button>
+          </span>
+        ) : (
+          <span className="rounded bg-amber-400/90 px-2 py-0.5 text-[11px] font-semibold text-slate-900">โหมดสาธิต</span>
+        )}
+      </header>
+
+      {page === 'inventory' && (
+        <main className="min-h-0 flex-1">
+          <InventoryPage api={inventory} zones={layout.zones} onShowZone={showZone} lockedOperator={staffName} />
+        </main>
+      )}
+      {page === 'users' && (
+        <main className="min-h-0 flex-1">
+          <UsersPage />
+        </main>
+      )}
+      {/* ซ่อนผัง 3D แทนการ unmount เพื่อคงมุมกล้องและไม่ต้องสร้างฉากใหม่ */}
+      <main className={`min-h-0 flex-1 flex-col md:flex-row ${page === 'map' ? 'flex' : 'hidden'}`}>
+        <div className="relative min-h-[50vh] flex-1">
+          <FactoryScene
+            layout={layout}
+            mode={mode}
+            explode={explode}
+            hiddenFloors={hiddenFloors}
+            selectedZoneIds={[sourceId, targetId, ...(selectedZoneId ? [selectedZoneId] : [])]}
+            route={route}
+            onZoneClick={handleZoneClick}
+            onBuildingClick={() => setMode('interior')}
+            topView={topView}
+            active={page === 'map'}
+            showSurroundings={showSurroundings}
+            zoneStock={zoneStock}
+            editMode={editMode}
+            editZoneId={editZoneId}
+            onZoneChange={layoutEdits.update}
+          />
+          <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap gap-x-3 gap-y-1 rounded-md bg-white/90 px-3 py-1.5 text-[11px] text-slate-700 shadow">
+            {mode === 'exterior' ? (
+              <span>คลิกอาคาร A เพื่อดูผังภายใน · คลิกเต็นท์เพื่อเลือกเป็นจุดเก็บต้นทาง</span>
+            ) : (
+              <FloorLegend editMode={editMode} />
+            )}
+          </div>
+        </div>
+        <div className="flex w-full flex-col border-l border-slate-200 bg-white md:w-96">
+          <div className="flex gap-1 border-b border-slate-200 p-2 text-sm">
+            {(
+              [
+                ['zone', 'ของในโซน'],
+                ['route', 'ระยะเดินส่ง Part'],
+                ...(can(role, 'editLayout') ? ([['edit', 'แก้ไขผัง']] as const) : []),
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => {
+                  setSideTab(key)
+                  if (key === 'edit') setMode('interior')
+                }}
+                className={`flex-1 rounded-md px-3 py-1.5 transition ${sideTab === key ? 'font-semibold text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                style={sideTab === key ? { background: BRAND.primary } : undefined}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {sideTab === 'edit' ? (
+            <div className="min-h-0 flex-1 overflow-y-auto p-4 text-sm text-slate-700">
+              <LayoutEditorPanel
+                layout={layout}
+                edits={layoutEdits.edits}
+                zoneId={editZoneId}
+                stock={zoneStock}
+                onSelect={setEditZoneId}
+                onUpdate={layoutEdits.update}
+                onAdd={layoutEdits.add}
+                onRemove={(id) => {
+                  layoutEdits.remove(id)
+                  if (sourceId === id) setSourceId('TENT-C')
+                  if (targetId === id) setTargetId('F2-ASM')
+                }}
+                onReset={layoutEdits.reset}
+              />
+            </div>
+          ) : sideTab === 'zone' ? (
+            <div className="min-h-0 flex-1 overflow-y-auto p-4 text-sm text-slate-700">
+              <ZonePanel
+                layout={layout}
+                zoneId={selectedZoneId}
+                contents={selectedZoneId ? zoneContents(inventory.state, selectedZoneId) : null}
+                allZones={zoneStock}
+                onSelectZone={(id) => {
+                  setSelectedZoneId(id)
+                  const zone = layout.zones.find((z) => z.id === id)
+                  if (zone) setMode(layout.floors.find((f) => f.id === zone.floorId)?.area === 'building' ? 'interior' : 'exterior')
+                }}
+              />
+              {selectedZoneId && (
+                <button className="mt-3 text-xs text-sky-700 hover:underline" onClick={() => setSelectedZoneId(null)}>
+                  ← ดูทุกโซน
+                </button>
+              )}
+            </div>
+          ) : (
+        <RoutePanel
+          layout={layout}
+          sourceId={sourceId}
+          targetId={targetId}
+          options={options}
+          tripsPerDay={tripsPerDay}
+          route={route}
+          onSourceChange={setSourceId}
+          onTargetChange={setTargetId}
+          onOptionsChange={setOptions}
+          onTripsChange={setTripsPerDay}
+        />
+          )}
+        </div>
+      </main>
+    </div>
+  )
+}
+
+/** โลโก้ UAM บนพื้นขาว เพื่อให้สีฟ้าของโลโก้เด่นบนแถบสีน้ำเงินเข้ม */
+function BrandMark() {
+  return (
+    <span className="flex h-10 w-12 items-center justify-center rounded-md bg-white p-1 shadow-sm">
+      <img src={logoUrl} alt={BRAND.shortName} className="h-full w-full object-contain" />
+    </span>
+  )
+}
+
+/** คำอธิบายสีเส้นพื้นและสีพาเลท (ผังภายใน) */
+function FloorLegend({ editMode }: { editMode: boolean }) {
+  const lines: [string, string][] = [
+    ['#f2c200', 'เส้นเหลือง: ทางเดินรถยก/คน, พื้นที่ทำงาน'],
+    ['#ffffff', 'กรอบขาว: ตำแหน่งชั้นวาง'],
+    ['repeating-linear-gradient(45deg,#f2c200 0 3px,#1d1d1f 3px 6px)', 'เหลือง-ดำ: จุดอันตราย'],
+  ]
+  return (
+    <>
+      {lines.map(([c, label]) => (
+        <span key={label} className="flex items-center gap-1">
+          <i className="inline-block h-2.5 w-2.5 rounded-sm border border-slate-300" style={{ background: c }} />
+          {label}
+        </span>
+      ))}
+      <span className="flex items-center gap-1">
+        สีพาเลท = Model:
+        {Object.entries(MODEL_COLOR).map(([m, c]) => (
+          <span key={m} className="flex items-center gap-0.5">
+            <i className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: c }} />
+            {m}
+          </span>
+        ))}
+      </span>
+      {editMode && <span className="font-semibold text-blue-700">โหมดแก้ไข: ลากโซนเพื่อย้าย</span>}
+    </>
+  )
+}
