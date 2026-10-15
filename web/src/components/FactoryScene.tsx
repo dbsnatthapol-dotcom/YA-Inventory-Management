@@ -3,10 +3,11 @@ import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { type Group, type PerspectiveCamera, Plane, Raycaster, Vector2, Vector3 } from 'three'
 import { BRAND, MATERIAL } from '../data/brand'
-import { MAIN_BUILDING_FLOOR_ID, TENT_STYLE, TREE_POINTS } from '../data/siteAppearance'
+import { GATES_WITH_SHRINE, MAIN_BUILDING_FLOOR_ID, TENT_STYLE, TREE_POINTS, TRUCK_YARD } from '../data/siteAppearance'
 import { palletsFor, planRack, RACK } from '../data/warehouse'
 import { ZONE_STYLE } from '../data/zoneStyle'
 import { toRadians, toSite } from '../lib/geometry'
+import { floorPaint, type FloorPaint } from '../lib/floorPlan'
 import { clampToFloor, isEditable, pointInRect, rectsOverlap, snap, type ZonePatch } from '../lib/layoutEdit'
 import type { RouteResult } from '../lib/pathfinding'
 import type { ZoneContents } from '../inventory/reports'
@@ -30,8 +31,7 @@ import {
   YardWalkway,
   ZoneOutline,
 } from './models/Interior'
-import { ArchTent, Canteen, OfficeBuilding, PavedArea, Road, SiteGround, Trees, TruckGate, TwinGableTent, Warehouse } from './models/SiteModels'
-import { AISLE_WIDTH, type FloorPaint } from './models/textures'
+import { ArchTent, Canteen, Carport, OfficeBuilding, PavedArea, Road, SiteGround, Trees, TruckGate, TruckYard, TwinGableTent, Warehouse } from './models/SiteModels'
 
 export type ViewMode = 'exterior' | 'interior'
 
@@ -402,8 +402,10 @@ export function FactoryScene(props: Props) {
         {layout.site && (
           <>
             <SiteGround boundary={layout.site.boundary} />
+            <TruckYard polygon={TRUCK_YARD} />
+            <Truck position={[36, 0, 86]} rotation={-0.07} />
             {layout.site.landmarks
-              .filter((l) => showSurroundings || l.kind === 'office' || l.kind === 'building' || l.kind === 'canteen' || l.kind === 'gate')
+              .filter((l) => showSurroundings || l.kind !== 'road')
               .map((l) => (
                 <LandmarkModel key={l.id} landmark={l} />
               ))}
@@ -719,42 +721,6 @@ const ZoneModel = memo(function ZoneModel({
 
 /* ------------------------------------------------------------------ คำนวณเส้นพื้น */
 
-const GRID_NODE = /-r\d+c\d+$/
-
-/** ข้อมูลตีเส้นพื้นของชั้น: ทางเดินจากกราฟทางเดิน (ที่ไม่ถูก rack ขวาง), จุดอันตราย, ทางม้าลาย, เสา */
-function floorPaint(layout: FactoryLayout, floor: Floor): FloorPaint {
-  const nodes = new Map(layout.nodes.map((n) => [n.id, n]))
-  const aisles = layout.edges.flatMap((e): [number, number, number, number][] => {
-    const a = nodes.get(e.from)
-    const b = nodes.get(e.to)
-    return e.mode === 'walk' && a && b && a.floorId === floor.id && b.floorId === floor.id ? [[a.x, a.z, b.x, b.z]] : []
-  })
-  const zones = layout.zones.filter((z) => z.floorId === floor.id)
-  const hazards = zones.filter((z) => z.kind === 'stairs' || z.kind === 'lift').map(({ x, z, width, depth }) => ({ x, z, width, depth }))
-  const crossings = layout.nodes
-    .filter((n) => n.floorId === floor.id && n.id.endsWith('-DOOR'))
-    .map((n) => ({ x: n.x - AISLE_WIDTH, z: Math.max(n.z - 3.5, 0), width: AISLE_WIDTH * 2, depth: Math.min(3.5, n.z) }))
-
-  // เสาโครงสร้าง: กึ่งกลางระหว่างทางเดินหลัก และแนวผนัง
-  const grid = layout.nodes.filter((n) => n.floorId === floor.id && GRID_NODE.test(n.id))
-  const lines = (values: number[], size: number) => {
-    const sorted = [...new Set(values)].sort((a, b) => a - b)
-    return [0.3, ...sorted.slice(1).map((v, i) => (v + sorted[i]) / 2), size - 0.3]
-  }
-  const nearAisle = (x: number, z: number) =>
-    aisles.some(([ax, az, bx, bz]) => {
-      const len2 = (bx - ax) ** 2 + (bz - az) ** 2 || 1
-      const t = Math.min(1, Math.max(0, ((x - ax) * (bx - ax) + (z - az) * (bz - az)) / len2))
-      return Math.hypot(x - (ax + t * (bx - ax)), z - (az + t * (bz - az))) < AISLE_WIDTH / 2 + 0.4
-    })
-  const columns: [number, number][] = []
-  if (grid.length)
-    for (const x of lines(grid.map((n) => n.x), floor.width))
-      for (const z of lines(grid.map((n) => n.z), floor.depth)) if (!nearAisle(x, z) && !hazards.some((h) => pointInRect(x, z, h, 0.5))) columns.push([x, z])
-
-  return { width: floor.width, depth: floor.depth, aisles, hazards, crossings, columns }
-}
-
 /** ทางเดินลานนอก (พิกัด site) จากกราฟทางเดินที่มีโหนดอยู่บนลาน */
 function yardWalkways(layout: FactoryLayout): [number, number, number, number][] {
   const floors = new Map(layout.floors.map((f) => [f.id, f]))
@@ -787,12 +753,14 @@ function LandmarkModel({ landmark: l }: { landmark: Landmark }) {
           <Canteen width={l.width} depth={l.depth} height={l.height} />
         </>
       )}
-      {l.kind === 'gate' && <TruckGate width={l.width} depth={l.depth} />}
+      {l.kind === 'gate' && <TruckGate width={l.width} depth={l.depth} shrine={GATES_WITH_SHRINE.has(l.id)} />}
+      {l.kind === 'carport' && <Carport width={l.width} depth={l.depth} height={l.height} />}
       {l.kind === 'building' && <Warehouse width={l.width} depth={l.depth} height={Math.max(l.height, 6)} />}
       {l.kind === 'road' && <Road width={l.width} depth={l.depth} />}
       {l.kind === 'area' && <PavedArea width={l.width} depth={l.depth} />}
       {(l.kind === 'office' || l.kind === 'building') && <Label position={[0, l.height + 5, 0]} title={l.name} />}
       {l.kind === 'gate' && <Label position={[0, 4, 0]} title={l.name} />}
+      {l.kind === 'parking' && <Label position={[0, 1.5, 0]} title={l.name} muted />}
       {l.kind === 'road' && <Label position={[-l.width / 4, 1, 0]} title={l.name} muted />}
     </group>
   )

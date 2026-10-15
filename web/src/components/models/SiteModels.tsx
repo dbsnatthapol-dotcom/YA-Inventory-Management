@@ -79,8 +79,15 @@ export function TwinGableTent({ width, depth, onClick }: { width: number; depth:
 
 /** เต็นท์ผ้าใบทรงโค้ง (เต็นท์ C) — มุมซ้ายบนที่ (0,0) */
 export function ArchTent({ width, depth, onClick }: { width: number; depth: number } & Click) {
+  // โค้งพาดด้านแคบเสมอ: ถ้ากว้างกว่ายาว หมุน 90° แล้ววาดด้วยขนาดสลับกัน
+  if (width > depth)
+    return (
+      <group position={[width, 0, 0]} rotation={[0, -Math.PI / 2, 0]}>
+        <ArchTent width={depth} depth={width} onClick={onClick} />
+      </group>
+    )
   const r = width / 2
-  const height = 8.5
+  const height = Math.min(8.5, 1.2 + r * 1.4)
   return (
     <group onClick={onClick} {...pointer}>
       <mesh position={[r, 1.2, depth / 2]} rotation={[Math.PI / 2, 0, 0]} scale={[1, 1, (height - 1.2) / r]} castShadow receiveShadow>
@@ -288,7 +295,7 @@ export function Canteen({ width, depth, height = 3.6 }: { width: number; depth: 
  * ทางเข้ารถขนส่ง: เสาประตู 2 ต้น + ไม้กั้นเหลือง-ดำ + ถนนภายในยาว depth (แกน +z = เข้าสู่โรงงาน)
  * x/z ของ landmark = กึ่งกลางแนวประตู
  */
-export function TruckGate({ width, depth }: { width: number; depth: number }) {
+export function TruckGate({ width, depth, shrine = false }: { width: number; depth: number; shrine?: boolean }) {
   const lane = useMemo(() => tiled(roadSurface(2), 1, Math.max(1, depth / 12)), [depth])
   return (
     <group>
@@ -315,6 +322,8 @@ export function TruckGate({ width, depth }: { width: number; depth: number }) {
           <meshStandardMaterial color="#f2c200" />
         </mesh>
       </group>
+      {/* ศาลพระภูมิ (ฝั่ง +x = ซ้ายเมื่อหันหน้าเข้าโรงงาน) */}
+      {shrine && <SpiritHouse position={[(width + 0.8) / 2 + 2.2, 0, 1.2]} />}
       {/* ป้อมยาม */}
       <group position={[-(width + 0.8) / 2 - 1.8, 0, 1.6]}>
         <mesh position={[0, 1.3, 0]} castShadow>
@@ -327,5 +336,92 @@ export function TruckGate({ width, depth }: { width: number; depth: number }) {
         </mesh>
       </group>
     </group>
+  )
+}
+
+/** ศาลพระภูมิ: แท่นเสาขาว + ศาลหลังคาแดงยอดทอง */
+function SpiritHouse({ position }: { position: [number, number, number] }) {
+  return (
+    <group position={position}>
+      <mesh position={[0, 0.1, 0]} receiveShadow>
+        <boxGeometry args={[1.6, 0.2, 1.6]} />
+        <meshStandardMaterial color="#d9d2c3" />
+      </mesh>
+      <mesh position={[0, 0.9, 0]} castShadow>
+        <cylinderGeometry args={[0.14, 0.18, 1.5, 12]} />
+        <meshStandardMaterial color="#f4f1ea" />
+      </mesh>
+      <mesh position={[0, 1.75, 0]} castShadow>
+        <boxGeometry args={[0.9, 0.12, 0.9]} />
+        <meshStandardMaterial color="#c9a227" metalness={0.5} roughness={0.35} />
+      </mesh>
+      <mesh position={[0, 2.1, 0]} castShadow>
+        <boxGeometry args={[0.6, 0.6, 0.5]} />
+        <meshStandardMaterial color="#f4f1ea" />
+      </mesh>
+      <mesh position={[0, 2.62, 0]} rotation={[0, Math.PI / 4, 0]} castShadow>
+        <coneGeometry args={[0.55, 0.55, 4]} />
+        <meshStandardMaterial color="#b3261e" roughness={0.5} />
+      </mesh>
+      <mesh position={[0, 3.0, 0]}>
+        <coneGeometry args={[0.06, 0.4, 8]} />
+        <meshStandardMaterial color="#d4af37" metalness={0.7} roughness={0.3} />
+      </mesh>
+    </group>
+  )
+}
+
+/** ที่จอดรถมีหลังคาแถวเดียว (แกน x = แนวยาวติดรั้ว, -z = ฝั่งรั้ว) พร้อมช่องจอดและรถยนต์ */
+export function Carport({ width, depth, height = 3 }: { width: number; depth: number; height?: number }) {
+  const bays = Math.max(1, Math.floor(width / 2.6))
+  const start = -((bays * 2.6) / 2)
+  const cars = useMemo(() => {
+    const rand = seededRandom(Math.round(width * 7))
+    const colors = ['#f4f6f8', '#9aa3ad', '#2b2f36', '#b3261e', '#1f74c9']
+    return Array.from({ length: bays }, (_, i) => i).filter(() => rand() > 0.35).map((i) => ({ x: start + (i + 0.5) * 2.6, c: colors[Math.floor(rand() * colors.length)] }))
+  }, [bays, start, width])
+  return (
+    <group>
+      {/* หลังคาเมทัลชีทลาดลงด้านรั้ว */}
+      <mesh position={[0, height, 0]} rotation={[0.08, 0, 0]} castShadow receiveShadow>
+        <boxGeometry args={[width, 0.12, depth + 0.6]} />
+        <meshStandardMaterial color="#d5dbe2" metalness={0.3} roughness={0.5} />
+      </mesh>
+      {Array.from({ length: Math.floor(width / 5) + 1 }, (_, i) => -width / 2 + i * (width / Math.floor(width / 5))).map((x) => (
+        <mesh key={x} position={[x, height / 2, depth / 2 - 0.3]} castShadow>
+          <boxGeometry args={[0.18, height, 0.18]} />
+          <meshStandardMaterial color="#8b96a3" metalness={0.5} />
+        </mesh>
+      ))}
+      {Array.from({ length: bays + 1 }, (_, i) => start + i * 2.6).map((x) => (
+        <mesh key={`l${x}`} rotation={[-Math.PI / 2, 0, 0]} position={[x, 0.08, 0]}>
+          <planeGeometry args={[0.12, depth - 0.4]} />
+          <meshBasicMaterial color="#ffffff" polygonOffset polygonOffsetFactor={-4} />
+        </mesh>
+      ))}
+      {cars.map((car) => (
+        <group key={car.x} position={[car.x, 0, 0]}>
+          <mesh position={[0, 0.55, 0]} castShadow>
+            <boxGeometry args={[1.75, 0.7, 4.2]} />
+            <meshStandardMaterial color={car.c} metalness={0.4} roughness={0.35} />
+          </mesh>
+          <mesh position={[0, 1.1, -0.2]} castShadow>
+            <boxGeometry args={[1.55, 0.5, 2.2]} />
+            <meshStandardMaterial color="#2f4157" metalness={0.6} roughness={0.2} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  )
+}
+
+/** ลานรถส่งของ: พื้นยางมะตอยตามรูปลานจริง + ช่องจอดรถบรรทุก (พิกัด site) */
+export function TruckYard({ polygon }: { polygon: [number, number][] }) {
+  const shape = useMemo(() => new Shape(polygon.map(([x, z]) => new Vector2(x, -z))), [polygon])
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]} receiveShadow>
+      <shapeGeometry args={[shape]} />
+      <meshStandardMaterial color="#6b7079" roughness={0.95} polygonOffset polygonOffsetFactor={-2} />
+    </mesh>
   )
 }

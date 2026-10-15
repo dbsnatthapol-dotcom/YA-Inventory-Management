@@ -1,6 +1,7 @@
 import { CanvasTexture, ClampToEdgeWrapping, RepeatWrapping, SRGBColorSpace, type Texture } from 'three'
 import logoUrl from '../../assets/uam-logo.png'
 import { BRAND } from '../../data/brand'
+import { AISLE_WIDTH, type FloorPaint } from '../../lib/floorPlan'
 
 // สร้าง texture ด้วย canvas เพื่อไม่ต้องโหลดไฟล์ภาพจากภายนอก
 const cache = new Map<string, CanvasTexture>()
@@ -227,20 +228,7 @@ export function textLabel(text: string, color = '#ffffff', background?: string) 
   return tex
 }
 
-export interface FloorPaint {
-  width: number
-  depth: number
-  /** ทางเดินรถยก/คน (เส้นกึ่งกลาง) พิกัดภายในชั้น */
-  aisles: [number, number, number, number][]
-  /** พื้นที่ห้ามวางของ ลายเหลือง-ดำ */
-  hazards: { x: number; z: number; width: number; depth: number }[]
-  /** ทางม้าลายหน้าประตู */
-  crossings: { x: number; z: number; width: number; depth: number }[]
-  columns: [number, number][]
-}
-
 const PX = 16 // พิกเซลต่อเมตร
-export const AISLE_WIDTH = 3
 
 /**
  * พื้น epoxy สีเขียว ตีเส้นตามมาตรฐาน 5S:

@@ -75,7 +75,7 @@ export interface Landmark {
   id: string
   name: string
   /** canteen = อาคารชั้นเดียวเตี้ย, gate = ทางเข้ารถขนส่ง (x/z = กึ่งกลางแนวประตู, หมุนให้แกน +z ชี้เข้าโรงงาน, depth = ความยาวถนนภายใน) */
-  kind: 'office' | 'building' | 'road' | 'area' | 'canteen' | 'gate'
+  kind: 'office' | 'building' | 'road' | 'area' | 'canteen' | 'gate' | 'parking' | 'carport'
   /** จุดกึ่งกลาง (พิกัด site) */
   x: number
   z: number

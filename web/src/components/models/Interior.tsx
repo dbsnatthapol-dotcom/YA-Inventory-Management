@@ -4,7 +4,8 @@ import { BRAND } from '../../data/brand'
 import { modelColor } from '../../data/modelColors'
 import { palletsFor, planRack, RACK } from '../../data/warehouse'
 import type { ZoneContents } from '../../inventory/reports'
-import { floorMarkings, hazardStripes, textLabel, type FloorPaint } from './textures'
+import { floorMarkings, hazardStripes, textLabel } from './textures'
+import type { FloorPaint } from '../../lib/floorPlan'
 
 // โมเดลภายในอาคาร A: พื้นตีเส้น, เสา, ชั้นวางพาเลท, ไลน์ประกอบวงล้อ, บันได/ลิฟต์ และยานพาหนะในคลัง
 // ทุกชิ้นวาดในพิกัดภายในชั้น (เมตร) โดยมุมโซนอยู่ที่ (0, 0)

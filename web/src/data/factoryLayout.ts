@@ -66,6 +66,8 @@ const yardNodes: NavNode[] = [
   { id: 'Y-B', floorId: 'YARD', x: 62, z: 51 }, // หน้าเต็นท์ B
   { id: 'Y-C', floorId: 'YARD', x: 58, z: 64 }, // หน้าเต็นท์ C
   { id: 'Y-D', floorId: 'YARD', x: 76.5, z: 66 }, // ปลายด้านหน้าเต็นท์ D
+  { id: 'Y-DA', floorId: 'YARD', x: 88, z: 64 }, // ช่องทางเดินระหว่างเต็นท์ D กับอาคาร A
+  { id: 'Y-T', floorId: 'YARD', x: 88, z: 20 }, // หัวเต็นท์ยาง (หลังเต็นท์ B/D)
   { id: 'Y-J1', floorId: 'YARD', x: 63, z: 72 },
   { id: 'Y-J2', floorId: 'YARD', x: 83, z: 80 }, // ทางเดินระหว่างพื้นที่ G กับอาคาร A
   { id: 'Y-J3', floorId: 'YARD', x: 83, z: 113 },
@@ -79,6 +81,8 @@ const yardEdges: NavEdge[] = [
   { from: 'Y-J1', to: 'Y-C', mode: 'walk' },
   { from: 'Y-D', to: 'Y-J1', mode: 'walk' },
   { from: 'Y-D', to: 'Y-J2', mode: 'walk' },
+  { from: 'Y-D', to: 'Y-DA', mode: 'walk' },
+  { from: 'Y-DA', to: 'Y-T', mode: 'walk' },
 ]
 
 const coreZones: Zone[] = buildingFloors.flatMap((f) => [
@@ -107,6 +111,8 @@ const zones: Zone[] = [
   // ลานนอก — เต็นท์ (พิกัด site)
   { id: 'TENT-B', code: 'TENT-B', name: 'เต็นท์ B', floorId: 'YARD', kind: 'tent', x: 36, z: 23, width: 31, depth: 25, accessNodeId: 'Y-B', stores: ['FG', 'Component'] },
   { id: 'TENT-C', code: 'TENT-C', name: 'เต็นท์ C', floorId: 'YARD', kind: 'tent', x: 27, z: 49, width: 29, depth: 30, accessNodeId: 'Y-C', stores: ['FG', 'Component'] },
+  // เต็นท์ยางหลังเต็นท์ B และ D (ยืนยันจากเจ้าของ — ขนาดประมาณจากภาพดาวเทียม)
+  { id: 'TENT-T', code: 'TENT-T', name: 'เต็นท์ยาง (หลัง B/D)', floorId: 'YARD', kind: 'tent', x: 36, z: 17, width: 49, depth: 6, accessNodeId: 'Y-T', stores: ['ยาง'] },
   { id: 'TENT-D', code: 'TENT-D', name: 'เต็นท์ D', floorId: 'YARD', kind: 'tent', x: 68, z: 25, width: 17, depth: 38, accessNodeId: 'Y-D', stores: ['Component'] },
 ]
 
@@ -122,8 +128,10 @@ const landmarks: Landmark[] = [
   // rotation 210.2° = หันเข้าโรงงาน ตั้งฉากกับแนวรั้วด้านถนน
   { id: 'GATE-1', name: 'ทางเข้ารถขนส่ง 1 (ขวา)', kind: 'gate', x: 122, z: 155.5, width: 8, depth: 24, rotation: 210.2, height: 0 },
   { id: 'GATE-2', name: 'ทางเข้ารถขนส่ง 2 (ซ้าย-หลังโรงอาหาร)', kind: 'gate', x: 73.2, z: 127.2, width: 7, depth: 18, rotation: 210.2, height: 0 },
-  { id: 'G', name: 'พื้นที่ G', kind: 'area', x: 44, z: 98, width: 66, depth: 24, rotation: 4, height: 0.2 },
-  { id: 'F', name: 'พื้นที่ F', kind: 'area', x: 174, z: 21, width: 92, depth: 14, rotation: 6, height: 0.2 },
+  // G = ลานรถส่งของ: ที่จอดรถมีหลังคา 1 แถวติดรั้วฝั่งถนน ที่เหลือเป็นที่กลับรถ/จอดส่งของ (รูปร่างจริงอยู่ใน siteAppearance.TRUCK_YARD)
+  { id: 'G', name: 'ลานรถส่งของ (G)', kind: 'parking', x: 50, z: 95, width: 60, depth: 22, rotation: 4, height: 0 },
+  { id: 'G-CARPORT', name: 'ที่จอดรถมีหลังคา', kind: 'carport', x: 38.8, z: 103.4, width: 50, depth: 5.5, rotation: 30.2, height: 3 },
+  { id: 'F', name: 'อาคาร F (2 ชั้น)', kind: 'building', x: 174, z: 21, width: 92, depth: 14, rotation: 6, height: 8 },
   { id: 'ROAD', name: 'ถ.ปู่เจ้าสมิงพราย', kind: 'road', x: 55.4, z: 140.3, width: 260, depth: 35, rotation: 30.2, height: 0.05 },
 ]
 

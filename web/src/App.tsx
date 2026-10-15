@@ -20,14 +20,14 @@ import { RoutePanel } from './components/RoutePanel'
 import logoUrl from './assets/uam-logo.png'
 import { BRAND } from './data/brand'
 import { sampleLayout } from './data/factoryLayout'
-import { applyLayoutEdits, isEditable } from './lib/layoutEdit'
+import { applyLayoutEdits } from './lib/layoutEdit'
 import { loadLayout, type LoadedLayout } from './lib/layoutSource'
 import { useLayoutEdits } from './lib/useLayoutEdits'
 import { findRoute, type RouteOptions } from './lib/pathfinding'
 import { useInventory } from './inventory/useInventory'
 import { bangkokDate, zoneContents, zoneTotals } from './inventory/reports'
 import { ZonePanel } from './components/ZonePanel'
-import { LayoutEditorPanel } from './components/LayoutEditorPanel'
+import { LayoutEditorPage } from './components/layout-editor/LayoutEditorPage'
 import type { Zone } from './types/layout'
 
 export default function App() {
@@ -69,18 +69,17 @@ function FactoryApp() {
   const [topView, setTopView] = useState(false)
   const [showSurroundings, setShowSurroundings] = useState(false)
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
-  const [sideTab, setSideTab] = useState<'zone' | 'route' | 'edit'>('zone')
-  const [editZoneId, setEditZoneId] = useState<string | null>(null)
-  const editMode = sideTab === 'edit'
-  const [page, setPage] = useState<'map' | 'inventory' | 'users'>('map')
+  const [sideTab, setSideTab] = useState<'zone' | 'route'>('zone')
+  const [page, setPage] = useState<'map' | 'inventory' | 'layout' | 'users'>('map')
   const inventory = useInventory(staffName)
 
   useEffect(() => {
     loadLayout().then(setLoaded)
   }, [])
 
-  const source = layout.zones.find((z) => z.id === sourceId)
-  const target = layout.zones.find((z) => z.id === targetId)
+  // ถ้าโซนที่เลือกไว้ถูกลบในหน้าปรับผัง ใช้ค่าเริ่มต้นแทน
+  const source = layout.zones.find((z) => z.id === sourceId) ?? layout.zones.find((z) => z.id === 'TENT-C')
+  const target = layout.zones.find((z) => z.id === targetId) ?? layout.zones.find((z) => z.kind === 'assembly')
   const route = useMemo(
     () => (source && target ? findRoute(layout, source.accessNodeId, target.accessNodeId, options) : null),
     [layout, source, target, options],
@@ -88,10 +87,6 @@ function FactoryApp() {
 
   const handleZoneClick = (zone: Zone) => {
     setSelectedPallet(null)
-    if (editMode) {
-      if (isEditable(zone, layout.floors.find((f) => f.id === zone.floorId))) setEditZoneId(zone.id)
-      return
-    }
     if (zone.kind !== 'stairs' && zone.kind !== 'lift' && zone.kind !== 'assembly') {
       setSelectedZoneId(zone.id)
       setSideTab('zone')
@@ -150,7 +145,7 @@ function FactoryApp() {
     // ซ่อนชั้นที่อยู่เหนือของที่ค้นหา (ไม่ให้บังมุมกล้อง) และเปิดชั้นของมันถ้าซ่อนอยู่
     if (inBuilding && floor)
       setHiddenFloors(new Set(buildingFloors.filter((f) => f.elevation > floor.elevation).map((f) => f.id)))
-    if (sideTab === 'edit') setSideTab('zone')
+    setSideTab('zone')
     setSelectedZoneId(zone.id)
     setSearchZoneId(zone.id)
     setPanelOpen(true)
@@ -162,6 +157,19 @@ function FactoryApp() {
       setHighlightLot(null)
       setSelectedPallet(null)
     }
+    camera({ kind: 'focus', zoneId: zone.id })
+  }
+  /** จากหน้าปรับผัง: เปิดผัง 3D ภายในอาคารที่โซนนั้น */
+  const open3D = (zoneId: string | null) => {
+    setPage('map')
+    setMode('interior')
+    setTopView(false)
+    const zone = zoneId ? layout.zones.find((z) => z.id === zoneId) : undefined
+    if (!zone) return
+    const floor = layout.floors.find((f) => f.id === zone.floorId)
+    if (floor) setHiddenFloors(new Set(buildingFloors.filter((f) => f.elevation > floor.elevation).map((f) => f.id)))
+    setSelectedZoneId(zone.id)
+    setSideTab('zone')
     camera({ kind: 'focus', zoneId: zone.id })
   }
   const clearSearch = () => {
@@ -188,6 +196,7 @@ function FactoryApp() {
             [
               ['map', 'ผังโรงงาน 3D'],
               ['inventory', 'รับเข้า & สต็อก'],
+              ...(can(role, 'editLayout') ? ([['layout', 'ปรับผัง']] as const) : []),
               ...(auth.enabled && can(role, 'viewAccessLog') ? ([['users', 'ผู้ใช้งาน']] as const) : []),
             ] as const
           ).map(([value, label]) => (
@@ -237,6 +246,11 @@ function FactoryApp() {
           <InventoryPage api={inventory} zones={layout.zones} onShowZone={showZone} lockedOperator={staffName} />
         </main>
       )}
+      {page === 'layout' && (
+        <main className="min-h-0 flex-1">
+          <LayoutEditorPage layout={layout} baseLayout={loaded.layout} api={layoutEdits} stock={zoneStock} onOpen3D={open3D} />
+        </main>
+      )}
       {page === 'users' && (
         <main className="min-h-0 flex-1">
           <UsersPage />
@@ -259,9 +273,6 @@ function FactoryApp() {
             active={page === 'map'}
             showSurroundings={showSurroundings}
             zoneStock={zoneStock}
-            editMode={editMode}
-            editZoneId={editZoneId}
-            onZoneChange={layoutEdits.update}
             highlightLot={highlightLot}
             selectedPallet={selectedPallet}
             onPalletClick={(zoneId, index) => {
@@ -314,7 +325,7 @@ function FactoryApp() {
 
           <div className={`pointer-events-none absolute bottom-3 left-3 right-3 z-20 hidden md:block ${panelOpen ? 'md:right-[23.5rem]' : ''}`}>
             <div className="pointer-events-auto inline-block max-w-full">
-              <MapLegend mode={mode} editMode={editMode} />
+              <MapLegend mode={mode} editMode={false} />
             </div>
           </div>
         </div>
@@ -330,15 +341,11 @@ function FactoryApp() {
               [
                 ['zone', 'ของในโซน'],
                 ['route', 'ระยะเดิน'],
-                ...(can(role, 'editLayout') ? ([['edit', 'แก้ไขผัง']] as const) : []),
               ] as const
             ).map(([key, label]) => (
               <button
                 key={key}
-                onClick={() => {
-                  setSideTab(key)
-                  if (key === 'edit') setMode('interior')
-                }}
+                onClick={() => setSideTab(key)}
                 className={`flex-1 rounded-lg px-2 py-1.5 transition ${sideTab === key ? 'font-semibold text-white' : 'text-slate-600 hover:bg-slate-100'}`}
                 style={sideTab === key ? { background: BRAND.primary } : undefined}
               >
@@ -349,25 +356,7 @@ function FactoryApp() {
               <IconClose />
             </button>
           </div>
-          {sideTab === 'edit' ? (
-            <div className="min-h-0 flex-1 overflow-y-auto p-4 text-sm text-slate-700">
-              <LayoutEditorPanel
-                layout={layout}
-                edits={layoutEdits.edits}
-                zoneId={editZoneId}
-                stock={zoneStock}
-                onSelect={setEditZoneId}
-                onUpdate={layoutEdits.update}
-                onAdd={layoutEdits.add}
-                onRemove={(id) => {
-                  layoutEdits.remove(id)
-                  if (sourceId === id) setSourceId('TENT-C')
-                  if (targetId === id) setTargetId('F2-ASM')
-                }}
-                onReset={layoutEdits.reset}
-              />
-            </div>
-          ) : sideTab === 'zone' ? (
+          {sideTab === 'zone' ? (
             <div className="min-h-0 flex-1 overflow-y-auto p-4 text-sm text-slate-700">
               {selectedPallet && (
                 <div className="-mx-1 mb-4">
