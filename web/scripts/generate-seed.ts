@@ -3,6 +3,7 @@
 import { writeFileSync } from 'node:fs'
 import { sampleLayout } from '../src/data/factoryLayout'
 import { CUSTOMERS, MODELS, PARTS, ZONE_RULES } from '../src/inventory/masterData'
+import { defaultLocations } from '../src/wms/locations'
 
 type Value = string | number | string[] | undefined
 const str = (v: string) => `'${v.replace(/'/g, "''")}'`
@@ -38,6 +39,8 @@ const sql = [
   PARTS.flatMap((p) => p.models.map((m) =>
     `insert into public.part_models (part_id, model_code) select id, ${q(m)} from public.parts where part_no = ${q(p.partNo)};`)).join('\n') + '\n',
   rows('zone_rules', ['customer_id', 'part_type', 'zone_id'], ZONE_RULES.map((r) => [r.customerId, r.type ?? undefined, r.zoneId])),
+  '-- ช่องเก็บตั้งต้น (Rack = โซน-ช่อง-ชั้น, เต็นท์ = โซน-บล็อก) — แก้เพิ่มได้ในหน้าหลังบ้าน',
+  rows('locations', ['code', 'zone_id', 'kind'], defaultLocations(zones).map((l) => [l.code, l.zoneId, l.kind])),
 ].join('\n')
 
 writeFileSync(new URL('../../supabase/seed.sql', import.meta.url), sql)
