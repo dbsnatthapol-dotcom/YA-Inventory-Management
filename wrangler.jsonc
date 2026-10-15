@@ -1,0 +1,12 @@
+// Cloudflare Workers (static assets) — เว็บนี้เป็นไฟล์ static ล้วน ไม่มีโค้ดฝั่ง server
+// Build command บน Cloudflare: cd web && npm ci && npm run build
+// Deploy command: npx wrangler deploy
+{
+  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  "name": "ya-inventory-management",
+  "compatibility_date": "2025-09-01",
+  "assets": {
+    "directory": "./web/dist",
+    "not_found_handling": "single-page-application"
+  }
+}

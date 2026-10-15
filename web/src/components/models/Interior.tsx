@@ -4,14 +4,15 @@ import { BRAND } from '../../data/brand'
 import { modelColor } from '../../data/modelColors'
 import { palletsFor, planRack, RACK } from '../../data/warehouse'
 import type { ZoneContents } from '../../inventory/reports'
-import { floorMarkings, hazardStripes, textLabel, type FloorPaint } from './textures'
+import { floorMarkings, hazardStripes, textLabel } from './textures'
+import type { FloorPaint } from '../../lib/floorPlan'
 
 // โมเดลภายในอาคาร A: พื้นตีเส้น, เสา, ชั้นวางพาเลท, ไลน์ประกอบวงล้อ, บันได/ลิฟต์ และยานพาหนะในคลัง
 // ทุกชิ้นวาดในพิกัดภายในชั้น (เมตร) โดยมุมโซนอยู่ที่ (0, 0)
 
 const STEEL = '#8b96a3'
-const UPRIGHT = '#1f5fae' // เสา rack สีน้ำเงิน
-const BEAM = '#f07c1b' // คาน rack สีส้ม
+const UPRIGHT = '#2c6cb8' // เสา rack สีน้ำเงิน
+const BEAM = '#f28a2e' // คาน rack สีส้ม
 const WOOD = '#b98d58'
 
 export interface Box {
@@ -28,6 +29,9 @@ export function InstancedBoxes({
   metalness = 0,
   map,
   castShadow = true,
+  opacity = 1,
+  userData,
+  pickable = false,
 }: {
   boxes: Box[]
   color?: string
@@ -35,6 +39,11 @@ export function InstancedBoxes({
   metalness?: number
   map?: Texture
   castShadow?: boolean
+  /** < 1 = โปร่งแสง (ใช้ไฮไลต์) */
+  opacity?: number
+  userData?: Record<string, unknown>
+  /** ให้ระบบคลิกตรวจเจอ (ผู้รับคลิกจริงคือกล่องครอบโซน ซึ่งอ่าน instanceId จาก intersections) */
+  pickable?: boolean
 }) {
   const ref = useRef<InstancedMesh>(null)
   useLayoutEffect(() => {
@@ -57,9 +66,25 @@ export function InstancedBoxes({
   if (!boxes.length) return null
   const tinted = boxes.some((b) => b.c)
   return (
-    <instancedMesh key={`${boxes.length}-${tinted}`} ref={ref} args={[undefined, undefined, boxes.length]} castShadow={castShadow} receiveShadow>
+    <instancedMesh
+      key={`${boxes.length}-${tinted}`}
+      ref={ref}
+      args={[undefined, undefined, boxes.length]}
+      castShadow={castShadow && opacity === 1}
+      receiveShadow
+      userData={userData}
+      onClick={pickable ? () => undefined : undefined}
+    >
       <boxGeometry />
-      <meshStandardMaterial color={tinted ? '#ffffff' : color} roughness={roughness} metalness={metalness} map={map} />
+      <meshStandardMaterial
+        color={tinted ? '#ffffff' : color}
+        roughness={roughness}
+        metalness={metalness}
+        map={map}
+        transparent={opacity < 1}
+        opacity={opacity}
+        depthWrite={opacity === 1}
+      />
     </instancedMesh>
   )
 }
@@ -181,7 +206,28 @@ function SignBoard({ text, position, width = 2.4, background = BRAND.primary }: 
  * Selective pallet rack: เสาน้ำเงิน คานส้ม 3 ระดับ
  * พาเลทที่วางจริงคำนวณจากยอดคงคลังในโซน (สีตาม Model) — ถ้าเกินจำนวนช่องจะแสดงพาเลทล้นที่ทางเดิน
  */
-export const PalletRack = memo(function PalletRack({ width, depth, code, stock }: { width: number; depth: number; code: string; stock?: ZoneContents }) {
+/** กรอบไฮไลต์พาเลท: ค้นหาเจอ = ฟ้า, กำลังเลือก = ส้ม */
+const HIGHLIGHT = { lot: '#1d8cf8', selected: '#f97316' }
+
+export const PalletRack = memo(function PalletRack({
+  zoneId,
+  width,
+  depth,
+  code,
+  stock,
+  highlightLot,
+  selectedIndex,
+}: {
+  zoneId: string
+  width: number
+  depth: number
+  code: string
+  stock?: ZoneContents
+  /** lot ที่ค้นหาเจอ — ไฮไลต์ทุกพาเลทของ lot นี้ */
+  highlightLot?: string | null
+  /** พาเลทที่กำลังดูรายละเอียด (ลำดับใน palletsFor) */
+  selectedIndex?: number | null
+}) {
   const plan = useMemo(() => planRack(width, depth), [width, depth])
   const pallets = useMemo(() => palletsFor(stock), [stock])
   const { frame, beams, guards, bases, loads } = useMemo(() => {
@@ -230,6 +276,19 @@ export const PalletRack = memo(function PalletRack({ width, depth, code, stock }
     return { frame, beams, guards, bases, loads }
   }, [plan, pallets])
 
+  const marks = useMemo(() => {
+    const lot: Box[] = []
+    const selected: Box[] = []
+    pallets.forEach((p, i) => {
+      const load = loads[i]
+      if (!load) return
+      const box: Box = { p: [load.p[0], load.p[1], load.p[2]], s: [load.s[0] + 0.16, load.s[1] + 0.16, load.s[2] + 0.16] }
+      if (i === selectedIndex) selected.push(box)
+      else if (highlightLot && p.lotId === highlightLot) lot.push(box)
+    })
+    return { lot, selected }
+  }, [pallets, loads, highlightLot, selectedIndex])
+
   return (
     <Oriented width={width} depth={depth}>
       {(length, span) => (
@@ -238,7 +297,9 @@ export const PalletRack = memo(function PalletRack({ width, depth, code, stock }
           <InstancedBoxes boxes={beams} color={BEAM} metalness={0.2} roughness={0.5} />
           <InstancedBoxes boxes={guards} color="#f2c200" castShadow={false} />
           <InstancedBoxes boxes={bases} color={WOOD} roughness={0.95} />
-          <InstancedBoxes boxes={loads} roughness={0.7} />
+          <InstancedBoxes boxes={loads} roughness={0.7} pickable userData={{ palletZone: zoneId }} />
+          <InstancedBoxes boxes={marks.lot} color={HIGHLIGHT.lot} opacity={0.45} castShadow={false} />
+          <InstancedBoxes boxes={marks.selected} color={HIGHLIGHT.selected} opacity={0.55} castShadow={false} />
           {plan.rows.map((row, i) => (
             <SignBoard
               key={i}

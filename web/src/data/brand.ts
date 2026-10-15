@@ -28,5 +28,5 @@ export const MATERIAL = {
   epoxyGreen: '#1f8a52',
   trunk: '#6b4f3a',
   foliage: '#4f7a3c',
-  sky: '#d6e9f8',
+  sky: '#e8f0f8',
 } as const

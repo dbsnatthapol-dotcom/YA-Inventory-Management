@@ -314,8 +314,9 @@ export const ZONE_RULES: ZoneRule[] = [
   { customerId: 'RE', type: 'SEAL', zoneId: 'F2-RK-E' },
   { customerId: 'RE', type: 'VALVE', zoneId: 'F2-RK-E' },
   { customerId: 'RE', type: 'RUBBER', zoneId: 'F2-RK-E' },
-  { customerId: 'RE', type: 'TYRE', zoneId: 'TENT-C' },
-  { customerId: 'RE', type: 'TUBE', zoneId: 'TENT-C' },
+  // ยางเก็บที่เต็นท์ยางหลังเต็นท์ B/D เป็นหลัก (ยืนยันจากเจ้าของ)
+  { customerId: 'RE', type: 'TYRE', zoneId: 'TENT-T' },
+  { customerId: 'RE', type: 'TUBE', zoneId: 'TENT-T' },
   { customerId: 'RE', type: 'ALLOY RIM', zoneId: 'F1-RK-C' },
   { customerId: 'RE', type: 'CAST', zoneId: 'F1-RK-C' },
   { customerId: 'RE', type: 'STICKER', zoneId: 'F2-RK-D' },

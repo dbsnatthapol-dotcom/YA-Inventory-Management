@@ -1,12 +1,13 @@
 import { Html, Line, OrbitControls } from '@react-three/drei'
-import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber'
+import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { type Group, Plane, Raycaster, Vector2, Vector3 } from 'three'
+import { type Group, type PerspectiveCamera, Plane, Raycaster, Vector2, Vector3 } from 'three'
 import { BRAND, MATERIAL } from '../data/brand'
-import { MAIN_BUILDING_FLOOR_ID, TENT_STYLE, TREE_POINTS } from '../data/siteAppearance'
-import { RACK } from '../data/warehouse'
+import { GATES_WITH_SHRINE, MAIN_BUILDING_FLOOR_ID, TENT_STYLE, TREE_POINTS, TRUCK_YARD } from '../data/siteAppearance'
+import { palletsFor, planRack, RACK } from '../data/warehouse'
 import { ZONE_STYLE } from '../data/zoneStyle'
 import { toRadians, toSite } from '../lib/geometry'
+import { floorPaint, type FloorPaint } from '../lib/floorPlan'
 import { clampToFloor, isEditable, pointInRect, rectsOverlap, snap, type ZonePatch } from '../lib/layoutEdit'
 import type { RouteResult } from '../lib/pathfinding'
 import type { ZoneContents } from '../inventory/reports'
@@ -30,8 +31,7 @@ import {
   YardWalkway,
   ZoneOutline,
 } from './models/Interior'
-import { ArchTent, OfficeBuilding, PavedArea, Road, SiteGround, Trees, TwinGableTent, Warehouse } from './models/SiteModels'
-import { AISLE_WIDTH, type FloorPaint } from './models/textures'
+import { ArchTent, Canteen, Carport, OfficeBuilding, PavedArea, Road, SiteGround, Trees, TruckGate, TruckYard, TwinGableTent, Warehouse } from './models/SiteModels'
 
 export type ViewMode = 'exterior' | 'interior'
 
@@ -59,13 +59,34 @@ interface Props {
   editMode?: boolean
   editZoneId?: string | null
   onZoneChange?: (zoneId: string, patch: ZonePatch) => void
+  /** ไฮไลต์ทุกพาเลทของ lot ที่ค้นหาเจอ */
+  highlightLot?: string | null
+  /** พาเลทที่กำลังดูรายละเอียด */
+  selectedPallet?: { zoneId: string; index: number } | null
+  onPalletClick?: (zoneId: string, index: number) => void
+  /** หมุดบนผัง (ผลค้นหา, lot รอคัด MI3) */
+  pins?: MapPinSpec[]
+  /** คำสั่งกล้องจากปุ่มบนจอ / ค้นหา (เปลี่ยน n เพื่อสั่งซ้ำ) */
+  cameraCommand?: CameraCommand | null
+  /** แผงลอยบังด้านขวาของจอกี่พิกเซล — เลื่อนจุดที่บินไปให้อยู่กลางพื้นที่ที่มองเห็น */
+  focusShiftPx?: number
+}
+
+export type CameraCommand = { n: number } & (
+  | { kind: 'zoomIn' | 'zoomOut' | 'rotateLeft' | 'rotateRight' | 'home' }
+  | { kind: 'focus'; zoneId: string }
+)
+
+export interface MapPinSpec {
+  zoneId: string
+  tone: 'search' | 'qc'
 }
 
 /** ยกพื้นชั้นในโหมดภายในขึ้นเล็กน้อย ไม่ให้ซ้อนกับพื้นลาน */
 const FLOOR_LIFT = 0.12
 
 const CAMERA: Record<ViewMode | 'top', [number, number, number]> = {
-  exterior: [-45, 55, 140],
+  exterior: [28, 88, 150],
   interior: [90, 130, 160],
   top: [0, 260, 0.01],
 }
@@ -80,6 +101,117 @@ function CameraRig({ view }: { view: keyof typeof CAMERA }) {
     controls?.update()
   }, [camera, controls, view])
   return null
+}
+
+type Orbit = { target: Vector3; update: () => void }
+
+/** เลื่อนกล้องแบบนุ่มนวลตามคำสั่ง (ซูม หมุน กลับมุมเริ่มต้น บินไปหาโซน) */
+function CameraAnimator({
+  command,
+  view,
+  points,
+  shiftPx,
+}: {
+  command: CameraCommand | null
+  view: keyof typeof CAMERA
+  points: Map<string, Vector3>
+  shiftPx: number
+}) {
+  const camera = useThree((s) => s.camera) as PerspectiveCamera
+  const size = useThree((s) => s.size)
+  const get = useThree((s) => s.get)
+  const anim = useRef<{ fromPos: Vector3; toPos: Vector3; fromT: Vector3; toT: Vector3; t0: number } | null>(null)
+  const lastN = useRef(-1)
+  const pointsRef = useRef(points)
+  useEffect(() => {
+    pointsRef.current = points
+  }, [points])
+
+  useEffect(() => {
+    const controls = get().controls as unknown as Orbit | null
+    if (!command || !controls || command.n === lastN.current) return
+    lastN.current = command.n
+    const fromT = controls.target.clone()
+    const fromPos = camera.position.clone()
+    const offset = fromPos.clone().sub(fromT)
+    let toT = fromT.clone()
+    let toPos: Vector3
+    switch (command.kind) {
+      case 'zoomIn':
+        toPos = fromT.clone().add(offset.multiplyScalar(offset.length() * 0.6 < 10 ? 1 : 0.6))
+        break
+      case 'zoomOut':
+        toPos = fromT.clone().add(offset.multiplyScalar(offset.length() * 1.6 > 600 ? 1 : 1.6))
+        break
+      case 'rotateLeft':
+      case 'rotateRight':
+        toPos = fromT.clone().add(offset.applyAxisAngle(new Vector3(0, 1, 0), command.kind === 'rotateLeft' ? Math.PI / 4 : -Math.PI / 4))
+        break
+      case 'home':
+        toPos = new Vector3(...CAMERA[view])
+        toT = new Vector3(0, view === 'top' ? 0 : 5, 0)
+        break
+      case 'focus': {
+        const p = pointsRef.current.get(command.zoneId)
+        if (!p) return
+        const dir = offset.normalize()
+        if (dir.y < 0.55) dir.setY(0.55).normalize()
+        toT = p.clone()
+        toPos = p.clone().add(dir.multiplyScalar(58))
+        // เลื่อนกล้องไปทางขวา (วัตถุจะไปอยู่ซ้าย) เท่ากับครึ่งหนึ่งของพื้นที่ที่แผงลอยบัง
+        if (shiftPx > 0 && size.width > 0) {
+          const distance = toPos.distanceTo(toT)
+          const halfWidth = distance * Math.tan((camera.fov * Math.PI) / 360) * (size.width / size.height)
+          const forward = toT.clone().sub(toPos).normalize()
+          const right = forward.cross(new Vector3(0, 1, 0)).normalize()
+          const shift = right.multiplyScalar((shiftPx / (size.width / 2)) * halfWidth)
+          toT.add(shift)
+          toPos.add(shift)
+        }
+        break
+      }
+    }
+    anim.current = { fromPos, toPos, fromT, toT, t0: performance.now() }
+  }, [command, camera, get, view, shiftPx, size])
+
+  useFrame(() => {
+    const a = anim.current
+    const controls = get().controls as unknown as Orbit | null
+    if (!a || !controls) return
+    const t = Math.min(1, (performance.now() - a.t0) / 700)
+    const k = 1 - (1 - t) ** 3
+    camera.position.lerpVectors(a.fromPos, a.toPos, k)
+    controls.target.lerpVectors(a.fromT, a.toT, k)
+    controls.update()
+    if (t >= 1) anim.current = null
+  })
+  return null
+}
+
+/** หมุดชี้ตำแหน่งลอยขึ้นลงเบา ๆ: ฟ้า = ผลค้นหา, ส้ม = lot รอคัด MI3 */
+function MapPin({ position, tone }: { position: Vector3; tone: MapPinSpec['tone'] }) {
+  const ref = useRef<Group>(null)
+  const color = tone === 'search' ? '#1d6fe0' : '#f59e0b'
+  const size = tone === 'search' ? 1.4 : 0.9
+  useFrame(({ clock }) => {
+    if (ref.current) ref.current.position.y = position.y + Math.sin(clock.elapsedTime * 2.4) * 0.35
+  })
+  return (
+    <group ref={ref} position={position.toArray()} scale={size}>
+      <mesh position={[0, 2.6, 0]} castShadow>
+        <sphereGeometry args={[1, 28, 20]} />
+        <meshStandardMaterial color={color} roughness={0.35} metalness={0.1} />
+      </mesh>
+      <mesh position={[0, 1.3, 0]} rotation={[Math.PI, 0, 0]} castShadow>
+        <coneGeometry args={[0.86, 2, 28, 1, true]} />
+        <meshStandardMaterial color={color} roughness={0.35} metalness={0.1} />
+      </mesh>
+      <mesh position={[0, 2.6, 0.62]}>
+        <sphereGeometry args={[0.42, 20, 14]} />
+        <meshBasicMaterial color="#ffffff" />
+      </mesh>
+    </group>
+  )
 }
 
 interface DragStart {
@@ -169,16 +301,30 @@ export function FactoryScene(props: Props) {
     editMode = false,
     editZoneId,
     onZoneChange,
+    highlightLot,
+    selectedPallet,
+    onPalletClick,
+    pins = NO_PINS,
+    cameraCommand = null,
+    focusShiftPx = 0,
   } = props
   const exterior = mode === 'exterior'
   const floorsById = new Map(layout.floors.map((f) => [f.id, f]))
   const floorY = (id: string) => (floorsById.get(id)?.elevation ?? 0) * (exterior ? 1 : explode)
 
-  // จัดกึ่งกลางฉากตามขอบที่ดิน (หรือขนาดชั้นถ้าไม่มีข้อมูล site)
-  const outline = layout.site?.boundary ?? layout.floors.flatMap((f) => [toSite(f, 0, 0), toSite(f, f.width, f.depth)])
-  const xs = outline.map((p) => p[0])
-  const zs = outline.map((p) => p[1])
-  const center = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...zs) + Math.max(...zs)) / 2]
+  const center = useMemo(() => siteCenter(layout), [layout])
+  /** จุดกึ่งกลางพื้นของแต่ละโซนในพิกัดฉาก — ใช้บินกล้องไปหาและปักหมุด */
+  const zonePoints = useMemo(() => {
+    const floors = new Map(layout.floors.map((f) => [f.id, f]))
+    return new Map(
+      layout.zones.map((zone) => {
+        const floor = floors.get(zone.floorId)!
+        const [x, z] = toSite(floor, zone.x + zone.width / 2, zone.z + zone.depth / 2)
+        const y = floor.area !== 'building' ? 0 : floor.elevation * (exterior ? 1 : explode) + FLOOR_LIFT
+        return [zone.id, new Vector3(x - center[0], y, z - center[1])]
+      }),
+    )
+  }, [layout, exterior, explode, center])
 
   const mainFloor = floorsById.get(MAIN_BUILDING_FLOOR_ID)
   const buildingFloors = layout.floors.filter((f) => f.area === 'building')
@@ -222,14 +368,19 @@ export function FactoryScene(props: Props) {
 
   return (
     <Canvas camera={{ position: CAMERA.exterior, fov: 42, far: 2000 }} shadows="soft" frameloop={active ? 'always' : 'never'}>
+      {/* ป้าย Html ตัวแรกของฉากไม่ถูกวาดเนื้อหา (พฤติกรรมของ drei Html ตอน mount พร้อมกันหลายตัว) จึงวางตัวเปล่าไว้ก่อน */}
+      <Html className="pointer-events-none">
+        <span />
+      </Html>
       <CameraRig view={topView ? 'top' : mode} />
+      <CameraAnimator command={cameraCommand} view={topView ? 'top' : mode} points={zonePoints} shiftPx={focusShiftPx} />
       <DragController start={drag} groups={floorRefs} onMove={moveDrag} onEnd={endDrag} />
       <color attach="background" args={[MATERIAL.sky]} />
       <fog attach="fog" args={[MATERIAL.sky, 320, 900]} />
-      <hemisphereLight args={['#eef5fc', '#8d8577', 0.9]} />
+      <hemisphereLight args={['#ffffff', '#b9b3a8', 1.05]} />
       <directionalLight
         position={[-90, 160, 110]}
-        intensity={2.2}
+        intensity={1.9}
         castShadow
         shadow-mapSize={[2048, 2048]}
         shadow-camera-left={-170}
@@ -244,15 +395,17 @@ export function FactoryScene(props: Props) {
       {/* พื้นรอบที่ดิน: หญ้าเมื่อแสดงสภาพแวดล้อม, สีเรียบเมื่อเน้นเฉพาะโรงงาน */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.05, 0]} receiveShadow>
         <planeGeometry args={[1600, 1600]} />
-        <meshStandardMaterial color={showSurroundings ? MATERIAL.grass : '#dde3ea'} roughness={1} />
+        <meshStandardMaterial color={showSurroundings ? MATERIAL.grass : '#e6ecf2'} roughness={1} />
       </mesh>
 
       <group position={[-center[0], 0, -center[1]]}>
         {layout.site && (
           <>
             <SiteGround boundary={layout.site.boundary} />
+            <TruckYard polygon={TRUCK_YARD} />
+            <Truck position={[36, 0, 86]} rotation={-0.07} />
             {layout.site.landmarks
-              .filter((l) => showSurroundings || l.kind === 'office' || l.kind === 'building')
+              .filter((l) => showSurroundings || l.kind !== 'road')
               .map((l) => (
                 <LandmarkModel key={l.id} landmark={l} />
               ))}
@@ -309,6 +462,9 @@ export function FactoryScene(props: Props) {
                         overlapping={editMode && floorZones.some((o) => o.id !== zone.id && rectsOverlap(o, zone))}
                         onSelect={() => onZoneClick(zone)}
                         onGrab={editable ? (e) => startDrag(layout.zones.find((z) => z.id === zone.id)!, floor, e) : undefined}
+                        highlightLot={highlightLot}
+                        selectedPallet={selectedPallet?.zoneId === zone.id ? selectedPallet.index : null}
+                        onPalletClick={onPalletClick && ((i) => onPalletClick(zone.id, i))}
                       />
                     )
                   })}
@@ -355,6 +511,17 @@ export function FactoryScene(props: Props) {
           />
         )}
       </group>
+
+      {pins.map((pin) => {
+        const zone = layout.zones.find((z) => z.id === pin.zoneId)
+        const base = zonePoints.get(pin.zoneId)
+        const floor = zone && floorsById.get(zone.floorId)
+        if (!zone || !base || !floor) return null
+        if (floor.area === 'building' && !exterior && hiddenFloors.has(floor.id)) return null
+        // ภายนอก: ปักบนหลังคาอาคาร · ภายใน: เหนือ rack · เต็นท์: เหนือหลังคาเต็นท์
+        const lift = floor.area !== 'building' ? 10 : exterior ? buildingFloors.length * 4.6 + 1.5 - floor.elevation : zone.kind === 'storage' ? RACK.height + 1.2 : 2.5
+        return <MapPin key={`${pin.tone}-${pin.zoneId}`} position={base.clone().setY(base.y + lift)} tone={pin.tone} />
+      })}
     </Canvas>
   )
 }
@@ -362,6 +529,15 @@ export function FactoryScene(props: Props) {
 /* ------------------------------------------------------------------ ชั้นอาคาร */
 
 const NO_ZONES: Zone[] = []
+const NO_PINS: MapPinSpec[] = []
+
+function siteCenter(layout: FactoryLayout): [number, number] {
+  // จัดกึ่งกลางฉากตามขอบที่ดิน (หรือขนาดชั้นถ้าไม่มีข้อมูล site)
+  const outline = layout.site?.boundary ?? layout.floors.flatMap((f) => [toSite(f, 0, 0), toSite(f, f.width, f.depth)])
+  const xs = outline.map((p) => p[0])
+  const zs = outline.map((p) => p[1])
+  return [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...zs) + Math.max(...zs)) / 2]
+}
 
 /** พื้นตีเส้น + เสา + ผนังตัดครึ่ง + รถยก/รถลากพาเลทบนทางเดิน */
 const FloorShell = memo(function FloorShell({
@@ -410,7 +586,7 @@ const FloorShell = memo(function FloorShell({
         <Vehicle key={i} position={[v.x, 0, v.z]} rotation={v.rot} />
       ))}
       <Html position={[0, 1.6, 0]} className="pointer-events-none" zIndexRange={[10, 0]}>
-        <div className="whitespace-nowrap rounded px-2 py-0.5 text-xs font-semibold text-white shadow" style={{ background: BRAND.primary }}>
+        <div className="whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-semibold text-white shadow-sm" style={{ background: BRAND.primary }}>
           {floor.name}
         </div>
       </Html>
@@ -441,6 +617,9 @@ const ZoneModel = memo(function ZoneModel({
   overlapping,
   onSelect,
   onGrab,
+  highlightLot,
+  selectedPallet,
+  onPalletClick,
 }: {
   zone: Zone
   rise: number
@@ -451,16 +630,27 @@ const ZoneModel = memo(function ZoneModel({
   overlapping: boolean
   onSelect: () => void
   onGrab?: (e: ThreeEvent<PointerEvent>) => void
+  highlightLot?: string | null
+  selectedPallet: number | null
+  onPalletClick?: (index: number) => void
 }) {
   const { width, depth } = zone
   const height = zone.kind === 'storage' ? RACK.height : zone.kind === 'assembly' ? 2 : zone.kind === 'lift' ? 3.2 : zone.kind === 'stairs' ? rise : 1.2
   const outline = overlapping ? '#e34948' : editing ? '#2563eb' : selected ? '#f97316' : OUTLINE[zone.kind]
   const showLabel = zone.kind !== 'stairs' && zone.kind !== 'lift'
-  const pallets = stock?.totalQty ?? 0
+  const pieces = stock?.totalQty ?? 0
+  // ความจุ rack ที่ใช้อยู่ (%)
+  const usage = useMemo(() => {
+    if (zone.kind !== 'storage') return null
+    const slots = planRack(width, depth).slots.length
+    return slots ? Math.round((Math.min(palletsFor(stock).length, slots) / slots) * 100) : 0
+  }, [zone.kind, width, depth, stock])
 
   return (
     <group position={[zone.x, 0, zone.z]}>
-      {zone.kind === 'storage' && <PalletRack width={width} depth={depth} code={zone.code} stock={stock} />}
+      {zone.kind === 'storage' && (
+        <PalletRack zoneId={zone.id} width={width} depth={depth} code={zone.code} stock={stock} highlightLot={highlightLot} selectedIndex={selectedPallet} />
+      )}
       {zone.kind === 'assembly' && <AssemblyLine width={width} depth={depth} title={`${zone.code} · ${zone.name}`} />}
       {zone.kind === 'receiving' && <ReceivingArea width={width} depth={depth} />}
       {zone.kind === 'stairs' && <Stairs width={width} depth={depth} rise={rise} />}
@@ -481,7 +671,11 @@ const ZoneModel = memo(function ZoneModel({
         position={[width / 2, height / 2, depth / 2]}
         onClick={(e) => {
           e.stopPropagation()
-          if (!onGrab) onSelect()
+          if (onGrab) return
+          onSelect()
+          // คลิกโดนพาเลทในโซนนี้ ⇒ เปิดรายละเอียดพาเลท (กล่องครอบโซนรับคลิกก่อนเพราะอยู่ใกล้กล้องกว่า)
+          const hit = e.intersections.find((i) => i.object.userData?.palletZone === zone.id && i.instanceId !== undefined)
+          if (hit && onPalletClick) onPalletClick(hit.instanceId!)
         }}
         onPointerDown={
           onGrab &&
@@ -500,16 +694,24 @@ const ZoneModel = memo(function ZoneModel({
 
       {showLabel && (
         <Html position={[width / 2, height + 1, depth / 2]} center className="pointer-events-none" zIndexRange={[10, 0]}>
-          <div className={`whitespace-nowrap rounded px-1.5 text-[10px] font-medium shadow ${editing ? 'bg-blue-600 text-white' : 'bg-white/90 text-slate-700'}`}>
-            {zone.code}
+          <div
+            className={`flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] shadow-sm ring-1 ${
+              editing ? 'bg-blue-600 text-white ring-blue-700' : 'bg-white/95 text-slate-600 ring-slate-200'
+            }`}
+          >
+            <i className="h-1.5 w-1.5 rounded-full" style={{ background: OUTLINE[zone.kind] === '#ffffff' ? BRAND.primary : OUTLINE[zone.kind] }} />
+            <b className={editing ? '' : 'text-slate-800'}>{zone.code}</b>
             {editing ? (
-              <span> · {width} × {depth} ม.</span>
-            ) : pallets > 0 ? (
-              <span className="text-slate-500"> · {pallets.toLocaleString('th-TH')} ชิ้น</span>
+              <span>
+                · {width} × {depth} ม.
+              </span>
+            ) : pieces > 0 ? (
+              <span>· {pieces.toLocaleString('th-TH')} ชิ้น</span>
             ) : (
-              zone.stores && <span className="text-slate-400"> · ว่าง</span>
+              zone.stores && <span className="text-slate-400">· ว่าง</span>
             )}
-            {editable && !editing && <span className="text-blue-600"> ✥</span>}
+            {usage !== null && !editing && <span className={usage >= 90 ? 'font-semibold text-red-600' : 'text-slate-400'}>· {usage}%</span>}
+            {editable && !editing && <span className="text-blue-600">✥</span>}
           </div>
         </Html>
       )}
@@ -518,42 +720,6 @@ const ZoneModel = memo(function ZoneModel({
 })
 
 /* ------------------------------------------------------------------ คำนวณเส้นพื้น */
-
-const GRID_NODE = /-r\d+c\d+$/
-
-/** ข้อมูลตีเส้นพื้นของชั้น: ทางเดินจากกราฟทางเดิน (ที่ไม่ถูก rack ขวาง), จุดอันตราย, ทางม้าลาย, เสา */
-function floorPaint(layout: FactoryLayout, floor: Floor): FloorPaint {
-  const nodes = new Map(layout.nodes.map((n) => [n.id, n]))
-  const aisles = layout.edges.flatMap((e): [number, number, number, number][] => {
-    const a = nodes.get(e.from)
-    const b = nodes.get(e.to)
-    return e.mode === 'walk' && a && b && a.floorId === floor.id && b.floorId === floor.id ? [[a.x, a.z, b.x, b.z]] : []
-  })
-  const zones = layout.zones.filter((z) => z.floorId === floor.id)
-  const hazards = zones.filter((z) => z.kind === 'stairs' || z.kind === 'lift').map(({ x, z, width, depth }) => ({ x, z, width, depth }))
-  const crossings = layout.nodes
-    .filter((n) => n.floorId === floor.id && n.id.endsWith('-DOOR'))
-    .map((n) => ({ x: n.x - AISLE_WIDTH, z: Math.max(n.z - 3.5, 0), width: AISLE_WIDTH * 2, depth: Math.min(3.5, n.z) }))
-
-  // เสาโครงสร้าง: กึ่งกลางระหว่างทางเดินหลัก และแนวผนัง
-  const grid = layout.nodes.filter((n) => n.floorId === floor.id && GRID_NODE.test(n.id))
-  const lines = (values: number[], size: number) => {
-    const sorted = [...new Set(values)].sort((a, b) => a - b)
-    return [0.3, ...sorted.slice(1).map((v, i) => (v + sorted[i]) / 2), size - 0.3]
-  }
-  const nearAisle = (x: number, z: number) =>
-    aisles.some(([ax, az, bx, bz]) => {
-      const len2 = (bx - ax) ** 2 + (bz - az) ** 2 || 1
-      const t = Math.min(1, Math.max(0, ((x - ax) * (bx - ax) + (z - az) * (bz - az)) / len2))
-      return Math.hypot(x - (ax + t * (bx - ax)), z - (az + t * (bz - az))) < AISLE_WIDTH / 2 + 0.4
-    })
-  const columns: [number, number][] = []
-  if (grid.length)
-    for (const x of lines(grid.map((n) => n.x), floor.width))
-      for (const z of lines(grid.map((n) => n.z), floor.depth)) if (!nearAisle(x, z) && !hazards.some((h) => pointInRect(x, z, h, 0.5))) columns.push([x, z])
-
-  return { width: floor.width, depth: floor.depth, aisles, hazards, crossings, columns }
-}
 
 /** ทางเดินลานนอก (พิกัด site) จากกราฟทางเดินที่มีโหนดอยู่บนลาน */
 function yardWalkways(layout: FactoryLayout): [number, number, number, number][] {
@@ -581,10 +747,20 @@ function LandmarkModel({ landmark: l }: { landmark: Landmark }) {
   return (
     <group position={[l.x, 0, l.z]} rotation={[0, -toRadians(l.rotation), 0]}>
       {l.kind === 'office' && <OfficeBuilding width={l.width} depth={l.depth} />}
+      {l.kind === 'canteen' && (
+        <>
+          <Label position={[0, l.height + 3, 0]} title={l.name} muted />
+          <Canteen width={l.width} depth={l.depth} height={l.height} />
+        </>
+      )}
+      {l.kind === 'gate' && <TruckGate width={l.width} depth={l.depth} shrine={GATES_WITH_SHRINE.has(l.id)} />}
+      {l.kind === 'carport' && <Carport width={l.width} depth={l.depth} height={l.height} />}
       {l.kind === 'building' && <Warehouse width={l.width} depth={l.depth} height={Math.max(l.height, 6)} />}
       {l.kind === 'road' && <Road width={l.width} depth={l.depth} />}
       {l.kind === 'area' && <PavedArea width={l.width} depth={l.depth} />}
-      {l.kind !== 'road' && l.kind !== 'area' && <Label position={[0, l.height + 5, 0]} title={l.name} />}
+      {(l.kind === 'office' || l.kind === 'building') && <Label position={[0, l.height + 5, 0]} title={l.name} />}
+      {l.kind === 'gate' && <Label position={[0, 4, 0]} title={l.name} />}
+      {l.kind === 'parking' && <Label position={[0, 1.5, 0]} title={l.name} muted />}
       {l.kind === 'road' && <Label position={[-l.width / 4, 1, 0]} title={l.name} muted />}
     </group>
   )
@@ -594,7 +770,7 @@ function Label({ position, title, sub, muted }: { position: [number, number, num
   return (
     <Html position={position} center className="pointer-events-none" zIndexRange={[10, 0]}>
       <div
-        className={`whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-semibold shadow ${muted ? 'bg-white/60 text-slate-600' : 'bg-white/90'}`}
+        className={`whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-semibold shadow-sm ring-1 ring-slate-200 ${muted ? 'bg-white/60 text-slate-600' : 'bg-white/95'}`}
         style={muted ? undefined : { color: BRAND.primary }}
       >
         {title}

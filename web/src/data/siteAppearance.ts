@@ -6,7 +6,20 @@ export const TENT_STYLE: Record<string, 'twin-gable' | 'arch'> = {
   'TENT-B': 'twin-gable', // หลังคาเมทัลชีทสีเทา 2 จั่ว (ภาพดาวเทียม)
   'TENT-C': 'arch', // หลังคาโค้งสีเข้ม
   'TENT-D': 'arch', // หลังคาโค้งแคบยาว ข้างเต็นท์ B
+  'TENT-T': 'arch', // เต็นท์ยางหลังเต็นท์ B/D
 }
+
+/** ทางเข้าที่มีศาลพระภูมิอยู่ด้านซ้าย (ฝั่ง canteen): canteen → ศาล → ทางเข้า → ป้อมยาม → โรงงานข้างเคียง */
+export const GATES_WITH_SHRINE = new Set(['GATE-1'])
+
+/** ลานรถส่งของ G ตามแนวในภาพดาวเทียม (พิกัด site) — ด้านล่างซ้ายติดรั้วฝั่งถนน */
+export const TRUCK_YARD: [number, number][] = [
+  [9, 81],
+  [80, 84],
+  [80, 112],
+  [62, 116.5],
+  [10, 89],
+]
 
 /** อาคารที่วาดเป็นโมเดลอาคารหลัก (ระบุด้วยชั้นแรกของอาคาร) */
 export const MAIN_BUILDING_FLOOR_ID = 'F1'
