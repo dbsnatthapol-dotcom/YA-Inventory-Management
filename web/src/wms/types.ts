@@ -313,6 +313,40 @@ export interface StockClosing {
   note: string | null
 }
 
+/** ใบตรวจนับจากไฟล์ Excel (รอผู้มีสิทธิ์อนุมัติก่อนปรับยอด) */
+export interface StockCountLine {
+  lineNo: number
+  /** รหัสช่องเก็บหรือรหัสโซนตามที่กรอก */
+  loc: string
+  zoneId: string | null
+  partNo: string
+  /** ยอดในระบบตอนส่ง */
+  systemQty: number
+  countedQty: number
+  /** ส่วนต่างที่ปรับจริงตอนอนุมัติ */
+  appliedQty: number | null
+}
+
+export interface StockCount {
+  id: string
+  countNo: string
+  status: 'pending' | 'approved' | 'rejected'
+  note: string | null
+  createdCode: string | null
+  createdAt: string
+  decidedCode: string | null
+  decidedAt: string | null
+  decisionNote: string | null
+  /** เอกสารของกล่องใหม่ (ยอดนับเกินและไม่มีกล่องเดิม) ใช้พิมพ์ป้าย */
+  grnId: string | null
+  lines: StockCountLine[]
+}
+
+export interface StockCountPayload {
+  note?: string
+  lines: { loc: string; partNo: string; counted: number }[]
+}
+
 /** ข้อมูลที่หน้ารับของส่งไปสร้าง GRN */
 export interface ReceivePayload {
   invoice?: {

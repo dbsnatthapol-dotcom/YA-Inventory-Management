@@ -13,6 +13,8 @@ import type {
   FgItem,
   LedgerRow,
   StockClosing,
+  StockCount,
+  StockCountPayload,
   ReconcilePayload,
   Requisition,
   RequisitionPayload,
@@ -86,6 +88,12 @@ export interface WmsApi {
   reopenMonth(id: string, reason: string): Promise<void>
   /** รับทราบยอด: planning (ledger.ack.planning) หรือ account (ledger.ack.account) */
   ackClosing(id: string, side: 'planning' | 'account'): Promise<void>
+  // นำเข้ายอดตรวจนับ (Part + ช่องเก็บ/โซน) → อนุมัติ → ปรับยอด
+  /** ส่งใบตรวจนับ (สิทธิ์ scan.count) · ระบบบันทึกยอดในระบบ ณ ตอนส่ง */
+  submitStockCount(p: StockCountPayload): Promise<{ id: string; countNo: string }>
+  listStockCounts(): Promise<StockCount[]>
+  /** อนุมัติ = ปรับยอดตามส่วนต่าง (สิทธิ์ scan.adjust.approve, คนส่งอนุมัติเองไม่ได้) */
+  decideStockCount(id: string, approve: boolean, note?: string): Promise<{ changed: number; newBoxes: number; grnId: string | null }>
 
   /** บันทึกผังที่แก้ลงฐานข้อมูลกลาง (สิทธิ์ layout.edit) */
   saveLayout(p: LayoutSavePayload): Promise<void>

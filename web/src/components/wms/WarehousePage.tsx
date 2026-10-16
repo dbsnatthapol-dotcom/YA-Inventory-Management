@@ -8,9 +8,11 @@ import { LabelsTab } from './LabelsTab'
 import { LedgerTab } from './LedgerTab'
 import { ReceiveTab } from './ReceiveTab'
 import { ScanTab } from './ScanTab'
+import { StockImport } from './StockImport'
+import type { Zone } from '../../types/layout'
 import { Alert } from './ui'
 
-export type WmsTab = 'receive' | 'labels' | 'scan' | 'invoice' | 'issue' | 'ledger'
+export type WmsTab = 'receive' | 'labels' | 'scan' | 'invoice' | 'issue' | 'ledger' | 'count'
 
 const TABS: [WmsTab, string, string][] = [
   ['receive', '1', 'รับสินค้า'],
@@ -19,6 +21,7 @@ const TABS: [WmsTab, string, string][] = [
   ['invoice', '4', 'กระทบยอด Invoice'],
   ['issue', '5', 'เบิกเข้าไลน์'],
   ['ledger', '6', 'บัญชีคุม FM-P-537'],
+  ['count', '7', 'ตรวจนับ (Excel)'],
 ]
 
 /** ลิงก์จาก QR: /t/LPN-… เปิดหน้าสแกน, /g/GRN-… เปิดหน้าป้ายของ GRN นั้น */
@@ -27,7 +30,7 @@ export interface WmsDeepLink {
   code: string
 }
 
-export function WarehousePage({ deepLink }: { deepLink: WmsDeepLink | null }) {
+export function WarehousePage({ deepLink, zones }: { deepLink: WmsDeepLink | null; zones: Zone[] }) {
   const { api, ready, error, settings, can } = useWms()
   const [tab, setTab] = useState<WmsTab>(deepLink?.kind === 'lpn' ? 'scan' : deepLink?.kind === 'grn' ? 'labels' : 'receive')
   const [grnId, setGrnId] = useState<string | null>(null)
@@ -104,6 +107,7 @@ export function WarehousePage({ deepLink }: { deepLink: WmsDeepLink | null }) {
             {tab === 'invoice' && <InvoiceTab onOpenGrn={openGrn} />}
             {tab === 'issue' && <IssueTab />}
             {tab === 'ledger' && <LedgerTab />}
+            {tab === 'count' && <StockImport zones={zones} />}
           </>
         )}
       </div>

@@ -216,7 +216,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
               </p>
               <div className="overflow-x-auto rounded-xl bg-slate-100 p-4">
                 <div className="flex w-max gap-4">
-                  {format === 'a4' ? <div className="origin-top-left scale-[0.6]" style={{ height: '180mm' }}><GrnSheet ctx={ctx} /></div> : chosen.slice(0, 2).map((l) => <LabelCard key={l.id} lpn={l} ctx={ctx} />)}
+                  {format === 'a4' ? <div className="origin-top-left scale-[0.6]" style={{ height: '180mm' }}><GrnSheet ctx={ctx} /></div> : chosen.slice(0, 2).map((l) => <LabelCard key={l.id} lpn={l} ctx={ctx} mono={format === 'label'} />)}
                   {format !== 'a4' && chosen.length === 0 && <p className="text-sm text-slate-500">ยังไม่ได้เลือกป้าย</p>}
                 </div>
               </div>
@@ -257,7 +257,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
           printLabel={format === 'a4' ? 'พิมพ์ใบ GRN' : `พิมพ์ ${count} ป้าย`}
         >
           {format === 'a4' && <GrnSheet ctx={ctx} />}
-          {format === 'label' && chosen.map((l) => <LabelCard key={l.id} lpn={l} ctx={ctx} />)}
+          {format === 'label' && chosen.map((l) => <LabelCard key={l.id} lpn={l} ctx={ctx} mono />)}
           {format === 'sheet' && Array.from({ length: sheets }, (_, i) => <LabelSheet key={i} lpns={chosen.slice(i * 4, i * 4 + 4)} ctx={ctx} />)}
         </PrintDialog>
       )}

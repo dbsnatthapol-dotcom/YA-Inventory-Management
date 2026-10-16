@@ -384,7 +384,7 @@ function FactoryApp() {
       )}
       {page === 'wms' && (
         <main className="min-h-0 flex-1">
-          <WarehousePage deepLink={deepLink} />
+          <WarehousePage deepLink={deepLink} zones={layout.zones} />
         </main>
       )}
       {page === 'admin' && (

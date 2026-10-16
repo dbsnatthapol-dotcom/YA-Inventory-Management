@@ -1,4 +1,5 @@
 import type { Borders, Workbook, Worksheet } from 'exceljs'
+import { brandHeader, brandLogo } from './excelBrand'
 import type { LedgerSheet } from './ledger'
 import type { PartMaster, Requisition, StockClosing } from './types'
 
@@ -52,35 +53,36 @@ const box = (ws: Worksheet, from: string, to: string) => {
 }
 
 /** 1 sheet ตามแบบ FM-P-537: หัวกระดาษ, ตารางรับ/เบิก, สรุปสิ้นเดือน */
-function partSheet(wb: Workbook, model: string, month: string, s: LedgerSheet) {
+function partSheet(wb: Workbook, model: string, month: string, s: LedgerSheet, logoId: number | null) {
   const ws = wb.addWorksheet(sheetName(wb, s.partNo), { pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } })
   ws.columns = [10, 14, 14, 16, 10, 10, 10, 8, 9, 18, 12].map((width) => ({ width }))
-  ws.mergeCells('A1:K1')
-  ws.getCell('A1').value = `STOCK PARTS ${model}   ${monthLabel(month)}`
-  ws.getCell('A1').font = { bold: true, size: 14 }
-  ws.getCell('A1').alignment = { horizontal: 'center' }
-  ws.mergeCells('A2:K2')
-  ws.getCell('A2').value = `PART : ${s.partNo}   ${s.name}${s.uamCode ? `   (UAM ${s.uamCode})` : ''}`
-  ws.getCell('A2').font = { bold: true, size: 12 }
+  brandHeader(ws, 'K', logoId, 'บัญชีคุมสินค้า FM-P-537')
+  ws.mergeCells('A3:K3')
+  ws.getCell('A3').value = `STOCK PARTS ${model}   ${monthLabel(month)}`
+  ws.getCell('A3').font = { bold: true, size: 14 }
+  ws.getCell('A3').alignment = { horizontal: 'center' }
+  ws.mergeCells('A4:K4')
+  ws.getCell('A4').value = `PART : ${s.partNo}   ${s.name}${s.uamCode ? `   (UAM ${s.uamCode})` : ''}`
+  ws.getCell('A4').font = { bold: true, size: 12 }
 
   const head: [string, string, string?][] = [
-    ['A4', 'Date'],
-    ['B4', 'เลขที่'],
-    ['B5', 'INV.'],
-    ['C4', 'วันที่'],
-    ['C5', 'Order  No.'],
-    ['D4', 'เลขที่ใบเบิก'],
-    ['E4', 'รับเข้า'],
-    ['E5', 'ปกติ'],
-    ['F5', 'ทดแทน'],
-    ['G4', 'เบิก'],
-    ['H4', 'NG'],
-    ['I4', 'QC เบิก'],
-    ['J4', 'LOT'],
-    ['K4', 'Stock'],
-    ['K5', '(Pcs.)'],
+    ['A6', 'Date'],
+    ['B6', 'เลขที่'],
+    ['B7', 'INV.'],
+    ['C6', 'วันที่'],
+    ['C7', 'Order  No.'],
+    ['D6', 'เลขที่ใบเบิก'],
+    ['E6', 'รับเข้า'],
+    ['E7', 'ปกติ'],
+    ['F7', 'ทดแทน'],
+    ['G6', 'เบิก'],
+    ['H6', 'NG'],
+    ['I6', 'QC เบิก'],
+    ['J6', 'LOT'],
+    ['K6', 'Stock'],
+    ['K7', '(Pcs.)'],
   ]
-  for (const m of ['A4:A5', 'D4:D5', 'E4:F4', 'G4:G5', 'H4:H5', 'I4:I5', 'J4:J5']) ws.mergeCells(m)
+  for (const m of ['A6:A7', 'D6:D7', 'E6:F6', 'G6:G7', 'H6:H7', 'I6:I7', 'J6:J7']) ws.mergeCells(m)
   for (const [cell, text] of head) {
     const c = ws.getCell(cell)
     c.value = text
@@ -88,12 +90,12 @@ function partSheet(wb: Workbook, model: string, month: string, s: LedgerSheet) {
     c.alignment = { horizontal: 'center', vertical: 'middle' }
     c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF4FA' } }
   }
-  box(ws, 'A4', 'K5')
+  box(ws, 'A6', 'K7')
 
-  ws.getCell('A6').value = 'Stock  ยกมา'
-  ws.getCell('A6').font = { bold: true }
-  ws.getCell('K6').value = s.opening
-  let row = 7
+  ws.getCell('A8').value = 'Stock  ยกมา'
+  ws.getCell('A8').font = { bold: true }
+  ws.getCell('K8').value = s.opening
+  let row = 9
   for (const l of s.lines) {
     const r = ws.getRow(row++)
     r.values = [
@@ -111,9 +113,9 @@ function partSheet(wb: Workbook, model: string, month: string, s: LedgerSheet) {
     ]
     if (l.note) r.getCell(12).value = l.note
   }
-  const last = Math.max(row - 1, 6)
-  box(ws, 'A6', `K${last}`)
-  for (let r = 6; r <= last; r++) for (const c of ['E', 'F', 'G', 'H', 'I', 'K']) ws.getCell(`${c}${r}`).numFmt = NUM
+  const last = Math.max(row - 1, 8)
+  box(ws, 'A8', `K${last}`)
+  for (let r = 8; r <= last; r++) for (const c of ['E', 'F', 'G', 'H', 'I', 'K']) ws.getCell(`${c}${r}`).numFmt = NUM
 
   // สรุปสิ้นเดือน
   const f = last + 2
@@ -155,13 +157,15 @@ export async function exportLedger(model: string, month: string, sheets: LedgerS
     { header: 'เบิกใช้', width: 11 },
     { header: 'คงเหลือ', width: 11 },
   ]
-  sum.spliceRows(1, 0, [`บัญชีคุมสินค้า ${model} · ${monthLabel(month)} (FM-P-537)`], [])
-  sum.mergeCells('A1:G1')
-  sum.getCell('A1').font = { bold: true, size: 14 }
-  sum.getRow(3).font = { bold: true }
+  sum.spliceRows(1, 0, [], [], [`บัญชีคุมสินค้า ${model} · ${monthLabel(month)} (FM-P-537)`], [])
+  const logoId = await brandLogo(wb)
+  brandHeader(sum, 'G', logoId)
+  sum.mergeCells('A3:G3')
+  sum.getCell('A3').font = { bold: true, size: 14 }
+  sum.getRow(5).font = { bold: true }
   for (const s of sheets) sum.addRow([s.partNo, s.uamCode ?? '', s.name, s.opening, s.totalIn, s.totalOut, s.closing])
-  box(sum, 'A3', `G${3 + sheets.length}`)
-  for (let r = 4; r <= 3 + sheets.length; r++) for (const c of ['D', 'E', 'F', 'G']) sum.getCell(`${c}${r}`).numFmt = NUM
+  box(sum, 'A5', `G${5 + sheets.length}`)
+  for (let r = 6; r <= 5 + sheets.length; r++) for (const c of ['D', 'E', 'F', 'G']) sum.getCell(`${c}${r}`).numFmt = NUM
   // ลายเซ็นในระบบ: ปิดยอด / Planning / บัญชี รับทราบ
   sum.addRow([])
   const signed = (by: string | null, at: string | null) => (by ? `${by} · ${stamp(at)}` : 'ยังไม่รับทราบ')
@@ -173,7 +177,7 @@ export async function exportLedger(model: string, month: string, sheets: LedgerS
       ]
     : [['สถานะ', 'ยังไม่ปิดยอด (ตัวเลขอาจเปลี่ยน)']])
     sum.addRow([k, '', v]).getCell(1).font = { bold: true }
-  for (const s of sheets) partSheet(wb, model, month, s)
+  for (const s of sheets) partSheet(wb, model, month, s, logoId)
   await saveWorkbook(wb, `FM-P-537_${model}_${month}.xlsx`)
 }
 
@@ -183,9 +187,12 @@ export async function exportPlanning(fm: Requisition[], parts: PartMaster[], fro
   const wb = new Workbook()
   const ws = wb.addWorksheet('สรุปเบิก FM-P-005')
   ws.columns = [12, 12, 10, 8, 16, 12, 34, 12, 12, 10, 12].map((width) => ({ width }))
+  ws.addRow([])
+  ws.addRow([])
+  brandHeader(ws, 'K', await brandLogo(wb))
   ws.addRow([`สรุปยอดเบิกตาม FM-P-005 ส่ง Planning · ${from === to ? from : `${from} ถึง ${to}`}`])
-  ws.mergeCells('A1:K1')
-  ws.getCell('A1').font = { bold: true, size: 14 }
+  ws.mergeCells('A3:K3')
+  ws.getCell('A3').font = { bold: true, size: 14 }
   ws.addRow([])
   const header = ws.addRow(['วันที่', 'เลขที่ FM-P-005', 'Model', 'จำนวนวง', 'Part No.', 'รหัส UAM', 'รายการ', 'รวมใบย่อย', 'FM-P-005', 'ส่วนต่าง', 'คงเหลือ'])
   header.font = { bold: true }
@@ -193,7 +200,7 @@ export async function exportPlanning(fm: Requisition[], parts: PartMaster[], fro
   for (const r of fm)
     for (const l of r.lines)
       ws.addRow([shortDate(r.docDate), r.docNo ?? '', r.modelCode ?? '', r.fgQty ?? '', l.partNo, name.get(l.partNo)?.uamCode ?? '', name.get(l.partNo)?.name ?? '', l.reqQty ?? 0, l.qty, l.qty - (l.reqQty ?? 0), l.balance ?? ''])
-  box(ws, 'A3', `K${ws.rowCount}`)
-  for (let r = 4; r <= ws.rowCount; r++) for (const c of ['H', 'I', 'J', 'K']) ws.getCell(`${c}${r}`).numFmt = NUM
+  box(ws, 'A5', `K${ws.rowCount}`)
+  for (let r = 6; r <= ws.rowCount; r++) for (const c of ['H', 'I', 'J', 'K']) ws.getCell(`${c}${r}`).numFmt = NUM
   await saveWorkbook(wb, `FM-P-005_Planning_${from}${from === to ? '' : `_${to}`}.xlsx`)
 }

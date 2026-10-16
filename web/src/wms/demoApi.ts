@@ -3,7 +3,8 @@ import { MODELS, PARTS, ZONE_RULES } from '../inventory/masterData'
 import type { WmsApi } from './api'
 import { layoutLocations, zoneCodeOf } from './locations'
 import { buildLedger, monthRange } from './ledger'
-import { canonPartNo, partRevision, partsOfModel } from './partCodes'
+import { canonPartNo, partRevision, partsOfModel, resolvePart } from './partCodes'
+import { countLocations, systemQty } from './stockImport'
 import type {
   Grn,
   GrnLine,
@@ -17,6 +18,7 @@ import type {
   ReceivePayload,
   Requisition,
   StockClosing,
+  StockCount,
   Settings,
   StaffBrief,
   Tx,
@@ -40,6 +42,7 @@ interface DemoDb {
   staff: StaffBrief[]
   requisitions: Requisition[]
   closings: StockClosing[]
+  counts: StockCount[]
 }
 
 /** โซนที่มีหัวหน้าโซน (ตรงกับหน้าหลังบ้าน) */
@@ -56,6 +59,7 @@ function seed(): DemoDb {
     counters: {},
     requisitions: [],
     closings: [],
+    counts: [],
     invoices: [],
     grns: [],
     grnLines: [],
@@ -755,6 +759,109 @@ export function demoWms(): WmsApi {
         if (!c || (side === 'planning' ? c.planningAt : c.accountAt)) fail('ไม่พบรายการ หรือรับทราบไปแล้ว')
         if (side === 'planning') Object.assign(c!, { planningBy: `ผู้ใช้สาธิต (${ME})`, planningAt: nowIso() })
         else Object.assign(c!, { accountBy: `ผู้ใช้สาธิต (${ME})`, accountAt: nowIso() })
+      }),
+    submitStockCount: (p) =>
+      commit(() => {
+        if (!p.lines.length) fail('ไม่มีรายการตรวจนับ')
+        const ctx = { locations: db.master.locations, zones: sampleLayout.zones }
+        const count: StockCount = {
+          id: uid(),
+          countNo: nextDoc('CNT'),
+          status: 'pending',
+          note: p.note?.trim() || null,
+          createdCode: ME,
+          createdAt: nowIso(),
+          decidedCode: null,
+          decidedAt: null,
+          decisionNote: null,
+          grnId: null,
+          lines: [],
+        }
+        p.lines.forEach((l, i) => {
+          const where = countLocations(l.loc, ctx)
+          if (!where) fail(`แถว ${i + 1}: ไม่พบช่องเก็บหรือโซน "${l.loc}"`)
+          const part = resolvePart(db.master.parts, l.partNo)
+          if (!part) fail(`แถว ${i + 1}: ไม่พบ part "${l.partNo}" ใน Master`)
+          if (!(l.counted >= 0)) fail(`แถว ${i + 1}: จำนวนนับต้องเป็น 0 ขึ้นไป`)
+          const loc = l.loc.trim().toUpperCase()
+          if (count.lines.some((x) => x.loc === loc && x.partNo === part!.partNo)) fail(`แถว ${i + 1}: ${part!.partNo} ที่ ${l.loc} ซ้ำในไฟล์`)
+          count.lines.push({ lineNo: i + 1, loc, zoneId: where!.zoneId, partNo: part!.partNo, systemQty: systemQty(db.lpns, where!.locs, part!.partNo), countedQty: l.counted, appliedQty: null })
+        })
+        db.counts.unshift(count)
+        return { id: count.id, countNo: count.countNo }
+      }),
+    listStockCounts: async () => clone(db.counts),
+    // สาธิตมีผู้ใช้คนเดียว: ไม่บังคับ "คนส่งอนุมัติเองไม่ได้" (ระบบจริงบังคับ)
+    decideStockCount: (id, approve, note) =>
+      commit(() => {
+        const c = db.counts.find((x) => x.id === id && x.status === 'pending')
+        if (!c) fail('ใบตรวจนับนี้ถูกพิจารณาไปแล้ว')
+        const decided = { decidedCode: ME, decidedAt: nowIso() }
+        if (!approve) {
+          if (!note?.trim()) fail('ระบุเหตุผลที่ไม่อนุมัติ')
+          Object.assign(c!, decided, { status: 'rejected', decisionNote: note!.trim() })
+          return { changed: 0, newBoxes: 0, grnId: null }
+        }
+        const ctx = { locations: db.master.locations, zones: sampleLayout.zones }
+        const reason = `ตรวจนับ ${c!.countNo}`
+        let grn: Grn | null = null
+        let changed = 0
+        let newBoxes = 0
+        const adj = (lpn: Lpn, item: Lpn['items'][number], from: number, to: number) =>
+          log({ kind: 'ADJ', docNo: c!.countNo, lpnId: lpn.id, lpnNo: lpn.lpnNo, lpnItemId: item.id, partNo: item.partNo, qty: from, newQty: to, reason, status: 'approved', createdCode: c!.createdCode, toLoc: lpn.locationCode })
+        // ตรวจทุกบรรทัดก่อน (ไม่พอลด ⇒ ไม่ปรับเลยสักบรรทัด เหมือนธุรกรรมฝั่งฐานข้อมูล)
+        for (const l of c!.lines) {
+          const locs = countLocations(l.loc, ctx)!.locs
+          const d = l.countedQty - l.systemQty
+          if (d < 0 && systemQty(db.lpns, locs, l.partNo) < -d) fail(`${l.partNo} ที่ ${l.loc} ยอดในระบบตอนนี้ไม่พอลด ${-d} (มีการเบิก/ย้ายหลังตรวจนับ) · ไม่อนุมัติแล้วนับใหม่`)
+        }
+        for (const l of c!.lines) {
+          const locs = countLocations(l.loc, ctx)!.locs
+          const d = l.countedQty - l.systemQty
+          const boxes = db.lpns
+            .filter((x) => x.status === 'active' && locs.includes(x.locationCode) && x.items.some((i) => i.partNo === l.partNo))
+            .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.lpnNo.localeCompare(b.lpnNo))
+          if (d < 0) {
+            let left = -d
+            for (const b of boxes)
+              for (const item of b.items.filter((i) => i.partNo === l.partNo && i.qty > 0)) {
+                if (left <= 0) break
+                const take = Math.min(left, item.qty)
+                adj(b, item, item.qty, item.qty - take)
+                item.qty -= take
+                left -= take
+                if (!b.items.some((i) => i.qty > 0)) b.status = 'empty'
+              }
+            changed++
+          } else if (d > 0) {
+            const last = boxes.at(-1)
+            const item = last?.items.find((i) => i.partNo === l.partNo)
+            if (last && item) {
+              adj(last, item, item.qty, item.qty + d)
+              item.qty += d
+            } else {
+              if (!grn) {
+                grn = { id: uid(), grnNo: c!.countNo, invoiceId: null, invoiceNo: null, plRef: c!.countNo, soNo: null, packages: null, modelCode: null, customerId: null, receivedAt: nowIso(), receiverCode: ME, note: 'กล่องใหม่จากการตรวจนับ (ยอดนับเกินระบบ)', replacement: false }
+                db.grns.unshift(grn)
+              }
+              const used = new Set(db.lpns.filter((x) => x.status === 'active').map((x) => x.locationCode))
+              const home = locs.length === 1 ? locs[0] : (locs.find((x) => x !== l.loc && !used.has(x)) ?? locs.find((x) => x !== l.loc) ?? l.loc)
+              const part = db.master.parts.find((x) => x.partNo === l.partNo)
+              const gl: GrnLine = { id: uid(), grnId: grn.id, lineNo: db.grnLines.filter((x) => x.grnId === grn!.id).length + 1, partNo: l.partNo, description: part?.name ?? null, partType: part?.type ?? null, plQty: 0, countedQty: d, invoiceQty: null, needsQi: false, homeLocation: home }
+              db.grnLines.push(gl)
+              const lpn: Lpn = { id: uid(), lpnNo: nextDoc('LPN'), grnId: grn.id, locationCode: home, hold: false, status: 'active', createdAt: nowIso(), items: [] }
+              const it = { id: uid(), lpnId: lpn.id, grnLineId: gl.id, partNo: l.partNo, qty: d }
+              lpn.items.push(it)
+              db.lpns.push(lpn)
+              adj(lpn, it, 0, d)
+              newBoxes++
+            }
+            changed++
+          }
+          l.appliedQty = d
+        }
+        Object.assign(c!, decided, { status: 'approved', grnId: (grn as Grn | null)?.id ?? null, decisionNote: note?.trim() || null })
+        return { changed, newBoxes, grnId: (grn as Grn | null)?.id ?? null }
       }),
     saveLayout: (p) =>
       commit(() => {

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { WmsApi } from './api'
-import type { ClosingTotal, FgItem, Grn, GrnLine, Invoice, InvoiceLine, LedgerRow, Lpn, LpnItem, Requisition, StockClosing, StorageLoc, Tx, TxKind } from './types'
+import type { ClosingTotal, FgItem, Grn, GrnLine, Invoice, InvoiceLine, LedgerRow, Lpn, LpnItem, Requisition, StockClosing, StockCount, StorageLoc, Tx, TxKind } from './types'
 
 type Row = Record<string, unknown>
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v))
@@ -390,6 +390,39 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
     },
     ackClosing: async (id, side) => {
       await rpc('stock_close_ack', { p_id: id, p_side: side })
+    },
+    submitStockCount: (p) => rpc<{ id: string; countNo: string }>('stock_count_submit', { p }),
+    async listStockCounts() {
+      const rows = (await run(sb.from('stock_counts').select('*, stock_count_lines(*)').order('created_at', { ascending: false }).limit(100))) as Row[]
+      return rows.map(
+        (r): StockCount => ({
+          id: String(r.id),
+          countNo: String(r.count_no),
+          status: r.status as StockCount['status'],
+          note: str(r.note),
+          createdCode: str(r.created_code),
+          createdAt: String(r.created_at),
+          decidedCode: str(r.decided_code),
+          decidedAt: str(r.decided_at),
+          decisionNote: str(r.decision_note),
+          grnId: str(r.grn_id),
+          lines: ((r.stock_count_lines as Row[] | null) ?? [])
+            .map((l) => ({
+              lineNo: Number(l.line_no),
+              loc: String(l.loc),
+              zoneId: str(l.zone_id),
+              partNo: String(l.part_no),
+              systemQty: Number(l.system_qty),
+              countedQty: Number(l.counted_qty),
+              appliedQty: num(l.applied_qty),
+            }))
+            .sort((a, b) => a.lineNo - b.lineNo),
+        }),
+      )
+    },
+    decideStockCount: async (id, approve, note) => {
+      const r = await rpc<{ changed: number; newBoxes: number; grnId?: string | null }>('stock_count_decide', { p_id: id, p_approve: approve, p_note: note ?? null })
+      return { changed: r.changed, newBoxes: r.newBoxes, grnId: r.grnId ?? null }
     },
   }
   return api

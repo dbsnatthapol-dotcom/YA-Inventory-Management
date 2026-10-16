@@ -7,6 +7,8 @@ import type { LedgerRow, StockClosing } from '../../wms/types'
 import { useWms } from '../../wms/useWms'
 import { thisMonth } from '../../wms/closing'
 import { ClosingPanel, MonthOverview } from './ClosingPanel'
+import { PrintDialog } from './Print'
+import { LedgerPage } from './ReportPages'
 import { Alert, BigButton, Card, Field, inputCls, Pill, tdCls, thCls } from './ui'
 
 const shortDate = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(2, 4)}`
@@ -27,6 +29,7 @@ export function LedgerTab() {
   const [showAll, setShowAll] = useState(false)
   const [closings, setClosings] = useState<StockClosing[]>([])
   const [ver, setVer] = useState(0)
+  const [printing, setPrinting] = useState(false)
   const parts = useMemo(() => (model ? partsOfModel(master, model) : []), [master, model])
 
   useEffect(() => {
@@ -89,8 +92,8 @@ export function LedgerTab() {
         eyebrow="สร้างจากรายการรับเข้า / เบิก / NG / QC ในระบบ · 1 ไฟล์ต่อ Model, 1 sheet ต่อ Part"
         action={
           <div className="flex gap-2">
-            <BigButton tone="secondary" disabled={!sheet} onClick={() => window.print()}>
-              พิมพ์หน้านี้
+            <BigButton tone="secondary" disabled={!sheets.length} onClick={() => setPrinting(true)}>
+              พิมพ์ ({sheets.length} part)
             </BigButton>
             <BigButton disabled={busy || !sheets.length} onClick={() => void exportXlsx()}>
               {busy ? 'กำลังสร้างไฟล์…' : `Export Excel (${sheets.length} part)`}
@@ -130,6 +133,18 @@ export function LedgerTab() {
           onChanged={() => setVer((v) => v + 1)}
         />
       )}
+      <PrintDialog
+        open={printing}
+        onClose={() => setPrinting(false)}
+        format="a4"
+        title="ตัวอย่างก่อนพิมพ์ · บัญชีคุม FM-P-537"
+        subtitle={`${model} · ${month} · ${sheets.length} part (1 หน้าต่อ part)`}
+        printLabel={`พิมพ์ ${sheets.length} หน้า`}
+      >
+        {sheets.map((s) => (
+          <LedgerPage key={s.partNo} sheet={s} model={model} month={month} closing={closing} />
+        ))}
+      </PrintDialog>
       <MonthOverview month={month} models={master.models.map((m) => m.code)} closings={closings} current={model} onPick={setModel} />
 
       {sheets.length > 0 && (
