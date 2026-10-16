@@ -1,13 +1,14 @@
-/** บทบาทพนักงาน — ตรงกับ staff_profiles.role ใน supabase/migrations/0005_staff_auth.sql */
-export type Role = 'warehouse' | 'mi3' | 'production' | 'planner' | 'manager' | 'admin'
+/** บทบาทพนักงาน — ตรงกับ staff_profiles.role (supabase/migrations/0008_wms_receiving.sql) */
+export type Role = 'warehouse' | 'mi3' | 'production' | 'planner' | 'engineer' | 'manager' | 'admin'
 
-export const ROLES: Role[] = ['warehouse', 'mi3', 'production', 'planner', 'manager', 'admin']
+export const ROLES: Role[] = ['warehouse', 'mi3', 'production', 'planner', 'engineer', 'manager', 'admin']
 
 export const ROLE_LABEL: Record<Role, string> = {
   warehouse: 'คลัง',
   mi3: 'MI3 คัดงาน',
   production: 'ผลิต',
   planner: 'วางแผน',
+  engineer: 'วิศวกร',
   manager: 'ผู้จัดการ',
   admin: 'ผู้ดูแลระบบ',
 }
@@ -17,6 +18,7 @@ export const ROLE_DUTY: Record<Role, string> = {
   mi3: 'ดึงของจาก BOI มาคัด, บันทึกผลคัด (ผ่าน / NG), ส่งของผ่านกลับ BOI',
   production: 'ขอเบิก, ยืนยันรับของ, คืนของ, แจ้ง NG ที่เจอในไลน์',
   planner: 'ลงแผนผลิต',
+  engineer: 'อนุมัติการแก้ไขยอด, ปิด Invoice ที่รับครบ',
   manager: 'ดูทุกอย่าง, อนุมัติปรับยอด, ดูประวัติเข้าใช้',
   admin: 'สร้างบัญชีพนักงาน, รีเซ็ตรหัสผ่าน, แก้ผังโรงงาน',
 }

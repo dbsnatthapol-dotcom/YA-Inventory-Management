@@ -3,7 +3,9 @@ import { AuthProvider } from './auth/AuthProvider'
 import { ChangePasswordScreen, LoadingScreen, LoginScreen } from './auth/AuthScreens'
 import { can, ROLE_LABEL } from './auth/staff'
 import { useAuth } from './auth/useAuth'
-import { UsersPage } from './components/admin/UsersPage'
+import { BackofficePage } from './components/admin/BackofficePage'
+import { WarehousePage, type WmsDeepLink } from './components/wms/WarehousePage'
+import { WmsProvider } from './wms/WmsProvider'
 import { FactoryScene, type CameraCommand, type MapPinSpec, type ViewMode } from './components/FactoryScene'
 import { CameraButtons } from './components/map/CameraButtons'
 import { IconClose, IconPanel } from './components/map/icons'
@@ -41,11 +43,28 @@ export default function App() {
 /** ต่อ Supabase แล้ว = ต้อง login ก่อนทุกหน้า · ไม่ได้ต่อ (หน้าสาธิต) = เข้าได้เลย */
 function AuthGate() {
   const auth = useAuth()
-  if (!auth.enabled) return <FactoryApp />
+  if (!auth.enabled) return <WmsApp />
   if (auth.loading) return <LoadingScreen />
   if (!auth.session || !auth.profile?.active) return <LoginScreen />
   if (auth.profile.must_change_password) return <ChangePasswordScreen />
-  return <FactoryApp />
+  return <WmsApp />
+}
+
+/** ข้อมูลงานคลังโหลดหลัง login แล้วเท่านั้น (สิทธิ์ผูกกับบัญชี) */
+function WmsApp() {
+  return (
+    <WmsProvider>
+      <FactoryApp />
+    </WmsProvider>
+  )
+}
+
+/** ลิงก์จาก QR บนป้าย: /t/LPN-2610-000001 (กล่อง) หรือ /g/GRN-2610-0001 (ใบรับสินค้า) */
+function readDeepLink(): WmsDeepLink | null {
+  const m = window.location.pathname.match(/^\/(t|g)\/([A-Za-z0-9-]+)\/?$/)
+  if (!m) return null
+  window.history.replaceState(null, '', '/')
+  return { kind: m[1] === 't' ? 'lpn' : 'grn', code: decodeURIComponent(m[2]).toUpperCase() }
 }
 
 function FactoryApp() {
@@ -70,7 +89,9 @@ function FactoryApp() {
   const [showSurroundings, setShowSurroundings] = useState(false)
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
   const [sideTab, setSideTab] = useState<'zone' | 'route'>('zone')
-  const [page, setPage] = useState<'map' | 'inventory' | 'layout' | 'users'>('map')
+  const [deepLink] = useState(readDeepLink)
+  const [page, setPage] = useState<'map' | 'wms' | 'inventory' | 'layout' | 'admin'>(deepLink ? 'wms' : 'map')
+  const canAdmin = !auth.enabled || role === 'admin' || role === 'manager'
   const inventory = useInventory(staffName)
 
   useEffect(() => {
@@ -195,9 +216,10 @@ function FactoryApp() {
           {(
             [
               ['map', 'ผังโรงงาน 3D'],
-              ['inventory', 'รับเข้า & สต็อก'],
+              ['wms', 'งานคลัง'],
+              ['inventory', 'สต็อก (ตัวอย่างเดิม)'],
               ...(can(role, 'editLayout') ? ([['layout', 'ปรับผัง']] as const) : []),
-              ...(auth.enabled && can(role, 'viewAccessLog') ? ([['users', 'ผู้ใช้งาน']] as const) : []),
+              ...(canAdmin ? ([['admin', 'หลังบ้าน']] as const) : []),
             ] as const
           ).map(([value, label]) => (
             <button
@@ -251,9 +273,14 @@ function FactoryApp() {
           <LayoutEditorPage layout={layout} baseLayout={loaded.layout} api={layoutEdits} stock={zoneStock} onOpen3D={open3D} />
         </main>
       )}
-      {page === 'users' && (
+      {page === 'wms' && (
         <main className="min-h-0 flex-1">
-          <UsersPage />
+          <WarehousePage deepLink={deepLink} />
+        </main>
+      )}
+      {page === 'admin' && (
+        <main className="min-h-0 flex-1">
+          <BackofficePage zones={layout.zones} />
         </main>
       )}
 

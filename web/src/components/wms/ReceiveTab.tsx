@@ -1,0 +1,352 @@
+import { useMemo, useRef, useState } from 'react'
+import { errorText } from '../../wms/api'
+import { aiReaderAvailable, readInvoicePhoto, readPackingListPhoto } from '../../wms/docReader'
+import { fmt, needsQi, suggestedZone } from '../../wms/logic'
+import { SAMPLE_INVOICE, SAMPLE_MODEL, SAMPLE_PACKING_LIST } from '../../wms/sampleDocs'
+import { useWms } from '../../wms/useWms'
+import { Alert, BigButton, Card, Field, inputCls, Pill, tdCls, thCls } from './ui'
+
+interface Row {
+  key: string
+  partNo: string
+  description: string
+  plQty: number
+  counted: number
+  invQty: number | null
+  invLine: number | null
+}
+
+let seq = 0
+const newKey = () => `r${++seq}`
+
+/** ช่องถ่ายภาพเอกสาร: แตะเพื่อเปิดกล้อง (มือถือ/Tablet) หรือเลือกไฟล์ */
+function PhotoPick({ id, label, file, onFile }: { id: string; label: string; file: File | null; onFile: (f: File) => void }) {
+  const url = useMemo(() => (file ? URL.createObjectURL(file) : null), [file])
+  return (
+    <label htmlFor={id} className="flex cursor-pointer items-center gap-3 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 p-3 hover:border-sky-400 hover:bg-sky-50">
+      {url ? <img src={url} alt="" className="h-16 w-12 rounded object-cover ring-1 ring-slate-200" /> : <span className="grid h-16 w-12 place-items-center rounded bg-white text-2xl text-slate-400 ring-1 ring-slate-200">📷</span>}
+      <span className="text-sm">
+        <span className="block font-semibold text-slate-700">{file ? 'ถ่ายใหม่ / เปลี่ยนภาพ' : label}</span>
+        <span className="text-slate-500">{file ? file.name : 'แตะเพื่อเปิดกล้อง หรือเลือกไฟล์ภาพ'}</span>
+      </span>
+      <input id={id} type="file" accept="image/*" capture="environment" className="sr-only" onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
+    </label>
+  )
+}
+
+export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }) {
+  const { api, master, settings, can } = useWms()
+  const [modelCode, setModelCode] = useState('')
+  const [pl, setPl] = useState({ refDoc: '', soNo: '', packages: '' })
+  const [inv, setInv] = useState({ invoiceNo: '', poNo: '', docDate: '', movementType: '' })
+  const [existing, setExisting] = useState<{ grnCount: number } | null>(null)
+  const [rows, setRows] = useState<Row[]>([])
+  const [plFile, setPlFile] = useState<File | null>(null)
+  const [invFile, setInvFile] = useState<File | null>(null)
+  const [reading, setReading] = useState<'pl' | 'invoice' | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<{ tone: 'ok' | 'warn' | 'bad' | 'info'; text: string } | null>(null)
+  const tableRef = useRef<HTMLDivElement>(null)
+
+  const customerId = master.models.find((m) => m.code === modelCode)?.customerId
+  const allowed = can('receive.create')
+
+  const checkInvoice = async (no: string) => {
+    if (!no.trim()) return setExisting(null)
+    const found = await api.findInvoiceNo(no).catch(() => null)
+    setExisting(found)
+    if (found) {
+      // invoice เดิม: ใช้จำนวนตามที่บันทึกไว้ครั้งแรก
+      const view = await api.invoiceView(no).catch(() => null)
+      if (view) {
+        setRows((rs) => rs.map((r) => ({ ...r, invQty: view.lines.find((l) => l.partNo === r.partNo)?.qty ?? null, invLine: view.lines.find((l) => l.partNo === r.partNo)?.lineNo ?? null })))
+        setInv((v) => ({ ...v, poNo: view.invoice.poNo ?? v.poNo, docDate: view.invoice.docDate ?? v.docDate, movementType: view.invoice.movementType ?? v.movementType }))
+      }
+    }
+  }
+
+  const useSample = () => {
+    setModelCode(SAMPLE_MODEL)
+    setPl({ refDoc: SAMPLE_PACKING_LIST.refDoc, soNo: SAMPLE_PACKING_LIST.soNo, packages: SAMPLE_PACKING_LIST.packages })
+    setInv({ invoiceNo: SAMPLE_INVOICE.invoiceNo, poNo: SAMPLE_INVOICE.poNo, docDate: SAMPLE_INVOICE.docDate, movementType: SAMPLE_INVOICE.movementType })
+    setRows(
+      SAMPLE_PACKING_LIST.lines.map((l) => {
+        const il = SAMPLE_INVOICE.lines.find((x) => x.partNo === l.partNo)
+        return { key: newKey(), partNo: l.partNo, description: l.description, plQty: l.qty, counted: l.qty, invQty: il?.qty ?? null, invLine: il?.lineNo ?? null }
+      }),
+    )
+    setMsg({ tone: 'info', text: 'ใส่เอกสารตัวอย่าง RE TWIN แล้ว (Packing List 55035596 + Invoice 4957930126) · ยอดนับจริงตั้งต้นเท่ากับ Packing List แก้ได้ทุกช่อง' })
+    void checkInvoice(SAMPLE_INVOICE.invoiceNo)
+  }
+
+  const readPl = async (file: File) => {
+    setPlFile(file)
+    if (!aiReaderAvailable) return
+    setReading('pl')
+    setMsg(null)
+    try {
+      const d = await readPackingListPhoto(file)
+      setPl({ refDoc: d.refDoc, soNo: d.soNo, packages: d.packages })
+      setRows(d.lines.map((l) => ({ key: newKey(), partNo: l.partNo, description: l.description, plQty: l.qty, counted: l.qty, invQty: null, invLine: l.invoiceLineNo })))
+      setMsg({ tone: 'ok', text: `AI อ่าน Packing List ได้ ${d.lines.length} รายการ · ตรวจทานกับเอกสารก่อนยืนยัน` })
+    } catch (e) {
+      setMsg({ tone: 'warn', text: `อ่านภาพอัตโนมัติไม่ได้ (${errorText(e)}) · กรอกเอง หรือถ่ายใหม่ให้ตรงและชัดขึ้น` })
+    } finally {
+      setReading(null)
+    }
+  }
+
+  const readInv = async (file: File) => {
+    setInvFile(file)
+    if (!aiReaderAvailable) return
+    setReading('invoice')
+    setMsg(null)
+    try {
+      const d = await readInvoicePhoto(file)
+      setInv({ invoiceNo: d.invoiceNo, poNo: d.poNo, docDate: d.docDate, movementType: d.movementType })
+      setRows((rs) => {
+        const next = rs.map((r) => {
+          const il = d.lines.find((l) => l.partNo === r.partNo)
+          return il ? { ...r, invQty: il.qty, invLine: il.lineNo } : r
+        })
+        // part ที่มีใน invoice แต่ไม่มีใน packing list → เพิ่มเป็นแถว (รับจริง 0)
+        for (const l of d.lines) if (!next.some((r) => r.partNo === l.partNo)) next.push({ key: newKey(), partNo: l.partNo, description: l.description, plQty: 0, counted: 0, invQty: l.qty, invLine: l.lineNo })
+        return next
+      })
+      setMsg({ tone: 'ok', text: `AI อ่าน Invoice ${d.invoiceNo} ได้ ${d.lines.length} รายการ` })
+      void checkInvoice(d.invoiceNo)
+    } catch (e) {
+      setMsg({ tone: 'warn', text: `อ่านภาพอัตโนมัติไม่ได้ (${errorText(e)}) · กรอกเอง หรือถ่ายใหม่` })
+    } finally {
+      setReading(null)
+    }
+  }
+
+  const patch = (key: string, p: Partial<Row>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...p } : r)))
+  const pickPart = (key: string, partNo: string) => {
+    const part = master.parts.find((p) => p.partNo === partNo.trim())
+    patch(key, { partNo: partNo.trim(), ...(part ? { description: part.name } : {}) })
+  }
+
+  const offPl = rows.filter((r) => r.counted !== r.plQty).length
+  const offInv = rows.filter((r) => r.invQty !== null && r.counted !== r.invQty).length
+  const mi3 = rows.filter((r) => needsQi(master, settings.qiPartTypes, modelCode, r.partNo)).length
+  const unknown = rows.filter((r) => r.partNo && !master.parts.some((p) => p.partNo === r.partNo)).length
+  const total = rows.reduce((s, r) => s + r.counted, 0)
+  const problems = [
+    !modelCode && 'เลือก Model',
+    !pl.refDoc.trim() && 'ใส่เลข REF ของ Packing List',
+    !rows.length && 'เพิ่มรายการอย่างน้อย 1 รายการ',
+    rows.some((r) => !r.partNo.trim()) && 'มีแถวที่ยังไม่ใส่ Part No.',
+  ].filter(Boolean) as string[]
+
+  const submit = async () => {
+    setBusy(true)
+    setMsg(null)
+    try {
+      const res = await api.createGrn({
+        modelCode,
+        packingList: { refDoc: pl.refDoc.trim(), soNo: pl.soNo.trim(), packages: pl.packages.trim() },
+        invoice: inv.invoiceNo.trim()
+          ? {
+              invoiceNo: inv.invoiceNo.trim(),
+              customerId,
+              poNo: inv.poNo.trim(),
+              docDate: inv.docDate.trim(),
+              movementType: inv.movementType.trim(),
+              lines: rows.filter((r) => r.invQty !== null).map((r, i) => ({ lineNo: r.invLine ?? i + 1, partNo: r.partNo, description: r.description, qty: r.invQty ?? 0 })),
+            }
+          : undefined,
+        lines: rows.map((r) => ({ partNo: r.partNo.trim(), description: r.description, plQty: r.plQty, countedQty: r.counted })),
+      })
+      // ภาพเอกสารเป็นหลักฐาน: อัปโหลดหลังบันทึก GRN แล้ว (ถ้าเน็ตช้า/ล้ม การรับของยังสำเร็จ)
+      const [plPath, invPath] = await Promise.all([plFile ? api.uploadDoc(plFile, 'pl') : null, invFile ? api.uploadDoc(invFile, 'invoice') : null])
+      if (plPath || invPath) await api.attachImages(res.grnId, plPath ? [plPath] : [], invPath ? [invPath] : []).catch(() => undefined)
+      onCreated(res.grnId)
+    } catch (e) {
+      setMsg({ tone: 'bad', text: errorText(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!allowed) return <Alert tone="warn">บัญชีนี้ยังไม่มีสิทธิ์รับของ · ให้ผู้ดูแลระบบเปิดสิทธิ์ "รับของ / ออก GRN" ในหน้าหลังบ้าน</Alert>
+
+  return (
+    <div className="flex flex-col gap-4 pb-28">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-1.5 text-xs">
+          {['1 ถ่าย/กรอกเอกสาร', '2 นับจริง', '3 ยืนยัน → ออก GRN', '4 ติดป้าย'].map((s, i) => (
+            <span key={s} className={`rounded-full px-3 py-1 font-medium ${i < (rows.length ? 2 : 1) ? 'bg-sky-100 text-sky-800' : 'bg-slate-100 text-slate-500'}`}>
+              {s}
+            </span>
+          ))}
+        </div>
+        <BigButton tone="secondary" onClick={useSample}>
+          ใช้เอกสารตัวอย่าง (RE TWIN)
+        </BigButton>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card eyebrow="ใบที่มากับรถ · บังคับ" title="Packing List">
+          <PhotoPick id="pl-photo" label="ถ่าย Packing List" file={plFile} onFile={readPl} />
+          {reading === 'pl' && <Alert tone="info">AI กำลังอ่าน Packing List…</Alert>}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="REF Document No. *">
+              <input id="pl-ref" className={inputCls} value={pl.refDoc} onChange={(e) => setPl({ ...pl, refDoc: e.target.value })} placeholder="เช่น 55035596" />
+            </Field>
+            <Field label="Model *">
+              <select id="pl-model" className={inputCls} value={modelCode} onChange={(e) => setModelCode(e.target.value)}>
+                <option value="">— เลือก Model —</option>
+                {master.models.map((m) => (
+                  <option key={m.code} value={m.code}>
+                    {m.code} {m.requiresInspection ? '· ต้องผ่าน MI3 (Rim/Hub)' : '· ไม่ต้องตรวจ'}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="SO No.">
+              <input id="pl-so" className={inputCls} value={pl.soNo} onChange={(e) => setPl({ ...pl, soNo: e.target.value })} />
+            </Field>
+            <Field label="หีบห่อ (Packing Type)">
+              <input id="pl-pack" className={inputCls} value={pl.packages} onChange={(e) => setPl({ ...pl, packages: e.target.value })} placeholder="เช่น F28-F40" />
+            </Field>
+          </div>
+        </Card>
+
+        <Card eyebrow="ใช้อ้างอิงและกระทบยอด" title="Invoice">
+          <PhotoPick id="inv-photo" label="ถ่าย Invoice" file={invFile} onFile={readInv} />
+          {reading === 'invoice' && <Alert tone="info">AI กำลังอ่าน Invoice…</Alert>}
+          {existing && <Alert tone="info">Invoice นี้มีในระบบแล้ว (รับไปแล้ว {existing.grnCount} เที่ยว) · เที่ยวนี้จะผูกกับใบเดิม ไม่สร้างซ้ำ</Alert>}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Invoice No.">
+              <input id="inv-no" className={inputCls} value={inv.invoiceNo} onChange={(e) => setInv({ ...inv, invoiceNo: e.target.value })} onBlur={(e) => void checkInvoice(e.target.value)} placeholder="เช่น 4957930126" />
+            </Field>
+            <Field label="PO">
+              <input id="inv-po" className={inputCls} value={inv.poNo} onChange={(e) => setInv({ ...inv, poNo: e.target.value })} />
+            </Field>
+            <Field label="วันที่เอกสาร">
+              <input id="inv-date" type="date" className={inputCls} value={inv.docDate} onChange={(e) => setInv({ ...inv, docDate: e.target.value })} />
+            </Field>
+            <Field label="Movement Type">
+              <input id="inv-mvt" className={inputCls} value={inv.movementType} onChange={(e) => setInv({ ...inv, movementType: e.target.value })} placeholder="เช่น 541" />
+            </Field>
+          </div>
+        </Card>
+      </div>
+
+      {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
+
+      <Card
+        title="นับจริงเทียบ Packing List และ Invoice"
+        action={
+          <BigButton tone="secondary" onClick={() => setRows((rs) => [...rs, { key: newKey(), partNo: '', description: '', plQty: 0, counted: 0, invQty: null, invLine: null }])}>
+            + เพิ่มรายการ
+          </BigButton>
+        }
+      >
+        <p className="text-xs text-slate-500">จับคู่ด้วย Part No. ไม่ใช้ลำดับบรรทัด · ยอดที่เข้าสต็อกคือ "นับได้จริง" · ช่องเก็บจริงระบบเลือกให้ตอนยืนยัน</p>
+        <div ref={tableRef} className="overflow-x-auto rounded-lg ring-1 ring-slate-200">
+          <table className="w-full min-w-[920px] text-sm">
+            <thead>
+              <tr>
+                <th className={thCls}>#</th>
+                <th className={thCls}>Part No.</th>
+                <th className={thCls}>รายการ</th>
+                <th className={`${thCls} text-right`}>Packing List</th>
+                <th className={`${thCls} text-right`}>นับได้จริง</th>
+                <th className={`${thCls} text-right`}>Invoice</th>
+                <th className={thCls}>โซนเก็บ</th>
+                <th className={thCls}>ผล</th>
+                <th className={thCls} />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={9} className={`${tdCls} py-8 text-center text-slate-500`}>
+                    ถ่าย Packing List ให้ AI อ่าน, กด "+ เพิ่มรายการ" เพื่อกรอกเอง หรือกด "ใช้เอกสารตัวอย่าง"
+                  </td>
+                </tr>
+              )}
+              {rows.map((r, i) => {
+                const qi = needsQi(master, settings.qiPartTypes, modelCode, r.partNo)
+                const known = master.parts.some((p) => p.partNo === r.partNo)
+                const zone = suggestedZone(master, customerId, r.partNo)
+                const bad = r.counted !== r.plQty || (r.invQty !== null && r.counted !== r.invQty)
+                return (
+                  <tr key={r.key} className={bad ? 'bg-rose-50/60' : undefined}>
+                    <td className={`${tdCls} text-right font-mono text-slate-400`}>{i + 1}</td>
+                    <td className={tdCls}>
+                      <input
+                        id={`part-${r.key}`}
+                        list="wms-parts"
+                        className="w-36 rounded-md border border-slate-300 px-2 py-1.5 font-mono text-sm"
+                        value={r.partNo}
+                        onChange={(e) => pickPart(r.key, e.target.value)}
+                        aria-label="Part No."
+                      />
+                    </td>
+                    <td className={`${tdCls} max-w-[260px] text-slate-600`}>{r.description}</td>
+                    <td className={`${tdCls} text-right`}>
+                      <input id={`pl-${r.key}`} type="number" min={0} inputMode="numeric" className="w-24 rounded-md border border-slate-300 px-2 py-1.5 text-right font-mono" value={r.plQty} onChange={(e) => patch(r.key, { plQty: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} aria-label="จำนวน Packing List" />
+                    </td>
+                    <td className={`${tdCls} text-right`}>
+                      <input id={`cnt-${r.key}`} type="number" min={0} inputMode="numeric" className="w-24 rounded-md border-2 border-sky-300 px-2 py-1.5 text-right font-mono font-semibold" value={r.counted} onChange={(e) => patch(r.key, { counted: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} aria-label="นับได้จริง" />
+                    </td>
+                    <td className={`${tdCls} text-right`}>
+                      {existing ? (
+                        <span className="font-mono">{fmt(r.invQty)}</span>
+                      ) : (
+                        <input id={`inv-${r.key}`} type="number" min={0} inputMode="numeric" className="w-24 rounded-md border border-slate-300 px-2 py-1.5 text-right font-mono" value={r.invQty ?? ''} placeholder="–" onChange={(e) => patch(r.key, { invQty: e.target.value === '' ? null : Math.max(0, Math.floor(Number(e.target.value) || 0)) })} aria-label="จำนวนใน Invoice" />
+                      )}
+                      {r.invLine !== null && <div className="text-[10px] text-slate-400">บรรทัด {r.invLine}</div>}
+                    </td>
+                    <td className={`${tdCls} font-mono text-xs`}>{qi ? 'MI3-QC' : (master.locations.find((l) => l.zoneId === zone)?.code.split('-').slice(0, 2).join('-') ?? '–')}</td>
+                    <td className={`${tdCls} space-x-1 space-y-1`}>
+                      {r.counted === r.plQty ? <Pill tone="ok">ตรง PL</Pill> : r.counted < r.plQty ? <Pill tone="bad">ขาด {fmt(r.plQty - r.counted)}</Pill> : <Pill tone="warn">เกิน {fmt(r.counted - r.plQty)}</Pill>}
+                      {r.invQty !== null && r.counted !== r.invQty && <Pill tone="bad">ไม่ตรง Invoice</Pill>}
+                      {qi && <Pill tone="mi3">ส่ง MI3</Pill>}
+                      {r.partNo && !known && <Pill tone="warn">ไม่มีใน Master</Pill>}
+                    </td>
+                    <td className={tdCls}>
+                      <button className="rounded-md px-2 py-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600" onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))} aria-label="ลบแถว">
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          <datalist id="wms-parts">
+            {master.parts.map((p) => (
+              <option key={p.partNo} value={p.partNo}>
+                {p.name}
+              </option>
+            ))}
+          </datalist>
+        </div>
+      </Card>
+
+      <div className="sticky bottom-2 z-20 flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-sky-700 bg-white px-4 py-3 shadow-lg">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <strong className="text-base">
+            {rows.length} รายการ · {fmt(total)} ชิ้น
+          </strong>
+          <Pill tone={offPl ? 'bad' : 'ok'}>{offPl ? `ต่างจาก PL ${offPl}` : 'ตรง PL ทุกรายการ'}</Pill>
+          {(inv.invoiceNo || existing) && <Pill tone={offInv ? 'bad' : 'ok'}>{offInv ? `ไม่ตรง Invoice ${offInv}` : 'ตรง Invoice'}</Pill>}
+          {mi3 > 0 && <Pill tone="mi3">ส่ง MI3 {mi3} รายการ</Pill>}
+          {unknown > 0 && <Pill tone="warn">ไม่มีใน Master {unknown}</Pill>}
+          {settings.mode === 'trial' && <Pill tone="warn">โหมดทดลอง</Pill>}
+        </div>
+        <div className="flex items-center gap-3">
+          {problems.length > 0 && <span className="text-xs text-rose-600">{problems[0]}</span>}
+          <BigButton disabled={busy || problems.length > 0} onClick={submit} className="!py-3 text-base">
+            {busy ? 'กำลังบันทึก…' : 'ยืนยันรับเข้า → ออก GRN'}
+          </BigButton>
+        </div>
+      </div>
+    </div>
+  )
+}

@@ -1,0 +1,220 @@
+/** งานคลัง: รับของ (GRN) → ป้ายกล่อง (LPN) → สแกน → กระทบยอด Invoice — ตรงกับ supabase/migrations/0008–0010 */
+
+export type Perm =
+  | 'receive.create'
+  | 'label.print'
+  | 'scan.put'
+  | 'scan.move'
+  | 'scan.issue'
+  | 'scan.adjust'
+  | 'scan.adjust.approve'
+  | 'scan.count'
+  | 'scan.qi'
+  | 'invoice.close'
+  | 'invoice.report'
+  | 'master.edit'
+  | 'accesslog.view'
+
+export const PERMS: { key: Perm; label: string; group: string }[] = [
+  { key: 'receive.create', label: 'รับของ / ออก GRN', group: 'รับของ' },
+  { key: 'label.print', label: 'พิมพ์ป้าย / รวมกล่อง', group: 'รับของ' },
+  { key: 'scan.put', label: 'จัดเก็บเข้าที่ (PUT)', group: 'สแกน' },
+  { key: 'scan.move', label: 'ย้ายที่ (MOVE)', group: 'สแกน' },
+  { key: 'scan.issue', label: 'เบิก / ตัดยอด (ISSUE)', group: 'สแกน' },
+  { key: 'scan.adjust', label: 'ขอแก้ไขยอด (ADJ)', group: 'สแกน' },
+  { key: 'scan.adjust.approve', label: 'อนุมัติแก้ไขยอด', group: 'สแกน' },
+  { key: 'scan.count', label: 'ตรวจนับ (COUNT)', group: 'สแกน' },
+  { key: 'scan.qi', label: 'บันทึกผล MI3 (QI)', group: 'สแกน' },
+  { key: 'invoice.report', label: 'แจ้งความต่าง Invoice', group: 'Invoice' },
+  { key: 'invoice.close', label: 'ยืนยัน Invoice รับครบ', group: 'Invoice' },
+  { key: 'master.edit', label: 'แก้ข้อมูลหลัก (part, ช่องเก็บ)', group: 'หลังบ้าน' },
+  { key: 'accesslog.view', label: 'ดูประวัติการเข้าใช้', group: 'หลังบ้าน' },
+]
+
+export interface Settings {
+  mode: 'trial' | 'live'
+  trialRound: number
+  qiPartTypes: string[]
+}
+
+export type InvoiceStatus = 'open' | 'complete' | 'discrepancy_reported' | 'closed'
+
+export interface Invoice {
+  id: string
+  invoiceNo: string
+  customerId: string | null
+  poNo: string | null
+  docDate: string | null
+  movementType: string | null
+  status: InvoiceStatus
+  statusNote: string | null
+  statusAt: string | null
+  imagePaths: string[]
+  createdAt: string
+}
+
+export interface InvoiceLine {
+  lineNo: number
+  partNo: string
+  description: string | null
+  qty: number
+}
+
+export interface Grn {
+  id: string
+  grnNo: string
+  invoiceId: string | null
+  invoiceNo: string | null
+  plRef: string
+  soNo: string | null
+  packages: string | null
+  modelCode: string | null
+  customerId: string | null
+  receivedAt: string
+  receiverCode: string | null
+  note: string | null
+}
+
+export interface GrnLine {
+  id: string
+  grnId: string
+  lineNo: number
+  partNo: string
+  description: string | null
+  partType: string | null
+  plQty: number
+  countedQty: number
+  invoiceQty: number | null
+  needsQi: boolean
+  homeLocation: string | null
+}
+
+export interface LpnItem {
+  id: string
+  lpnId: string
+  grnLineId: string
+  partNo: string
+  qty: number
+}
+
+export type LpnStatus = 'active' | 'empty' | 'merged'
+
+export interface Lpn {
+  id: string
+  lpnNo: string
+  grnId: string | null
+  locationCode: string
+  hold: boolean
+  status: LpnStatus
+  createdAt: string
+  items: LpnItem[]
+}
+
+export type TxKind = 'RECEIVE' | 'PUT' | 'MOVE' | 'ISSUE' | 'ADJ' | 'COUNT' | 'QI' | 'MERGE'
+
+export interface Tx {
+  id: string
+  kind: TxKind
+  docNo: string | null
+  lpnId: string | null
+  lpnNo: string | null
+  lpnItemId: string | null
+  partNo: string | null
+  qty: number | null
+  newQty: number | null
+  passQty: number | null
+  ngQty: number | null
+  fromLoc: string | null
+  toLoc: string | null
+  ref: string | null
+  reason: string | null
+  status: 'done' | 'pending' | 'approved' | 'rejected'
+  createdCode: string | null
+  createdAt: string
+  decidedCode: string | null
+}
+
+export interface StorageLoc {
+  code: string
+  zoneId: string
+  kind: 'bin' | 'floor' | 'staging' | 'hold' | 'ng'
+  active: boolean
+}
+
+export interface ZoneHead {
+  zoneId: string
+  staffId: string
+  employeeCode: string
+  fullName: string
+}
+
+export interface StaffBrief {
+  id: string
+  employeeCode: string
+  fullName: string
+  role: string
+}
+
+export interface PartMaster {
+  partNo: string
+  name: string
+  type: string | null
+  customerId: string | null
+  models: string[]
+}
+
+export interface ModelRow {
+  code: string
+  customerId: string
+  requiresInspection: boolean
+}
+
+export interface ZoneRuleRow {
+  customerId: string
+  partType: string | null
+  zoneId: string
+}
+
+export interface MasterData {
+  parts: PartMaster[]
+  models: ModelRow[]
+  rules: ZoneRuleRow[]
+  locations: StorageLoc[]
+  zoneHeads: ZoneHead[]
+}
+
+/** ข้อมูลที่หน้ารับของส่งไปสร้าง GRN */
+export interface ReceivePayload {
+  invoice?: {
+    invoiceNo: string
+    customerId?: string
+    poNo?: string
+    docDate?: string
+    movementType?: string
+    lines: { lineNo: number; partNo: string; description: string; qty: number }[]
+    imagePaths?: string[]
+  }
+  packingList: { refDoc: string; soNo?: string; packages?: string; imagePaths?: string[] }
+  modelCode: string
+  note?: string
+  lines: { partNo: string; description: string; plQty: number; countedQty: number }[]
+}
+
+export interface GrnDetail {
+  grn: Grn
+  lines: GrnLine[]
+  lpns: Lpn[]
+}
+
+export interface InvoiceView {
+  invoice: Invoice
+  lines: InvoiceLine[]
+  grns: Grn[]
+  received: { partNo: string; qty: number }[]
+}
+
+export interface PermRow {
+  role: string
+  perm: string
+  allowed: boolean
+}

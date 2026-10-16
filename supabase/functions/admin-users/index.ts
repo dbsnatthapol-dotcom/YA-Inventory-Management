@@ -6,7 +6,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { CORS, json, staffCaller } from '../_shared/staff.ts'
 
-const ROLES = ['warehouse', 'mi3', 'production', 'planner', 'manager', 'admin']
+const ROLES = ['warehouse', 'mi3', 'production', 'planner', 'engineer', 'manager', 'admin']
 const MIN_PASSWORD = 8
 const staffEmail = (code: string) => `${code.trim().toLowerCase()}@staff.uam.local`
 
