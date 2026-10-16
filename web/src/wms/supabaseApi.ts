@@ -51,7 +51,8 @@ const toGrnLine = (r: Row): GrnLine => ({
 
 const toItem = (r: Row): LpnItem => ({ id: String(r.id), lpnId: String(r.lpn_id), grnLineId: String(r.grn_line_id), partNo: String(r.part_no), qty: Number(r.qty), prevLpnId: str(r.prev_lpn_id) })
 
-const LPN_SELECT = 'id, lpn_no, grn_id, location_code, hold, status, created_at, lpn_items(id, lpn_id, grn_line_id, part_no, qty, prev_lpn_id)'
+// lpn_items อ้างถึง lpns สองทาง (lpn_id = กล่องปัจจุบัน, prev_lpn_id = กล่องก่อนรวม) ต้องระบุ FK ไม่งั้น PostgREST ไม่รู้ว่าจะ join ทางไหน
+const LPN_SELECT = 'id, lpn_no, grn_id, location_code, hold, status, created_at, lpn_items!lpn_items_lpn_id_fkey(id, lpn_id, grn_line_id, part_no, qty, prev_lpn_id)'
 const toLpn = (r: Row): Lpn => ({
   id: String(r.id),
   lpnNo: String(r.lpn_no),
