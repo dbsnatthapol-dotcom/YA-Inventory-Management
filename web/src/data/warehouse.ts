@@ -1,4 +1,4 @@
-import type { ZoneContents } from '../inventory/reports'
+import type { ZoneContents } from '../wms/mapStock'
 import type { StorageType, Zone } from '../types/layout'
 
 /**
@@ -19,31 +19,6 @@ export const RACK = {
   height: 4.2,
   palletLoadHeight: 1.0,
 } as const
-
-/** จำนวนชิ้นต่อพาเลท (สมมติ) — ใช้แปลงยอดคงคลังเป็นจำนวนพาเลทบนชั้นวาง */
-export const PIECES_PER_PALLET: Record<string, number> = {
-  RIM: 60,
-  'ALLOY RIM': 40,
-  CAST: 40,
-  HUB: 120,
-  DISC: 150,
-  TONER: 300,
-  SPOKE: 4000,
-  NIPPLE: 10000,
-  BOLT: 3000,
-  BEARING: 2000,
-  SPACER: 2000,
-  SEAL: 3000,
-  VALVE: 3000,
-  RUBBER: 2000,
-  TYRE: 40,
-  TUBE: 300,
-  STICKER: 5000,
-  'RIM TAPE': 1000,
-}
-const DEFAULT_PIECES_PER_PALLET = 500
-
-export const piecesPerPallet = (type: string | undefined) => PIECES_PER_PALLET[type ?? ''] ?? DEFAULT_PIECES_PER_PALLET
 
 export interface RackRow {
   /** ระยะจากขอบโซนตามแนวสั้น */
@@ -171,22 +146,21 @@ export function storagePlan(zone: Pick<Zone, 'width' | 'depth' | 'storage' | 'le
 export interface PalletLoad {
   model: string
   partNo: string
-  lotId: string
-  /** จำนวนชิ้นบนพาเลทนี้ (พาเลทสุดท้ายของ lot อาจไม่เต็ม) */
+  /** ป้ายกล่อง (1 ป้าย = 1 กล่อง/พาเลทบนผัง) */
+  lpnNo: string
   qty: number
+  /** รอตรวจ MI3 */
+  hold: boolean
 }
 
-/** แปลงของในโซนเป็นรายการพาเลท (ปัดขึ้นต่อ lot) เรียงตาม Model */
+/** ของในโซน → กล่อง/พาเลทบนผัง (1 ป้าย LPN = 1 พาเลท) เรียงตาม Model */
 export function palletsFor(stock: ZoneContents | undefined): PalletLoad[] {
   if (!stock) return []
-  return stock.items.flatMap((i) => {
-    const per = piecesPerPallet(i.part?.type)
-    const count = Math.ceil(i.qty / per)
-    return Array.from({ length: count }, (_, k) => ({
-      model: i.lot.model,
-      partNo: i.lot.partNo,
-      lotId: i.lot.id,
-      qty: k < count - 1 ? per : i.qty - per * (count - 1),
-    }))
-  })
+  const boxes = new Map<string, PalletLoad>()
+  for (const i of stock.items) {
+    const b = boxes.get(i.lpnNo)
+    if (b) b.qty += i.qty
+    else boxes.set(i.lpnNo, { model: i.model, partNo: i.partNo, lpnNo: i.lpnNo, qty: i.qty, hold: i.pendingQc > 0 })
+  }
+  return [...boxes.values()]
 }

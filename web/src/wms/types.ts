@@ -24,7 +24,7 @@ export const PERMS: { key: Perm; label: string; group: string }[] = [
   { key: 'label.print', label: 'พิมพ์ป้าย / รวมกล่อง', group: 'รับของ' },
   { key: 'scan.put', label: 'จัดเก็บเข้าที่ (PUT)', group: 'สแกน' },
   { key: 'scan.move', label: 'ย้ายที่ (MOVE)', group: 'สแกน' },
-  { key: 'scan.issue', label: 'เบิก / ตัดยอด (ISSUE)', group: 'สแกน' },
+  { key: 'scan.issue', label: 'เบิก (สแกนเบิก / ใบเบิก / FM-P-005)', group: 'สแกน' },
   { key: 'scan.adjust', label: 'ขอแก้ไขยอด (ADJ)', group: 'สแกน' },
   { key: 'scan.adjust.approve', label: 'อนุมัติแก้ไขยอด', group: 'สแกน' },
   { key: 'scan.count', label: 'ตรวจนับ (COUNT)', group: 'สแกน' },
@@ -120,6 +120,10 @@ export interface Lpn {
   status: LpnStatus
   createdAt: string
   items: LpnItem[]
+  /** จากใบรับสินค้าของกล่อง (มีเมื่อโหลดรายการกล่อง) */
+  grnNo?: string | null
+  modelCode?: string | null
+  invoiceNo?: string | null
 }
 
 export type TxKind = 'RECEIVE' | 'PUT' | 'MOVE' | 'ISSUE' | 'ADJ' | 'COUNT' | 'QI' | 'MERGE' | 'UNMERGE' | 'SPLIT' | 'RETURN'
@@ -152,7 +156,12 @@ export interface StorageLoc {
   code: string
   zoneId: string
   kind: 'bin' | 'floor' | 'staging' | 'hold' | 'ng'
+  /** ใช้งานได้ (อยู่ในผังหรือเป็นช่องพิเศษ และไม่ได้ถูกปิด) */
   active: boolean
+  /** ปิดใช้จากหน้าหลังบ้าน (เช่น ชำรุด) · บันทึกผังไม่เปิดคืน */
+  blocked?: boolean
+  /** ช่องพิเศษที่เพิ่มในหน้าหลังบ้าน · บันทึกผังไม่ปิด */
+  manual?: boolean
 }
 
 export interface ZoneHead {
@@ -256,6 +265,28 @@ export interface RequisitionPayload {
   toDept?: string
   note?: string
   lines: { partNo: string; reqQty?: number | null; qty: number }[]
+}
+
+/** สแกนเบิกจากกล่อง = ใบเบิก (นับรวมตอนกระทบ FM-P-005) */
+export interface ScanIssuePayload {
+  itemId: string
+  qty: number
+  /** line = เข้าไลน์, qc = QC เบิก, ng = ตัด NG / ส่งคืน */
+  kind: 'line' | 'qc' | 'ng'
+  /** ต้องมีเมื่อเบิกเข้าไลน์ */
+  modelCode?: string | null
+  /** เลขใบเบิกกระดาษ · สแกนหลายกล่องด้วยเลขเดียวกันในวันเดียวกัน = ใบเดียวกัน */
+  docNo?: string
+  /** ปลายทาง เช่น ไลน์ประกอบ Bigbike ชั้น 2 */
+  toDept?: string
+}
+
+export interface ScanIssueResult {
+  id: string
+  reqNo: string
+  docNo: string | null
+  /** ต่อท้ายใบเบิกเดิม (เลขใบเบิกเดียวกัน) */
+  appended: boolean
 }
 
 export interface ReconcilePayload {

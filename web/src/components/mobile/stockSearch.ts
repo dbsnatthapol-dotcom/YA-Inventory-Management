@@ -1,5 +1,6 @@
 import type { FactoryLayout } from '../../types/layout'
 import { lpnFromScan } from '../../wms/logic'
+import { zoneLocator } from '../../wms/mapStock'
 import { basePartNo } from '../../wms/partCodes'
 import type { Lpn, MasterData } from '../../wms/types'
 
@@ -34,7 +35,7 @@ export function searchStock(query: string, lpns: Lpn[], master: Pick<MasterData,
   const t = query.trim().toUpperCase()
   if (t.length < 2) return []
   const zoneByLoc = new Map(master.locations.map((l) => [l.code, l.zoneId]))
-  const zoneOf = (loc: string) => zoneByLoc.get(loc) ?? layout.zones.find((z) => z.code === loc)?.id ?? null
+  const zoneOf = zoneLocator(master, layout)
   const zoneName = (id: string | null) => layout.zones.find((z) => z.id === id)?.name
   const boxes: StockBox[] = lpns.flatMap((l) =>
     l.items.filter((i) => i.qty > 0).map((i) => ({ lpnNo: l.lpnNo, partNo: i.partNo, qty: i.qty, location: l.locationCode, zoneId: zoneOf(l.locationCode), hold: l.hold })),
@@ -57,7 +58,8 @@ export function searchStock(query: string, lpns: Lpn[], master: Pick<MasterData,
     const zoneId = zoneOf(t)
     hits.push({ kind: 'place', key: t, title: t, subtitle: zoneName(zoneId), zoneId, qty: sum(own), boxes: own })
   } else {
-    for (const z of layout.zones.filter((z) => z.code.toUpperCase().startsWith(t)).slice(0, MAX_PLACES)) {
+    // รหัสโซนขึ้นต้นด้วยคำค้น หรือชื่อโซนมีคำค้น (เช่น "เต็นท์ยาง")
+    for (const z of layout.zones.filter((z) => z.code.toUpperCase().startsWith(t) || z.name.toUpperCase().includes(t)).slice(0, MAX_PLACES)) {
       const own = boxes.filter((b) => b.zoneId === z.id)
       if (own.length || z.code.toUpperCase() === t) hits.push({ kind: 'place', key: z.id, title: z.code, subtitle: z.name, zoneId: z.id, qty: sum(own), boxes: own })
     }

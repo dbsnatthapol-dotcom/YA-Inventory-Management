@@ -2,9 +2,9 @@ import type { FlowSpec } from '../components/FactoryScene'
 import type { TourStep } from '../components/map/ExecTour'
 import type { GuideInfo } from '../components/models/Guide'
 import { palletsFor } from '../data/warehouse'
-import type { ZoneContents } from '../inventory/reports'
 import type { FactoryLayout, Zone } from '../types/layout'
 import { zonePlan } from '../wms/locations'
+import type { ZoneContents } from '../wms/mapStock'
 import type { StorageLoc, Tx, ZoneHead } from '../wms/types'
 import type { MapStats } from './mapStats'
 
@@ -37,7 +37,7 @@ export function buildGuides(layout: FactoryLayout, stock: Map<string, ZoneConten
     const lines: string[] = []
     let tone: GuideInfo['tone'] = 'ok'
     if (s?.totalQty) {
-      lines.push(`มีของ ${n(s.totalQty)} ชิ้น · ${palletsFor(s).length} พาเลท · ${s.items.length} lot`)
+      lines.push(`มีของ ${n(s.totalQty)} ชิ้น · ${palletsFor(s).length} กล่อง`)
       if (s.models.length) lines.push(`Model: ${s.models.map((m) => `${m.model} ${n(m.qty)}`).join(', ')}`)
     } else if (zone.kind !== 'assembly') lines.push('ตอนนี้ว่าง พร้อมรับของ')
     if (zone.kind === 'storage') {
@@ -49,7 +49,7 @@ export function buildGuides(layout: FactoryLayout, stock: Map<string, ZoneConten
       lines.push(`รอคัด MI3 ${n(s.pendingQcQty)} ชิ้น — ยังเบิกไม่ได้`)
       tone = 'warn'
     }
-    if (zone.kind === 'receiving') lines.push(`วันนี้รับเข้า ${n(stats.receiptsToday)} invoice`)
+    if (zone.kind === 'receiving') lines.push(`วันนี้รับเข้า ${n(stats.receiptsToday)} ใบ (GRN)`)
     if (zone.kind === 'assembly') lines.push(`เบิกเข้าไลน์วันนี้ ${n(stats.issuedToday)} ชิ้น (ทั้งโรงงาน)`)
     if (zone.kind === 'ng' && stats.ngWaitingQty) {
       lines.push(`NG รอส่งคืน ${n(stats.ngWaitingQty)} ชิ้น`)
@@ -138,7 +138,7 @@ export function buildTourSteps(layout: FactoryLayout, stats: MapStats, stock: Ma
     rcv && {
       title: 'จุดรับสินค้า',
       body: 'ถ่าย Packing List + Invoice ให้ AI อ่าน นับจริงเทียบเอกสาร แล้วออกป้าย QR ทุกกล่อง — ตามรอยได้ถึงระดับกล่อง',
-      stat: { value: n(stats.receiptsToday), label: 'invoice รับวันนี้' },
+      stat: { value: n(stats.receiptsToday), label: 'ใบรับสินค้าวันนี้' },
       zoneId: rcv.id,
       mode: 'interior',
       guide: true,
@@ -146,7 +146,7 @@ export function buildTourSteps(layout: FactoryLayout, stats: MapStats, stock: Ma
     mi3 && {
       title: 'ตรวจคุณภาพ MI3',
       body: 'ของที่ต้องตรวจถูกล็อกห้ามเบิกอัตโนมัติจนกว่าจะบันทึกผล ดี / NG ป้องกันของเสียหลุดเข้าไลน์',
-      stat: { value: n(stats.pendingQcQty), label: `ชิ้นรอคัด (${stats.pendingQcLots} lot)` },
+      stat: { value: n(stats.pendingQcQty), label: `ชิ้นรอคัด (${stats.pendingQcBoxes} กล่อง)` },
       zoneId: mi3.id,
       mode: 'interior',
       guide: true,
@@ -161,7 +161,7 @@ export function buildTourSteps(layout: FactoryLayout, stats: MapStats, stock: Ma
     },
     line && {
       title: 'ส่ง part เข้าไลน์ประกอบ',
-      body: 'ใบเบิกย่อยตัดสต็อกทันที (เข้าก่อนออกก่อน) จบวันกระทบกับ FM-P-005 อัตโนมัติ แล้วส่งยอดให้ Planning',
+      body: 'ใบเบิกย่อยหรือสแกนเบิกจากกล่องตัดสต็อกทันที จบวันกระทบกับ FM-P-005 อัตโนมัติ (ไม่ตัดซ้ำ) แล้วส่งยอดให้ Planning',
       stat: { value: n(stats.issuedToday), label: 'ชิ้นเบิกเข้าไลน์วันนี้' },
       zoneId: line.id,
       mode: 'interior',

@@ -3,13 +3,14 @@ import { BRAND } from '../../data/brand'
 import { useWms } from '../../wms/useWms'
 import { pendingAcks } from '../../wms/closing'
 import { usePrintQueue } from '../../wms/usePrintQueue'
+import { useApprovals } from '../../wms/useApprovals'
+import { CountTab } from './CountTab'
 import { InvoiceTab } from './InvoiceTab'
 import { IssueTab } from './IssueTab'
 import { LabelsTab } from './LabelsTab'
 import { LedgerTab } from './LedgerTab'
 import { ReceiveTab } from './ReceiveTab'
 import { ScanTab } from './ScanTab'
-import { StockImport } from './StockImport'
 import type { Zone } from '../../types/layout'
 import { Alert } from './ui'
 
@@ -22,7 +23,7 @@ const TABS: [WmsTab, string, string][] = [
   ['invoice', '4', 'กระทบยอด Invoice'],
   ['issue', '5', 'เบิกเข้าไลน์'],
   ['ledger', '6', 'บัญชีคุม FM-P-537'],
-  ['count', '7', 'ตรวจนับ (Excel)'],
+  ['count', '7', 'ตรวจนับ & อนุมัติ'],
 ]
 
 /** ลิงก์จาก QR: /t/LPN-… เปิดหน้าสแกน, /g/GRN-… เปิดหน้าป้ายของ GRN นั้น */
@@ -61,6 +62,9 @@ export function WarehousePage({ deepLink, zones }: { deepLink: WmsDeepLink | nul
 
   // งานพิมพ์ที่มือถือส่งมารอ ⇒ ตัวเลขที่แท็บป้าย (หน้าป้ายมีคิวให้กดพิมพ์)
   const printQueue = usePrintQueue(ready && can('label.print') && tab !== 'labels')
+  // คำขอปรับยอดรออนุมัติ (สแกน + Excel) ⇒ ตัวเลขที่แท็บตรวจนับ & อนุมัติ (สแกนเสร็จนับใหม่ทันที)
+  const [approvalsVer, setApprovalsVer] = useState(0)
+  const approvals = useApprovals(ready && can('scan.adjust.approve') && tab !== 'count', approvalsVer)
 
   const openGrn = (id: string) => {
     setGrnId(id)
@@ -85,6 +89,11 @@ export function WarehousePage({ deepLink, zones }: { deepLink: WmsDeepLink | nul
                 {k === 'labels' && tab !== 'labels' && printQueue.queued.length > 0 && (
                   <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-500 px-1 text-[11px] font-bold text-white" title="งานพิมพ์จากมือถือรออยู่">
                     {printQueue.queued.length}
+                  </span>
+                )}
+                {k === 'count' && tab !== 'count' && approvals.total > 0 && (
+                  <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-500 px-1 text-[11px] font-bold text-white" title="รออนุมัติปรับยอด">
+                    {approvals.total}
                   </span>
                 )}
                 {k === 'ledger' && toAck > 0 && (
@@ -112,11 +121,13 @@ export function WarehousePage({ deepLink, zones }: { deepLink: WmsDeepLink | nul
           <>
             {tab === 'receive' && <ReceiveTab onCreated={openGrn} />}
             {tab === 'labels' && <LabelsTab grnId={grnId} onSelectGrn={setGrnId} />}
-            {tab === 'scan' && <ScanTab initialCode={deepLink?.kind === 'lpn' ? deepLink.code : null} />}
+            {tab === 'scan' && (
+              <ScanTab initialCode={deepLink?.kind === 'lpn' ? deepLink.code : null} onOpenApprovals={() => setTab('count')} onChanged={() => setApprovalsVer((v) => v + 1)} />
+            )}
             {tab === 'invoice' && <InvoiceTab onOpenGrn={openGrn} />}
             {tab === 'issue' && <IssueTab />}
             {tab === 'ledger' && <LedgerTab />}
-            {tab === 'count' && <StockImport zones={zones} />}
+            {tab === 'count' && <CountTab zones={zones} />}
           </>
         )}
       </div>

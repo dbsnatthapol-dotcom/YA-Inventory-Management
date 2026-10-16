@@ -1,34 +1,44 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { errorText } from '../../wms/api'
 import { fmt, lpnFromScan, TX_LABEL, txSummary } from '../../wms/logic'
-import type { Grn, Lpn, Perm, Tx } from '../../wms/types'
+import type { Grn, Lpn, Perm, ScanIssuePayload, Tx } from '../../wms/types'
+import { useApprovals } from '../../wms/useApprovals'
 import { useWms } from '../../wms/useWms'
 import { zoneHeadOf } from '../../wms/labels'
 import { useIsMobile } from '../../lib/viewMode'
 import { QrScanner } from './QrScanner'
 import { Alert, BigButton, Card, Field, inputCls, Pill, type Tone } from './ui'
 
-type Mode = 'PUT' | 'MOVE' | 'ISSUE' | 'ADJ' | 'COUNT' | 'QI' | 'VIEW'
+type Mode = 'PUT' | 'MOVE' | 'ISSUE' | 'COUNT' | 'QI' | 'VIEW'
 
+// 1 งาน = 1 โหมด: เบิกทุกแบบเป็นใบเบิก (FM-P-005 นับรวม) · ตรวจนับกับแก้ไขยอดรวมเป็นโหมดเดียว
 const MODES: { k: Mode; name: string; hint: string; perm: Perm | null }[] = [
   { k: 'PUT', name: 'จัดเก็บเข้าที่', hint: 'สแกนกล่อง แล้วเลือกช่องเก็บ', perm: 'scan.put' },
   { k: 'MOVE', name: 'ย้ายที่', hint: 'ย้ายกล่องไปช่องใหม่ ยอดไม่เปลี่ยน', perm: 'scan.move' },
-  { k: 'ISSUE', name: 'เบิก / ตัดยอด', hint: 'ตัดจำนวนออก อ้างอิงใบเบิก', perm: 'scan.issue' },
-  { k: 'ADJ', name: 'แก้ไขยอด', hint: 'ใส่เหตุผล แล้ววิศวกรอนุมัติ', perm: 'scan.adjust' },
-  { k: 'COUNT', name: 'ตรวจนับ', hint: 'นับแล้วเทียบกับยอดในระบบ', perm: 'scan.count' },
+  { k: 'ISSUE', name: 'เบิก', hint: 'เข้าไลน์ / QC / NG · เป็นใบเบิก นับรวมใน FM-P-005', perm: 'scan.issue' },
+  { k: 'COUNT', name: 'ตรวจนับ / แก้ไขยอด', hint: 'นับแล้วไม่ตรง ส่งขอปรับยอดได้ทันที', perm: 'scan.count' },
   { k: 'QI', name: 'ผลตรวจ MI3', hint: 'บันทึกจำนวนดี / NG ของ Rim, Hub', perm: 'scan.qi' },
   { k: 'VIEW', name: 'ดูข้อมูล', hint: 'ดูอย่างเดียว ไม่เปลี่ยนอะไร', perm: null },
+]
+
+const ISSUE_KINDS: { k: ScanIssuePayload['kind']; name: string; col: string }[] = [
+  { k: 'line', name: 'เข้าไลน์', col: 'เบิก' },
+  { k: 'qc', name: 'QC เบิก', col: 'QC เบิก' },
+  { k: 'ng', name: 'NG / ส่งคืน', col: 'NG' },
 ]
 
 const MODE_KEY = 'uam-scan-mode'
 const loadMode = (): Mode => {
   try {
-    const m = localStorage.getItem(MODE_KEY) as Mode | null
-    return m && MODES.some((x) => x.k === m) ? m : 'PUT'
+    const saved = localStorage.getItem(MODE_KEY)
+    // โหมด "แก้ไขยอด" เดิมรวมอยู่ใน "ตรวจนับ / แก้ไขยอด"
+    const m = saved === 'ADJ' ? 'COUNT' : saved
+    return MODES.find((x) => x.k === m)?.k ?? 'PUT'
   } catch {
     return 'PUT'
   }
 }
+const signed = (n: number) => (n > 0 ? `+${fmt(n)}` : n < 0 ? `−${fmt(-n)}` : '0')
 
 const TX_TONE: Record<Tx['kind'], Tone> = { RECEIVE: 'info', PUT: 'ok', MOVE: 'ok', ISSUE: 'info', ADJ: 'warn', COUNT: 'muted', QI: 'mi3', MERGE: 'muted', UNMERGE: 'muted', SPLIT: 'muted', RETURN: 'info' }
 const time = (iso: string) => new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
@@ -39,7 +49,7 @@ interface Current {
   homeLocation: string | null
 }
 
-export function ScanTab({ initialCode }: { initialCode: string | null }) {
+export function ScanTab({ initialCode, onOpenApprovals, onChanged }: { initialCode: string | null; onOpenApprovals?: () => void; onChanged?: () => void }) {
   const { api, master, can } = useWms()
   const mobile = useIsMobile()
   const [mode, setModeState] = useState<Mode>(loadMode)
@@ -49,8 +59,11 @@ export function ScanTab({ initialCode }: { initialCode: string | null }) {
   const [msg, setMsg] = useState<{ tone: 'ok' | 'warn' | 'bad' | 'info'; text: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [tx, setTx] = useState<Tx[]>([])
-  const [pending, setPending] = useState<Tx[]>([])
-  const [form, setForm] = useState({ item: '', qty: '', ref: '', note: '', loc: '', reason: '', pass: '', ng: '0' })
+  const [ver, setVer] = useState(0)
+  const approvals = useApprovals(can('scan.adjust.approve'), ver)
+  const [form, setForm] = useState({ item: '', qty: '', note: '', loc: '', reason: '', pass: '', ng: '0' })
+  // ค่าการเบิกคงไว้ข้ามกล่อง: สแกนหลายกล่องของใบเบิกเดียวกันได้ต่อเนื่อง
+  const [issue, setIssue] = useState<{ kind: ScanIssuePayload['kind']; model: string; doc: string; to: string }>({ kind: 'line', model: '', doc: '', to: '' })
   const scanInput = useRef<HTMLInputElement>(null)
 
   const setMode = (m: Mode) => {
@@ -64,10 +77,9 @@ export function ScanTab({ initialCode }: { initialCode: string | null }) {
   }
 
   const refreshLists = useCallback(async () => {
-    const [t, p] = await Promise.all([api.recentTx(25), can('scan.adjust.approve') ? api.pendingAdjustments() : Promise.resolve([])])
-    setTx(t)
-    setPending(p)
-  }, [api, can])
+    setTx(await api.recentTx(25))
+    setVer((v) => v + 1)
+  }, [api])
 
   const lookup = useCallback(
     async (raw: string) => {
@@ -84,27 +96,29 @@ export function ScanTab({ initialCode }: { initialCode: string | null }) {
         setCur(found)
         setMsg(null)
         const item = found.lpn.items[0]
-        setForm({ item: item?.id ?? '', qty: '', ref: '', note: '', loc: found.lpn.hold ? '' : (found.homeLocation ?? ''), reason: '', pass: String(item?.qty ?? 0), ng: '0' })
+        setForm({ item: item?.id ?? '', qty: '', note: '', loc: found.lpn.hold ? '' : (found.homeLocation ?? ''), reason: '', pass: String(item?.qty ?? 0), ng: '0' })
+        // Model ของการเบิก: คงค่าเดิมถ้า part อยู่ใน Model นั้น ไม่งั้นใช้ Model ของใบรับสินค้า
+        const pm = master.parts.find((p) => p.partNo === item?.partNo)?.models ?? []
+        const fits = (m: string | null | undefined): m is string => !!m && (!pm.length || pm.includes(m))
+        const grnModel = found.grn?.modelCode
+        setIssue((s) => (fits(s.model) ? s : { ...s, model: fits(grnModel) ? grnModel : pm.length === 1 ? pm[0] : '' }))
       } catch (e) {
         setMsg({ tone: 'bad', text: errorText(e) })
       }
     },
-    [api],
+    [api, master.parts],
   )
 
   useEffect(() => {
     let alive = true
-    Promise.all([api.recentTx(25), can('scan.adjust.approve') ? api.pendingAdjustments() : Promise.resolve([])])
-      .then(([t, p]) => {
-        if (!alive) return
-        setTx(t)
-        setPending(p)
-      })
+    api
+      .recentTx(25)
+      .then((t) => alive && setTx(t))
       .catch(() => undefined)
     return () => {
       alive = false
     }
-  }, [api, can])
+  }, [api])
 
   useEffect(() => {
     if (initialCode) queueMicrotask(() => void lookup(initialCode))
@@ -115,15 +129,26 @@ export function ScanTab({ initialCode }: { initialCode: string | null }) {
   const total = lpn?.items.reduce((s, i) => s + i.qty, 0) ?? 0
   const modeInfo = MODES.find((m) => m.k === mode)!
   const allowed = modeInfo.perm === null || can(modeInfo.perm)
+  // เบิก: เลือก Model ได้เฉพาะ Model ของ part (part ที่ไม่ผูก Model เลือกได้ทุก Model)
+  const partModels = item ? (master.parts.find((p) => p.partNo === item.partNo)?.models ?? []) : []
+  const modelChoices = partModels.length ? [...partModels].sort() : master.models.map((m) => m.code)
+  const issueModel = modelChoices.includes(issue.model) ? issue.model : ''
+  const issueKind = ISSUE_KINDS.find((k) => k.k === issue.kind)!
+  // ตรวจนับ: ส่วนต่างระหว่างที่นับกับยอดในระบบ
+  const counted = form.qty === '' ? null : Math.floor(Number(form.qty))
+  const countDiff = counted === null || !item ? 0 : counted - item.qty
+  const canAdjust = can('scan.adjust')
 
   const run = async (fn: () => Promise<string>) => {
     setBusy(true)
     setMsg(null)
     try {
       const text = await fn()
-      setMsg({ tone: 'ok', text })
+      // โหลดกล่องใหม่ก่อน (lookup ล้างข้อความ) แล้วค่อยแสดงผล ไม่งั้นข้อความยืนยันหายทันที
       if (cur) await lookup(cur.lpn.lpnNo)
       await refreshLists()
+      onChanged?.()
+      setMsg({ tone: 'ok', text })
       scanInput.current?.focus()
     } catch (e) {
       setMsg({ tone: 'bad', text: errorText(e) })
@@ -144,18 +169,19 @@ export function ScanTab({ initialCode }: { initialCode: string | null }) {
         })
       case 'ISSUE':
         return run(async () => {
-          const doc = await api.scanIssue(item!.id, n(form.qty), form.ref.trim(), form.note.trim())
-          return `ตัดยอดแล้ว ${doc} · ${item!.partNo} −${fmt(n(form.qty))}`
-        })
-      case 'ADJ':
-        return run(async () => {
-          const doc = await api.scanAdjustRequest(item!.id, form.qty === '' ? NaN : n(form.qty), form.reason)
-          return `ส่ง ${doc} ให้วิศวกรอนุมัติแล้ว · ยอดจะเปลี่ยนหลังอนุมัติ`
+          const q = n(form.qty)
+          const r = await api.scanIssue({ itemId: item!.id, qty: q, kind: issue.kind, modelCode: issueModel || null, docNo: issue.doc.trim(), toDept: issue.to.trim() })
+          const where = issue.kind === 'line' ? `${issueModel} · ตอนเย็น FM-P-005 นับรวมแล้ว ไม่ตัดซ้ำ` : `ลงช่อง ${issueKind.col} ในบัญชีคุม`
+          return `${r.appended ? 'เพิ่มในใบเบิก' : 'ออกใบเบิก'} ${r.reqNo}${r.docNo ? ` (เลขใบเบิก ${r.docNo})` : ''} · ${item!.partNo} −${fmt(q)} · ${where}`
         })
       case 'COUNT':
         return run(async () => {
-          const diff = await api.scanCount(lpn.id, form.qty === '' ? NaN : n(form.qty))
-          return diff === 0 ? 'ตรงกับระบบ' : `ต่างจากระบบ ${diff > 0 ? '+' : ''}${fmt(diff)} · ถ้าของจริงเป็นแบบนี้ ใช้โหมด "แก้ไขยอด" ขอปรับ`
+          const c = form.qty === '' ? NaN : n(form.qty)
+          const diff = await api.scanCountItem(item!.id, c)
+          if (diff === 0) return `${item!.partNo} นับได้ ${fmt(c)} · ตรงกับระบบ`
+          if (!canAdjust) return `${item!.partNo} ต่างจากระบบ ${signed(diff)} · บันทึกการนับแล้ว · บัญชีนี้ส่งขอปรับยอดไม่ได้ แจ้งหัวหน้า`
+          const doc = await api.scanAdjustRequest(item!.id, c, form.reason)
+          return `${item!.partNo} ต่างจากระบบ ${signed(diff)} · ส่ง ${doc} ขออนุมัติแล้ว · ยอดเปลี่ยนหลังอนุมัติ (งานคลัง › 7 ตรวจนับ & อนุมัติ)`
         })
       case 'QI':
         return run(async () => {
@@ -164,12 +190,6 @@ export function ScanTab({ initialCode }: { initialCode: string | null }) {
         })
     }
   }
-
-  const decide = (t: Tx, approve: boolean) =>
-    run(async () => {
-      await api.scanAdjustDecide(t.id, approve)
-      return `${t.docNo} ${approve ? 'อนุมัติแล้ว · ยอดเปลี่ยนแล้ว' : 'ไม่อนุมัติ'}`
-    })
 
   const locChoices = [cur?.homeLocation, 'MI3-QC', 'NG-HOLD', 'RCV-01'].filter((x, i, a): x is string => !!x && a.indexOf(x) === i && x !== lpn?.locationCode)
 
@@ -198,7 +218,7 @@ export function ScanTab({ initialCode }: { initialCode: string | null }) {
           </Card>
         ) : (
         <Card eyebrow="ขั้นที่ 1 · เลือกงานก่อนสแกน (ระบบจำโหมดไว้ สแกนกล่องถัดไปได้เลย)">
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
             {MODES.map((m) => {
               const ok = m.perm === null || can(m.perm)
               return (
@@ -285,7 +305,7 @@ export function ScanTab({ initialCode }: { initialCode: string | null }) {
 
             {!allowed && mode !== 'VIEW' && <Alert tone="warn">บัญชีนี้ไม่มีสิทธิ์ทำโหมดนี้ · ให้ผู้ดูแลระบบเปิดสิทธิ์ในหน้าหลังบ้าน</Alert>}
 
-            {allowed && lpn.items.length > 1 && (mode === 'ISSUE' || mode === 'ADJ') && (
+            {allowed && lpn.items.length > 1 && (mode === 'ISSUE' || mode === 'COUNT') && (
               <Field label="Part ในกล่อง">
                 <select id="scan-item" className={inputCls} value={form.item} onChange={(e) => setForm({ ...form, item: e.target.value })}>
                   {lpn.items.map((i) => (
@@ -321,53 +341,86 @@ export function ScanTab({ initialCode }: { initialCode: string | null }) {
                 <Alert tone="bad">เบิกไม่ได้ · กล่องนี้ยังไม่ผ่านการตรวจ MI3</Alert>
               ) : (
                 <>
-                  <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="เบิกไปที่">
+                    {ISSUE_KINDS.map((k) => (
+                      <button
+                        key={k.k}
+                        type="button"
+                        role="radio"
+                        aria-checked={issue.kind === k.k}
+                        onClick={() => setIssue({ ...issue, kind: k.k })}
+                        className={`min-h-[44px] rounded-full px-4 text-sm font-semibold ring-1 ${issue.kind === k.k ? 'bg-sky-700 text-white ring-sky-700' : 'bg-white text-slate-700 ring-slate-300'}`}
+                      >
+                        {k.name}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <Field label={issue.kind === 'line' ? 'Model' : 'Model (ถ้ามี)'}>
+                      <select id="scan-model" className={inputCls} value={issueModel} onChange={(e) => setIssue({ ...issue, model: e.target.value })}>
+                        <option value="">{issue.kind === 'line' ? '— เลือก Model —' : '— ไม่ระบุ —'}</option>
+                        {modelChoices.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
                     <Field label={`จำนวนที่เบิก (มี ${fmt(item?.qty)})`}>
                       <input id="scan-qty" type="number" min={1} inputMode="numeric" className={`${inputCls} font-mono`} value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} />
                     </Field>
-                    <Field label="เลขใบเบิก">
-                      <input id="scan-ref" className={inputCls} value={form.ref} onChange={(e) => setForm({ ...form, ref: e.target.value })} placeholder="เลขใบเบิกกระดาษ / MR-…" />
+                    <Field label="เลขใบเบิก (กระดาษ)">
+                      <input id="scan-ref" className={inputCls} value={issue.doc} onChange={(e) => setIssue({ ...issue, doc: e.target.value })} placeholder="ว่าง = ระบบออกเลข RQ ให้" />
                     </Field>
-                    <Field label="ส่งให้ไลน์">
-                      <input id="scan-note" list="wms-lines" className={inputCls} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="เช่น ไลน์ Bigbike ชั้น 2" />
+                    <Field label="ปลายทาง">
+                      <input
+                        id="scan-note"
+                        list="wms-lines"
+                        className={inputCls}
+                        value={issue.to}
+                        onChange={(e) => setIssue({ ...issue, to: e.target.value })}
+                        placeholder={issue.kind === 'line' ? 'เช่น ไลน์ประกอบ Bigbike ชั้น 2' : issue.kind === 'qc' ? 'เช่น QC ตรวจสอบ' : 'เช่น ส่งคืน supplier'}
+                      />
                     </Field>
                   </div>
-                  <BigButton disabled={busy || !(Number(form.qty) > 0)} onClick={submit}>
-                    ยืนยันตัดยอด
+                  <p className="text-xs text-slate-500">
+                    {issue.kind === 'line' ? 'บันทึกเป็นใบเบิกย่อยของ Model นี้ · ตอนเย็น FM-P-005 นับรวม ไม่ตัดซ้ำ' : `ลงช่อง "${issueKind.col}" ในบัญชีคุม FM-P-537`} · สแกนกล่องถัดไปด้วยเลขใบเบิกเดิม = ต่อท้ายใบเดียวกัน
+                  </p>
+                  <BigButton disabled={busy || !(Number(form.qty) > 0) || (issue.kind === 'line' && !issueModel)} onClick={submit}>
+                    ยืนยันเบิก
                   </BigButton>
                 </>
               ))}
 
-            {allowed && mode === 'ADJ' && (
-              <>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label={`ยอดที่ถูกต้อง (ระบบ ${fmt(item?.qty)})`}>
-                    <input id="scan-qty" type="number" min={0} inputMode="numeric" className={`${inputCls} font-mono`} value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} />
-                  </Field>
-                  <Field label="เหตุผล">
-                    <select id="scan-reason" className={inputCls} value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })}>
-                      <option value="">— เลือก —</option>
-                      <option>นับใหม่แล้วไม่ตรง</option>
-                      <option>ของเสียหาย</option>
-                      <option>บันทึกผิด</option>
-                      <option>อื่น ๆ</option>
-                    </select>
-                  </Field>
-                </div>
-                <p className="text-xs text-slate-500">ยอดยังไม่เปลี่ยนจนกว่าวิศวกรจะอนุมัติ · คนขอกับคนอนุมัติต้องเป็นคนละคน</p>
-                <BigButton disabled={busy || form.qty === '' || !form.reason} onClick={submit}>
-                  ส่งขออนุมัติ
-                </BigButton>
-              </>
-            )}
-
             {allowed && mode === 'COUNT' && (
               <>
-                <Field label="นับได้">
-                  <input id="scan-qty" type="number" min={0} inputMode="numeric" className={`${inputCls} font-mono`} value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} />
-                </Field>
-                <BigButton disabled={busy || form.qty === ''} onClick={submit}>
-                  บันทึกการนับ
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label={`นับได้ / ยอดที่ถูกต้อง (ระบบ ${fmt(item?.qty)})`}>
+                    <input id="scan-qty" type="number" min={0} inputMode="numeric" className={`${inputCls} font-mono`} value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} />
+                  </Field>
+                  {countDiff !== 0 && canAdjust && (
+                    <Field label="เหตุผลที่ไม่ตรง">
+                      <select id="scan-reason" className={inputCls} value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })}>
+                        <option value="">— เลือก —</option>
+                        <option>นับใหม่แล้วไม่ตรง</option>
+                        <option>ของเสียหาย</option>
+                        <option>บันทึกผิด</option>
+                        <option>อื่น ๆ</option>
+                      </select>
+                    </Field>
+                  )}
+                </div>
+                {counted !== null &&
+                  (countDiff === 0 ? (
+                    <Alert tone="ok">ตรงกับระบบ</Alert>
+                  ) : (
+                    <Alert tone="warn">
+                      ต่างจากระบบ {signed(countDiff)} ชิ้น ·{' '}
+                      {canAdjust ? 'กดปุ่มด้านล่างเพื่อบันทึกการนับและส่งขอปรับยอดในครั้งเดียว · ยอดเปลี่ยนหลังผู้มีสิทธิ์อนุมัติ (คนขอกับคนอนุมัติต้องเป็นคนละคน)' : 'บัญชีนี้ส่งขอปรับยอดไม่ได้ · บันทึกการนับไว้ แล้วแจ้งหัวหน้า'}
+                    </Alert>
+                  ))}
+                <BigButton disabled={busy || counted === null || (countDiff !== 0 && canAdjust && !form.reason)} onClick={submit}>
+                  {countDiff !== 0 && canAdjust ? 'บันทึกการนับ + ส่งขอปรับยอด' : 'บันทึกการนับ'}
                 </BigButton>
               </>
             )}
@@ -410,30 +463,16 @@ export function ScanTab({ initialCode }: { initialCode: string | null }) {
       </div>
 
       <div className="flex flex-col gap-4">
-        {can('scan.adjust.approve') && (
-          <Card title={`รออนุมัติแก้ไขยอด (${pending.length})`}>
-            {pending.length === 0 && <p className="text-sm text-slate-500">ไม่มีรายการค้าง</p>}
-            {pending.map((t) => (
-              <div key={t.id} className="flex flex-col gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
-                <div className="flex justify-between gap-2">
-                  <span className="font-mono font-semibold">{t.docNo}</span>
-                  <span className="text-xs text-slate-500">
-                    {time(t.createdAt)} · {t.createdCode}
-                  </span>
-                </div>
-                <div>
-                  <span className="font-mono">{t.lpnNo}</span> · {txSummary(t)}
-                </div>
-                <div className="flex gap-2">
-                  <BigButton className="flex-1" disabled={busy} onClick={() => void decide(t, true)}>
-                    อนุมัติ
-                  </BigButton>
-                  <BigButton className="flex-1" tone="secondary" disabled={busy} onClick={() => void decide(t, false)}>
-                    ไม่อนุมัติ
-                  </BigButton>
-                </div>
-              </div>
-            ))}
+        {can('scan.adjust.approve') && approvals.total > 0 && (
+          <Card title={`รออนุมัติปรับยอด (${approvals.total})`}>
+            <p className="text-sm text-slate-600">
+              คำขอจากหน้าสแกน {approvals.adj.length} · ใบตรวจนับ Excel {approvals.pendingSheets.length}
+            </p>
+            {onOpenApprovals ? (
+              <BigButton onClick={onOpenApprovals}>ไปหน้าอนุมัติ</BigButton>
+            ) : (
+              <p className="text-xs text-slate-500">อนุมัติได้ที่หน้าคอม: งานคลัง › 7 ตรวจนับ & อนุมัติ</p>
+            )}
           </Card>
         )}
         <Card title="ความเคลื่อนไหวล่าสุด">

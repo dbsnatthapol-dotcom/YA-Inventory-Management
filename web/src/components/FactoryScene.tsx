@@ -11,7 +11,7 @@ import { floorPaint, type FloorPaint } from '../lib/floorPlan'
 import { clampToFloor, isEditable, pointInRect, rectsOverlap, snap, type ZonePatch } from '../lib/layoutEdit'
 import { findRoute, type RouteResult } from '../lib/pathfinding'
 import { guidePath } from '../lib/guidePaths'
-import type { ZoneContents } from '../inventory/reports'
+import type { ZoneContents } from '../wms/mapStock'
 import type { FactoryLayout, Floor, Landmark, Zone } from '../types/layout'
 import { BuildingA } from './models/BuildingA'
 import { FlowToken, WalkingGuide, type GuideInfo } from './models/Guide'
@@ -62,8 +62,8 @@ interface Props {
   editMode?: boolean
   editZoneId?: string | null
   onZoneChange?: (zoneId: string, patch: ZonePatch) => void
-  /** ไฮไลต์ทุกพาเลทของ lot ที่ค้นหาเจอ */
-  highlightLot?: string | null
+  /** ไฮไลต์กล่องที่ค้นหาเจอ (เลขป้าย) */
+  highlight?: ReadonlySet<string> | null
   /** พาเลทที่กำลังดูรายละเอียด */
   selectedPallet?: { zoneId: string; index: number } | null
   onPalletClick?: (zoneId: string, index: number) => void
@@ -321,7 +321,7 @@ export function FactoryScene(props: Props) {
     editMode = false,
     editZoneId,
     onZoneChange,
-    highlightLot,
+    highlight,
     selectedPallet,
     onPalletClick,
     pins = NO_PINS,
@@ -587,7 +587,7 @@ export function FactoryScene(props: Props) {
                         overlapping={editMode && floorZones.some((o) => o.id !== zone.id && rectsOverlap(o, zone))}
                         onSelect={() => onZoneClick(zone)}
                         onGrab={editable ? (e) => startDrag(layout.zones.find((z) => z.id === zone.id)!, floor, e) : undefined}
-                        highlightLot={highlightLot}
+                        highlight={highlight}
                         selectedPallet={selectedPallet?.zoneId === zone.id ? selectedPallet.index : null}
                         onPalletClick={onPalletClick && ((i) => onPalletClick(zone.id, i))}
                         heatmap={heatmap}
@@ -897,7 +897,7 @@ const ZoneModel = memo(function ZoneModel({
   overlapping,
   onSelect,
   onGrab,
-  highlightLot,
+  highlight,
   selectedPallet,
   onPalletClick,
   heatmap = false,
@@ -913,7 +913,7 @@ const ZoneModel = memo(function ZoneModel({
   overlapping: boolean
   onSelect: () => void
   onGrab?: (e: ThreeEvent<PointerEvent>) => void
-  highlightLot?: string | null
+  highlight?: ReadonlySet<string> | null
   selectedPallet: number | null
   onPalletClick?: (index: number) => void
   heatmap?: boolean
@@ -942,7 +942,7 @@ const ZoneModel = memo(function ZoneModel({
           depth={depth}
           code={zone.code}
           stock={stock}
-          highlightLot={highlightLot}
+          highlight={highlight}
           selectedIndex={selectedPallet}
           plan={plan}
         />

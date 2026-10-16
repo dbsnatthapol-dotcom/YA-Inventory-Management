@@ -26,8 +26,7 @@ import { SearchBox } from './components/map/SearchBox'
 import { palletsFor } from './data/warehouse'
 import { buildingOf } from './lib/geometry'
 import { mapStats } from './lib/mapStats'
-import type { SearchHit } from './lib/search'
-import { InventoryPage } from './components/inventory/InventoryPage'
+import type { StockHit } from './components/mobile/stockSearch'
 import { RoutePanel } from './components/RoutePanel'
 import logoUrl from './assets/uam-logo.png'
 import { BRAND } from './data/brand'
@@ -36,8 +35,8 @@ import { applyLayoutEdits } from './lib/layoutEdit'
 import { loadLayout, type LoadedLayout } from './lib/layoutSource'
 import { useLayoutEdits } from './lib/useLayoutEdits'
 import { findRoute, type RouteOptions } from './lib/pathfinding'
-import { useInventory } from './inventory/useInventory'
-import { bangkokDate, zoneContents, zoneTotals } from './inventory/reports'
+import { emptyZone } from './wms/mapStock'
+import { useMapStock } from './wms/useMapStock'
 import { ZonePanel } from './components/ZonePanel'
 import { LayoutEditorPage } from './components/layout-editor/LayoutEditorPage'
 import type { Zone } from './types/layout'
@@ -80,7 +79,6 @@ function readDeepLink(): WmsDeepLink | null {
 function FactoryApp() {
   const auth = useAuth()
   const role = auth.enabled ? (auth.profile?.role ?? null) : null
-  const staffName = auth.profile ? `${auth.profile.full_name} (${auth.profile.employee_code})` : undefined
   const [loaded, setLoaded] = useState<LoadedLayout>({ layout: sampleLayout, source: 'sample' })
   const layoutEdits = useLayoutEdits()
   const wms = useWms()
@@ -104,9 +102,11 @@ function FactoryApp() {
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
   const [sideTab, setSideTab] = useState<'zone' | 'route'>('zone')
   const [deepLink] = useState(readDeepLink)
-  const [page, setPage] = useState<'map' | 'wms' | 'inventory' | 'layout' | 'admin'>(deepLink ? 'wms' : 'map')
+  const [page, setPage] = useState<'map' | 'wms' | 'layout' | 'admin'>(deepLink ? 'wms' : 'map')
   const canAdmin = !auth.enabled || role === 'admin' || role === 'manager'
-  const inventory = useInventory(staffName)
+  // ของบนผัง / ช่องค้นหา / หน้าปรับผัง มาจากกล่องในระบบคลังชุดเดียวกับงานคลังและมือถือ
+  const [searchAwake, setSearchAwake] = useState(false)
+  const mapData = useMapStock(page === 'map' || page === 'layout' || searchAwake, layout, page)
 
   useEffect(() => {
     loadLayout().then(setLoaded)
@@ -152,27 +152,19 @@ function FactoryApp() {
     () => layout.floors.filter((f) => f.area === 'building').sort((a, b) => buildingOf(a).localeCompare(buildingOf(b)) || a.elevation - b.elevation),
     [layout.floors],
   )
-  const zoneStock = useMemo(() => zoneTotals(inventory.state), [inventory.state])
-
-  /** เปิดผัง 3D ที่โซนจัดเก็บ (เรียกจากหน้ารับเข้า/สต็อก) */
-  const showZone = (zoneId: string) => {
-    const zone = layout.zones.find((z) => z.id === zoneId)
-    if (!zone) return
-    handleZoneClick(zone)
-    setMode(layout.floors.find((f) => f.id === zone.floorId)?.area === 'building' ? 'interior' : 'exterior')
-    setPage('map')
-  }
+  const zoneStock = mapData.stock
 
   // ---- ผังเต็มจอ: ค้นหา, หมุด, พาเลท, กล้อง
   const [panelOpen, setPanelOpen] = useState(true)
   const [qcPins, setQcPins] = useState(true)
-  const [searchZoneId, setSearchZoneId] = useState<string | null>(null)
-  const [highlightLot, setHighlightLot] = useState<string | null>(null)
+  /** โซนที่ผลค้นหาอยู่ (part เดียวอยู่ได้หลายโซน) และป้ายกล่องที่ไฮไลต์ */
+  const [searchZones, setSearchZones] = useState<string[]>([])
+  const [highlight, setHighlight] = useState<ReadonlySet<string> | null>(null)
   const [selectedPallet, setSelectedPallet] = useState<{ zoneId: string; index: number } | null>(null)
   const [cameraCommand, setCameraCommand] = useState<CameraCommand | null>(null)
   const camera = (cmd: DistributiveOmit<CameraCommand, 'n'>) => setCameraCommand((prev) => ({ ...cmd, n: (prev?.n ?? 0) + 1 }) as CameraCommand)
 
-  const stats = useMemo(() => mapStats(layout, inventory.state, zoneStock, bangkokDate()), [layout, inventory.state, zoneStock])
+  const stats = useMemo(() => mapStats(layout, zoneStock, mapData.activity), [layout, zoneStock, mapData.activity])
 
   // ---- ไกด์ประจำจุด, heatmap, live flow, โหมดนำเสนอ
   const [guidesOn, setGuidesOn] = useState(true)
@@ -205,16 +197,19 @@ function FactoryApp() {
   }, [liveFlow, flowTx, wms.master.locations, wms.api.kind, layout])
   const tourSteps = useMemo(() => buildTourSteps(layout, stats, zoneStock), [layout, stats, zoneStock])
   const pins = useMemo<MapPinSpec[]>(() => {
-    const list: MapPinSpec[] = searchZoneId ? [{ zoneId: searchZoneId, tone: 'search' }] : []
+    const list: MapPinSpec[] = searchZones.map((zoneId) => ({ zoneId, tone: 'search' }))
     if (qcPins)
       for (const [zoneId, z] of zoneStock)
-        if (z.pendingQcQty > 0 && zoneId !== searchZoneId && layout.zones.some((zone) => zone.id === zoneId)) list.push({ zoneId, tone: 'qc' })
+        if (z.pendingQcQty > 0 && !searchZones.includes(zoneId) && layout.zones.some((zone) => zone.id === zoneId)) list.push({ zoneId, tone: 'qc' })
     return list
-  }, [searchZoneId, qcPins, zoneStock, layout.zones])
+  }, [searchZones, qcPins, zoneStock, layout.zones])
 
-  /** เลือกผลค้นหา: เปิดชั้นที่ของอยู่, เลือกโซน, ไฮไลต์พาเลทของ lot แล้วบินกล้องไปหา */
-  const pickSearch = (hit: SearchHit) => {
-    const zone = hit.kind === 'zone' ? hit.zone : hit.zone
+  /** เลือกผลค้นหา: เปิดชั้นที่ของอยู่, เลือกโซนที่มีของมากสุด, ไฮไลต์กล่อง แล้วบินกล้องไปหา */
+  const pickSearch = (hit: StockHit) => {
+    const qty = new Map<string, number>()
+    for (const b of hit.boxes) if (b.zoneId) qty.set(b.zoneId, (qty.get(b.zoneId) ?? 0) + b.qty)
+    const zoneIds = hit.zoneId ? [hit.zoneId] : [...qty].sort((a, b) => b[1] - a[1]).map(([id]) => id)
+    const zone = layout.zones.find((z) => z.id === zoneIds[0])
     if (!zone) return
     const floor = layout.floors.find((f) => f.id === zone.floorId)
     const inBuilding = floor?.area === 'building'
@@ -226,16 +221,11 @@ function FactoryApp() {
       setHiddenFloors(new Set(buildingFloors.filter((f) => f.elevation > floor.elevation).map((f) => f.id)))
     setSideTab('zone')
     setSelectedZoneId(zone.id)
-    setSearchZoneId(zone.id)
+    setSearchZones(zoneIds)
     setPanelOpen(true)
-    if (hit.kind === 'lot') {
-      setHighlightLot(hit.lot.id)
-      const index = palletsFor(zoneContents(inventory.state, zone.id)).findIndex((p) => p.lotId === hit.lot.id)
-      setSelectedPallet(index >= 0 ? { zoneId: zone.id, index } : null)
-    } else {
-      setHighlightLot(null)
-      setSelectedPallet(null)
-    }
+    setHighlight(hit.boxes.length ? new Set(hit.boxes.map((b) => b.lpnNo)) : null)
+    const index = hit.kind === 'lpn' ? palletsFor(zoneStock.get(zone.id)).findIndex((p) => p.lpnNo === hit.title) : -1
+    setSelectedPallet(index >= 0 ? { zoneId: zone.id, index } : null)
     camera({ kind: 'focus', zoneId: zone.id })
   }
   /** จากหน้าปรับผัง: เปิดผัง 3D ภายในอาคารที่โซนนั้น */
@@ -275,8 +265,8 @@ function FactoryApp() {
   }
 
   const clearSearch = () => {
-    setSearchZoneId(null)
-    setHighlightLot(null)
+    setSearchZones([])
+    setHighlight(null)
     setSelectedPallet(null)
   }
 
@@ -315,7 +305,6 @@ function FactoryApp() {
             [
               ['map', 'ผังโรงงาน 3D'],
               ['wms', 'งานคลัง'],
-              ['inventory', 'สต็อก (ตัวอย่างเดิม)'],
               ...(canEditLayout ? ([['layout', 'ปรับผัง']] as const) : []),
               ...(canAdmin ? ([['admin', 'หลังบ้าน']] as const) : []),
             ] as const
@@ -332,7 +321,15 @@ function FactoryApp() {
         </nav>
 
         <div className="order-last w-full flex-1 md:order-none md:w-auto">
-          <SearchBox layout={layout} state={inventory.state} onPick={pickSearch} onClear={clearSearch} active={!!searchZoneId} />
+          <SearchBox
+            layout={layout}
+            lpns={mapData.lpns}
+            master={wms.master}
+            onPick={pickSearch}
+            onClear={clearSearch}
+            onWake={() => setSearchAwake(true)}
+            active={searchZones.length > 0}
+          />
         </div>
 
         <div className="ml-auto flex items-center gap-3">
@@ -368,11 +365,6 @@ function FactoryApp() {
         </div>
       </header>
 
-      {page === 'inventory' && (
-        <main className="min-h-0 flex-1">
-          <InventoryPage api={inventory} zones={layout.zones} onShowZone={showZone} lockedOperator={staffName} />
-        </main>
-      )}
       {page === 'layout' && (
         <main className="min-h-0 flex-1">
           <LayoutEditorPage
@@ -413,7 +405,7 @@ function FactoryApp() {
             active={page === 'map'}
             showSurroundings={showSurroundings}
             zoneStock={zoneStock}
-            highlightLot={highlightLot}
+            highlight={highlight}
             selectedPallet={selectedPallet}
             onPalletClick={(zoneId, index) => {
               setSelectedPallet({ zoneId, index })
@@ -572,13 +564,20 @@ function FactoryApp() {
             <div className="min-h-0 flex-1 overflow-y-auto p-4 text-sm text-slate-700">
               {selectedPallet && (
                 <div className="-mx-1 mb-4">
-                  <PalletCard layout={layout} state={inventory.state} zoneId={selectedPallet.zoneId} index={selectedPallet.index} onClose={() => setSelectedPallet(null)} />
+                  <PalletCard
+                    layout={layout}
+                    stock={zoneStock.get(selectedPallet.zoneId)}
+                    lpns={mapData.lpns}
+                    zoneId={selectedPallet.zoneId}
+                    index={selectedPallet.index}
+                    onClose={() => setSelectedPallet(null)}
+                  />
                 </div>
               )}
               <ZonePanel
                 layout={layout}
                 zoneId={selectedZoneId}
-                contents={selectedZoneId ? zoneContents(inventory.state, selectedZoneId) : null}
+                contents={selectedZoneId ? (zoneStock.get(selectedZoneId) ?? emptyZone(selectedZoneId)) : null}
                 allZones={zoneStock}
                 onSelectZone={(id) => {
                   setSelectedZoneId(id)

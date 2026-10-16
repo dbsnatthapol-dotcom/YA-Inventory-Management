@@ -51,7 +51,7 @@ export function KpiStrip({ stats, qcPins, onToggleQcPins }: { stats: MapStats; q
   const usage = stats.slots ? Math.round((stats.usedSlots / stats.slots) * 100) : 0
   return (
     <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
-      <Card icon={<IconBox />} tone="bg-blue-50 text-blue-600" label="ของดีคงคลัง (BOI)" value={fmt(stats.boiQty)} unit="ชิ้น" sub={`${fmt(stats.pallets)} พาเลท · rack ใช้ ${usage}%`}>
+      <Card icon={<IconBox />} tone="bg-blue-50 text-blue-600" label="ของดีคงคลัง (BOI)" value={fmt(stats.boiQty)} unit="ชิ้น" sub={`${fmt(stats.pallets)} กล่อง · rack ใช้ ${usage}%`}>
         <span className="mt-1.5 block h-1 w-full overflow-hidden rounded-full bg-slate-100">
           <span className={`block h-full rounded-full ${usage >= 90 ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${usage}%` }} />
         </span>
@@ -62,11 +62,11 @@ export function KpiStrip({ stats, qcPins, onToggleQcPins }: { stats: MapStats; q
         label="รอคัด MI3"
         value={fmt(stats.pendingQcQty)}
         unit="ชิ้น"
-        sub={qcPins ? `${stats.pendingQcLots} lot · ปักหมุดบนผังแล้ว` : `${stats.pendingQcLots} lot · กดเพื่อปักหมุด`}
+        sub={qcPins ? `${stats.pendingQcBoxes} กล่อง · ปักหมุดบนผังแล้ว` : `${stats.pendingQcBoxes} กล่อง · กดเพื่อปักหมุด`}
         onClick={onToggleQcPins}
         active={qcPins}
       />
-      <Card icon={<IconLine />} tone="bg-emerald-50 text-emerald-600" label="เบิกเข้าไลน์วันนี้" value={fmt(stats.issuedToday)} unit="ชิ้น" sub={`รับเข้าวันนี้ ${stats.receiptsToday} invoice`} />
+      <Card icon={<IconLine />} tone="bg-emerald-50 text-emerald-600" label="เบิกเข้าไลน์วันนี้" value={fmt(stats.issuedToday)} unit="ชิ้น" sub={`รับเข้าวันนี้ ${stats.receiptsToday} ใบ (GRN)`} />
       <Card icon={<IconAlert />} tone="bg-red-50 text-red-600" label="NG รอส่งคืน" value={fmt(stats.ngWaitingQty)} unit="ชิ้น" sub={`พบใหม่วันนี้ ${fmt(stats.ngFoundToday)} ชิ้น`} />
     </div>
   )

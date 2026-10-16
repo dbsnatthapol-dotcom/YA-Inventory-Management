@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent } from 'react'
 import { planRack, RACK } from '../../data/warehouse'
 import { ZONE_STYLE } from '../../data/zoneStyle'
-import type { ZoneContents } from '../../inventory/reports'
+import type { ZoneContents } from '../../wms/mapStock'
 import { AISLE_WIDTH, type FloorPaint } from '../../lib/floorPlan'
 import { clampToFloor, distanceToRect, snap, type ZoneIssue, type ZonePatch } from '../../lib/layoutEdit'
 import type { Floor, NavNode, Zone } from '../../types/layout'

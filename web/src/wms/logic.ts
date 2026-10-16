@@ -96,7 +96,7 @@ export function txSummary(t: Tx): string {
     case 'ADJ':
       return `${t.partNo} ${fmt(t.qty)} → ${fmt(t.newQty)} · ${t.reason ?? ''}`
     case 'COUNT':
-      return `นับได้ ${fmt(t.newQty)} · ระบบ ${fmt(t.qty)}${t.newQty !== t.qty ? ' (ไม่ตรง)' : ''}`
+      return `${t.partNo ? `${t.partNo} ` : ''}นับได้ ${fmt(t.newQty)} · ระบบ ${fmt(t.qty)}${t.newQty !== t.qty ? ' (ไม่ตรง)' : ''}`
     case 'QI':
       return `${t.partNo} ผ่าน ${fmt(t.passQty)} · NG ${fmt(t.ngQty)}`
     case 'MERGE':

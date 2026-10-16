@@ -1,6 +1,24 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { WmsApi } from './api'
-import type { ClosingTotal, FgItem, Grn, GrnLine, Invoice, InvoiceLine, LedgerRow, Lpn, LpnItem, PrintJob, Requisition, StockClosing, StockCount, StorageLoc, Tx, TxKind } from './types'
+import type {
+  ClosingTotal,
+  FgItem,
+  Grn,
+  GrnLine,
+  Invoice,
+  InvoiceLine,
+  LedgerRow,
+  Lpn,
+  LpnItem,
+  PrintJob,
+  Requisition,
+  ScanIssueResult,
+  StockClosing,
+  StockCount,
+  StorageLoc,
+  Tx,
+  TxKind,
+} from './types'
 
 type Row = Record<string, unknown>
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v))
@@ -8,8 +26,14 @@ const str = (v: unknown) => (v === null || v === undefined ? null : String(v))
 
 async function run<T = unknown>(p: PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<T> {
   const { data, error } = await p
-  if (error) throw new Error(error.message)
+  if (error) throw new Error(friendly(error.message))
   return data as T
+}
+
+/** ฟังก์ชัน/ตารางที่ยังไม่มีในฐานข้อมูล = ยังไม่ได้รัน SQL ไฟล์ล่าสุดใน supabase/migrations */
+function friendly(msg: string): string {
+  const m = /Could not find the (?:function|table) '?public\.(\w+)/.exec(msg) ?? /relation "public\.(\w+)" does not exist/.exec(msg)
+  return m ? `ฐานข้อมูลยังไม่ได้อัปเดต (ไม่พบ ${m[1]}) · ให้ผู้ดูแลระบบรัน SQL ไฟล์ล่าสุดใน supabase/migrations` : msg
 }
 
 const one = <T>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null))
@@ -74,17 +98,25 @@ const toGrnLine = (r: Row): GrnLine => ({
 const toItem = (r: Row): LpnItem => ({ id: String(r.id), lpnId: String(r.lpn_id), grnLineId: String(r.grn_line_id), partNo: String(r.part_no), qty: Number(r.qty), prevLpnId: str(r.prev_lpn_id) })
 
 // lpn_items อ้างถึง lpns สองทาง (lpn_id = กล่องปัจจุบัน, prev_lpn_id = กล่องก่อนรวม) ต้องระบุ FK ไม่งั้น PostgREST ไม่รู้ว่าจะ join ทางไหน
-const LPN_SELECT = 'id, lpn_no, grn_id, location_code, hold, status, created_at, lpn_items!lpn_items_lpn_id_fkey(id, lpn_id, grn_line_id, part_no, qty, prev_lpn_id)'
-const toLpn = (r: Row): Lpn => ({
-  id: String(r.id),
-  lpnNo: String(r.lpn_no),
-  grnId: str(r.grn_id),
-  locationCode: String(r.location_code),
-  hold: Boolean(r.hold),
-  status: r.status as Lpn['status'],
-  createdAt: String(r.created_at),
-  items: ((r.lpn_items as Row[] | null) ?? []).map(toItem),
-})
+// grns ระบุ FK ด้วย เพราะ lpns อ้างตัวเอง (merged_into) อาจถูกมองเป็นตารางเชื่อม
+const LPN_SELECT =
+  'id, lpn_no, grn_id, location_code, hold, status, created_at, lpn_items!lpn_items_lpn_id_fkey(id, lpn_id, grn_line_id, part_no, qty, prev_lpn_id), grns!lpns_grn_id_fkey(grn_no, model_code, invoices(invoice_no))'
+const toLpn = (r: Row): Lpn => {
+  const g = one(r.grns as Row | Row[] | null)
+  return {
+    id: String(r.id),
+    lpnNo: String(r.lpn_no),
+    grnId: str(r.grn_id),
+    locationCode: String(r.location_code),
+    hold: Boolean(r.hold),
+    status: r.status as Lpn['status'],
+    createdAt: String(r.created_at),
+    items: ((r.lpn_items as Row[] | null) ?? []).map(toItem),
+    grnNo: str(g?.grn_no),
+    modelCode: str(g?.model_code),
+    invoiceNo: str(one(g?.invoices as Row | Row[] | null)?.invoice_no),
+  }
+}
 
 const TX_SELECT =
   'id, kind, doc_no, lpn_id, lpn_item_id, part_no, qty, new_qty, pass_qty, ng_qty, from_loc, to_loc, ref, reason, status, created_code, created_at, decided_code, lpns(lpn_no)'
@@ -158,7 +190,8 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
         run(sb.from('parts').select('part_no, name, part_type, customer_id, uam_code, revision, part_models(model_code)').order('part_no').limit(5000)),
         run(sb.from('product_models').select('code, customer_id, requires_inspection').order('code')),
         run(sb.from('zone_rules').select('customer_id, part_type, zone_id')),
-        run(sb.from('locations').select('code, zone_id, kind, active').order('code').limit(5000)),
+        // select * : ใช้ได้ทั้งก่อนและหลังเพิ่มคอลัมน์ blocked / manual (0018)
+        run(sb.from('locations').select('*').order('code').limit(5000)),
         rpc<Row[]>('zone_head_list'),
         run(sb.from('fg_items').select('code, name, model_code, active, fg_bom(part_no, qty_per)').order('code')),
       ])
@@ -174,7 +207,14 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
         })),
         models: (models as Row[]).map((m) => ({ code: String(m.code), customerId: String(m.customer_id), requiresInspection: Boolean(m.requires_inspection) })),
         rules: (rules as Row[]).map((r) => ({ customerId: String(r.customer_id), partType: str(r.part_type), zoneId: String(r.zone_id) })),
-        locations: (locs as Row[]).map((l) => ({ code: String(l.code), zoneId: String(l.zone_id), kind: l.kind as StorageLoc['kind'], active: Boolean(l.active) })),
+        locations: (locs as Row[]).map((l) => ({
+          code: String(l.code),
+          zoneId: String(l.zone_id),
+          kind: l.kind as StorageLoc['kind'],
+          active: Boolean(l.active),
+          blocked: Boolean(l.blocked),
+          manual: Boolean(l.manual),
+        })),
         zoneHeads: heads.map((h) => ({ zoneId: String(h.zone_id), staffId: String(h.staff_id), employeeCode: String(h.employee_code), fullName: String(h.full_name) })),
         fgItems: (fgs as Row[]).map(
           (f): FgItem => ({
@@ -248,10 +288,10 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
     },
 
     scanMove: (lpnId, to, kind) => rpc('scan_move', { p_lpn: lpnId, p_to: to, p_kind: kind }),
-    scanIssue: (itemId, qty, ref, note) => rpc('scan_issue', { p_item: itemId, p_qty: qty, p_ref: ref, p_note: note }),
+    scanIssue: (p) => rpc<ScanIssueResult>('scan_issue_req', { p }),
     scanAdjustRequest: (itemId, newQty, reason) => rpc('scan_adjust_request', { p_item: itemId, p_new_qty: newQty, p_reason: reason }),
     scanAdjustDecide: (txId, approve) => rpc('scan_adjust_decide', { p_tx: txId, p_approve: approve }),
-    scanCount: async (lpnId, counted) => Number(await rpc('scan_count', { p_lpn: lpnId, p_counted: counted })),
+    scanCountItem: async (itemId, counted) => Number(await rpc('scan_count_item', { p_item: itemId, p_counted: counted })),
     scanQi: (lpnId, pass, ng, note) => rpc('scan_qi', { p_lpn: lpnId, p_pass: pass, p_ng: ng, p_note: note }),
 
     async recentTx(limit = 30, lpnId) {

@@ -3,7 +3,7 @@ import { Color, DoubleSide, type InstancedMesh, Object3D, type Texture } from 't
 import { BRAND } from '../../data/brand'
 import { modelColor } from '../../data/modelColors'
 import { palletsFor, RACK, type StoragePlan } from '../../data/warehouse'
-import type { ZoneContents } from '../../inventory/reports'
+import type { ZoneContents } from '../../wms/mapStock'
 import { floorMarkings, hazardStripes, textLabel } from './textures'
 import type { FloorPaint } from '../../lib/floorPlan'
 
@@ -256,7 +256,7 @@ export const PalletRack = memo(function PalletRack({
   depth,
   code,
   stock,
-  highlightLot,
+  highlight,
   selectedIndex,
   plan,
 }: {
@@ -267,8 +267,8 @@ export const PalletRack = memo(function PalletRack({
   /** แผนวางพาเลท: พาเลทวางพื้น (ไม่มีโครง) หรือ rack, จำนวนชั้น, ที่วางต่อชั้น */
   plan: StoragePlan
   stock?: ZoneContents
-  /** lot ที่ค้นหาเจอ — ไฮไลต์ทุกพาเลทของ lot นี้ */
-  highlightLot?: string | null
+  /** กล่องที่ค้นหาเจอ (เลขป้าย) — ไฮไลต์บนชั้นวาง */
+  highlight?: ReadonlySet<string> | null
   /** พาเลทที่กำลังดูรายละเอียด (ลำดับใน palletsFor) */
   selectedIndex?: number | null
 }) {
@@ -331,10 +331,10 @@ export const PalletRack = memo(function PalletRack({
       if (!load) return
       const box: Box = { p: [load.p[0], load.p[1], load.p[2]], s: [load.s[0] + 0.16, load.s[1] + 0.16, load.s[2] + 0.16] }
       if (i === selectedIndex) selected.push(box)
-      else if (highlightLot && p.lotId === highlightLot) lot.push(box)
+      else if (highlight?.has(p.lpnNo)) lot.push(box)
     })
     return { lot, selected }
-  }, [pallets, loads, highlightLot, selectedIndex])
+  }, [pallets, loads, highlight, selectedIndex])
 
   return (
     <Oriented width={width} depth={depth}>

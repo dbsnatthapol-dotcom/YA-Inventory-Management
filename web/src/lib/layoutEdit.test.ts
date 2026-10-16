@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { sampleLayout } from '../data/factoryLayout'
 import { palletsFor, planRack, storagePlan } from '../data/warehouse'
-import { buildDemoState } from '../inventory/demoSeed'
-import { zoneContents } from '../inventory/reports'
 import { layoutLocations } from '../wms/locations'
+import { buildZoneStock } from '../wms/mapStock'
 import {
   applyLayoutEdits,
   clampToFloor,
@@ -17,6 +16,7 @@ import {
   withRemoved,
   zoneIssues,
 } from './layoutEdit'
+import { fixtureLpns, fixtureMaster } from './mapFixture'
 import { findRoute } from './pathfinding'
 
 const zoneIn = (layout: typeof sampleLayout, id: string) => layout.zones.find((z) => z.id === id)!
@@ -178,12 +178,11 @@ describe('pallet racking', () => {
     expect(planRack(10, 18).slots).toHaveLength(plan.slots.length)
   })
 
-  it('turns zone stock into pallets by part type', () => {
-    const s = buildDemoState('2026-10-14')
-    const contents = zoneContents(s, 'F1-RK-A')
+  it('puts one pallet on the rack per box label', () => {
+    const contents = buildZoneStock(fixtureLpns, fixtureMaster, sampleLayout).get('F1-RK-A')!
     const pallets = palletsFor(contents)
-    expect(pallets.length).toBeGreaterThan(0)
-    expect(pallets.length).toBeLessThan(contents.totalQty)
+    expect(pallets.map((p) => p.lpnNo)).toEqual(['LPN-1', 'LPN-2'])
+    expect(pallets.reduce((s, p) => s + p.qty, 0)).toBe(contents.totalQty)
     expect(new Set(pallets.map((p) => p.model))).toEqual(new Set(contents.models.map((m) => m.model)))
   })
 })

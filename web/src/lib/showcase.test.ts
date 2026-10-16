@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { sampleLayout } from '../data/factoryLayout'
-import { buildDemoState } from '../inventory/demoSeed'
-import { zoneTotals } from '../inventory/reports'
 import { layoutLocations } from '../wms/locations'
+import { buildZoneStock } from '../wms/mapStock'
 import type { Tx } from '../wms/types'
 import { alongPingPong, guidePath } from './guidePaths'
 import { applyLayoutEdits, emptyEdits, pointInRect } from './layoutEdit'
 import { buildGuides, buildTourSteps, flowsFromTx } from './mapShowcase'
+import { fixtureLpns, fixtureMaster } from './mapFixture'
 import { mapStats } from './mapStats'
 
 const layout = applyLayoutEdits(sampleLayout, emptyEdits())
@@ -37,15 +37,16 @@ describe('guide walking paths', () => {
 })
 
 describe('map showcase', () => {
-  const state = buildDemoState('2026-10-14')
-  const stock = zoneTotals(state)
-  const stats = mapStats(layout, state, stock, '2026-10-14')
+  const stock = buildZoneStock(fixtureLpns, fixtureMaster, layout)
+  const stats = mapStats(layout, stock, { issuedToday: 300, receiptsToday: 2, ngFoundToday: 5 })
 
   it('gives every station a guide with real numbers and the zone head when assigned', () => {
     const guides = buildGuides(layout, stock, [{ zoneId: 'F1-RK-A', staffId: 's', employeeCode: '59037', fullName: 'หัวหน้า A' }], stats)
     expect(guides.get('F1-RK-A')?.who).toBe('หัวหน้าโซน: หัวหน้า A')
     expect(guides.get('RCV-01')?.who).toContain('ผู้ดูแลจุดรับสินค้า')
     expect(guides.get('F1-RK-A')?.lines.join(' ')).toMatch(/ใช้พื้นที่ \d+%/)
+    expect(guides.get('F1-RK-A')?.lines[0]).toBe('มีของ 9,050 ชิ้น · 2 กล่อง')
+    expect(guides.get('F1-MI3')?.lines.join(' ')).toContain('รอคัด MI3 60 ชิ้น')
     expect(guides.has('F1-STAIRS')).toBe(false)
   })
 

@@ -3,7 +3,7 @@ import { MIN_PASSWORD, ROLE_DUTY, ROLE_LABEL, ROLES, type Role, type StaffProfil
 import { useAuth } from '../../auth/useAuth'
 import { BRAND } from '../../data/brand'
 import { supabase } from '../../lib/layoutSource'
-import { fmtTime, inputCls } from '../inventory/format'
+import { fmtTime, inputCls } from '../../lib/format'
 
 interface AccessRow {
   id: number
