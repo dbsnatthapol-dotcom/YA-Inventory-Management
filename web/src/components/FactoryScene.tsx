@@ -1,12 +1,12 @@
 import { Html, Line, OrbitControls } from '@react-three/drei'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { type Group, type PerspectiveCamera, Plane, Raycaster, Vector2, Vector3 } from 'three'
+import { type Group, type PerspectiveCamera, Plane, Raycaster, Shape, Vector2, Vector3 } from 'three'
 import { BRAND, MATERIAL } from '../data/brand'
 import { GATES_WITH_SHRINE, MAIN_BUILDING_FLOOR_ID, TENT_STYLE, TREE_POINTS, TRUCK_YARD } from '../data/siteAppearance'
-import { palletsFor, planRack, RACK } from '../data/warehouse'
+import { palletsFor, planRack, rackSpec } from '../data/warehouse'
 import { ZONE_STYLE } from '../data/zoneStyle'
-import { toRadians, toSite } from '../lib/geometry'
+import { buildingOf, toLocal, toRadians, toSite, zoneClearance } from '../lib/geometry'
 import { floorPaint, type FloorPaint } from '../lib/floorPlan'
 import { clampToFloor, isEditable, pointInRect, rectsOverlap, snap, type ZonePatch } from '../lib/layoutEdit'
 import type { RouteResult } from '../lib/pathfinding'
@@ -21,6 +21,7 @@ import {
   Forklift,
   Lift,
   InspectionArea,
+  MezzanineEdge,
   NgArea,
   PalletJack,
   PalletRack,
@@ -328,6 +329,21 @@ export function FactoryScene(props: Props) {
 
   const mainFloor = floorsById.get(MAIN_BUILDING_FLOOR_ID)
   const buildingFloors = layout.floors.filter((f) => f.area === 'building')
+  /** จำนวนชั้นเต็ม (ไม่นับชั้นลอย) ของแต่ละอาคาร — ใช้วาดตัวอาคารภายนอก */
+  const storeysOf = (building: string) => buildingFloors.filter((f) => !f.mezzanine && buildingOf(f) === building).length
+  /** อาคารต่อ (เช่น อาคาร F) วาดภายนอกจากชั้นล่างสุด + ส่วนเชื่อมหลังคากับอาคารหลัก */
+  const annexes = useMemo(() => annexBuildings(layout.floors, MAIN_BUILDING_FLOOR_ID), [layout.floors])
+  /** ชั้นลอยที่อยู่เหนือแต่ละชั้น (ซ่อนเสาของชั้นล่างใต้ชั้นลอย — ชั้นลอยมีเสารับของตัวเอง) */
+  const mezzAbove = useMemo(
+    () =>
+      new Map(
+        layout.floors.map((f) => [
+          f.id,
+          layout.floors.filter((m) => m.mezzanine && buildingOf(m) === buildingOf(f) && m.elevation > f.elevation && m.elevation < f.elevation + storeyHeight(layout.floors, f)),
+        ]),
+      ),
+    [layout.floors],
+  )
   const yardZones = layout.zones.filter((z) => floorsById.get(z.floorId)?.area === 'yard')
 
   // ---- ลากย้ายโซน
@@ -406,6 +422,8 @@ export function FactoryScene(props: Props) {
             <Truck position={[36, 0, 86]} rotation={-0.07} />
             {layout.site.landmarks
               .filter((l) => showSurroundings || l.kind !== 'road')
+              // อาคารที่มีชั้นในผังแล้ว (อาคาร F) วาดจากข้อมูลชั้นแทนกล่องอาคารเดิม
+              .filter((l) => !(l.kind === 'building' && annexes.some((a) => a.id === l.id)))
               .map((l) => (
                 <LandmarkModel key={l.id} landmark={l} />
               ))}
@@ -421,8 +439,8 @@ export function FactoryScene(props: Props) {
               <BuildingA
                 width={mainFloor.width}
                 depth={mainFloor.depth}
-                floors={buildingFloors.length}
-                floorHeight={buildingFloors[1] ? buildingFloors[1].elevation - buildingFloors[0].elevation : 4.5}
+                floors={storeysOf(buildingOf(mainFloor))}
+                floorHeight={storeyHeight(layout.floors, mainFloor)}
                 onClick={(e) => {
                   e.stopPropagation()
                   onBuildingClick?.()
@@ -432,12 +450,52 @@ export function FactoryScene(props: Props) {
             {dock && <Truck position={[dock.x, 0, mainFloor.depth + 2.8]} rotation={Math.PI} />}
           </group>
         )}
+        {annexes.map((a) => {
+          const [cx, cz] = toSite(a.ground, a.ground.width / 2, a.ground.depth / 2)
+          const top = a.floors * a.storey
+          return (
+            <group key={a.id}>
+              {exterior && (
+                <>
+                  {/* โมเดลอาคารวาดตามแกนยาว: หมุน 90° ให้สันหลังคาวิ่งตามความยาวอาคาร */}
+                  <group position={[a.ground.x, 0, a.ground.z]} rotation={[0, -toRadians(a.ground.rotation), 0]}>
+                    <group position={[0, 0, a.ground.depth]} rotation={[0, Math.PI / 2, 0]}>
+                      <BuildingA
+                        width={a.ground.depth}
+                        depth={a.ground.width}
+                        floors={a.floors}
+                        floorHeight={a.storey}
+                        frontage={false}
+                        roofRise={Math.min(5, a.ground.depth * 0.2)}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onBuildingClick?.()
+                        }}
+                      />
+                    </group>
+                  </group>
+                  {a.link && <LinkBlock polygon={a.link} height={top} />}
+                  <Label position={[cx, top + a.ground.depth * 0.2 + 4, cz]} title={`อาคาร ${a.id} (${a.floors} ชั้น${a.mezzanine ? ' + ชั้นลอย' : ''})`} />
+                </>
+              )}
+              {/* ภายใน: พื้นทางเชื่อมระหว่างอาคารในแต่ละชั้น */}
+              {!exterior &&
+                a.link &&
+                buildingFloors
+                  .filter((f) => buildingOf(f) === a.id && !f.mezzanine && !hiddenFloors.has(f.id))
+                  .map((f) => <LinkFloor key={f.id} polygon={a.link!} y={floorY(f.id) + FLOOR_LIFT - 0.02} />)}
+            </group>
+          )
+        })}
         {!exterior &&
           buildingFloors
             .filter((f) => !hiddenFloors.has(f.id))
             .map((floor) => {
               const floorZones = zonesByFloor.get(floor.id) ?? NO_ZONES
-              const rise = buildingFloors[1] ? buildingFloors[1].elevation - buildingFloors[0].elevation : 4.5
+              const rise = storeyHeight(layout.floors, floor)
+              // ชั้นลอย: ระยะลงไปถึงพื้นชั้นล่าง (เสารับพื้น) และช่องหัวบันไดในราวกันตก
+              const below = buildingFloors.filter((f) => buildingOf(f) === buildingOf(floor) && f.elevation < floor.elevation).map((f) => f.elevation)
+              const drop = floor.mezzanine && below.length ? (floor.elevation - Math.max(...below)) * explode : 0
               return (
                 <group
                   key={floor.id}
@@ -447,14 +505,26 @@ export function FactoryScene(props: Props) {
                   position={[floor.x, floorY(floor.id) + FLOOR_LIFT, floor.z]}
                   rotation={[0, -toRadians(floor.rotation), 0]}
                 >
-                  <FloorShell floor={floor} paint={paints.get(floor.id)!} zones={floorZones} rise={rise} isGround={floor.id === MAIN_BUILDING_FLOOR_ID} dockX={dock?.gap} />
+                  <FloorShell
+                    floor={floor}
+                    paint={paints.get(floor.id)!}
+                    zones={floorZones}
+                    rise={rise}
+                    isGround={floor.id === MAIN_BUILDING_FLOOR_ID}
+                    dockX={dock?.gap}
+                    drop={drop}
+                    railGaps={floor.mezzanine ? stairGaps(layout, floor) : NO_GAPS}
+                    mezzanines={mezzAbove.get(floor.id) ?? NO_FLOORS}
+                  />
                   {floorZones.map((zone) => {
                     const editable = editMode && isEditable(zone, floor)
+                    const clearance = zoneClearance(layout.floors, zone)
                     return (
                       <ZoneModel
                         key={zone.id}
                         zone={zone}
-                        rise={rise}
+                        rise={Math.min(rise, clearance)}
+                        clearance={clearance}
                         stock={zoneStock?.get(zone.id)}
                         selected={selectedZoneIds.includes(zone.id)}
                         editing={editMode && editZoneId === zone.id}
@@ -484,7 +554,11 @@ export function FactoryScene(props: Props) {
           const stock = zoneStock?.get(zone.id)
           return (
             <group key={zone.id} position={[x, 0, z]} rotation={[0, -toRadians(floor.rotation), 0]}>
-              {zone.kind === 'tent' ? <Model width={zone.width} depth={zone.depth} onClick={select} /> : <ZoneBox zone={zone} onClick={() => onZoneClick(zone)} />}
+              {zone.kind === 'tent' ? (
+                <Model width={zone.width} depth={zone.depth} contents={zone.stores?.includes('ยาง') ? 'tyres' : 'pallets'} onClick={select} />
+              ) : (
+                <ZoneBox zone={zone} onClick={() => onZoneClick(zone)} />
+              )}
               {selectedZoneIds.includes(zone.id) && <SelectionRing width={zone.width} depth={zone.depth} />}
               <Label
                 position={[zone.width / 2, 10, zone.depth / 2]}
@@ -519,7 +593,14 @@ export function FactoryScene(props: Props) {
         if (!zone || !base || !floor) return null
         if (floor.area === 'building' && !exterior && hiddenFloors.has(floor.id)) return null
         // ภายนอก: ปักบนหลังคาอาคาร · ภายใน: เหนือ rack · เต็นท์: เหนือหลังคาเต็นท์
-        const lift = floor.area !== 'building' ? 10 : exterior ? buildingFloors.length * 4.6 + 1.5 - floor.elevation : zone.kind === 'storage' ? RACK.height + 1.2 : 2.5
+        const lift =
+          floor.area !== 'building'
+            ? 10
+            : exterior
+              ? storeysOf(buildingOf(floor)) * storeyHeight(layout.floors, floor) + 1.5 - floor.elevation
+              : zone.kind === 'storage'
+                ? rackSpec(zoneClearance(layout.floors, zone)).height + 1.2
+                : 2.5
         return <MapPin key={`${pin.tone}-${pin.zoneId}`} position={base.clone().setY(base.y + lift)} tone={pin.tone} />
       })}
     </Canvas>
@@ -530,6 +611,87 @@ export function FactoryScene(props: Props) {
 
 const NO_ZONES: Zone[] = []
 const NO_PINS: MapPinSpec[] = []
+const NO_GAPS: [number, number][] = []
+const NO_FLOORS: Floor[] = []
+const DEFAULT_STOREY = 4.5
+
+/** ความสูงชั้น: ระยะถึงพื้นชั้นเต็มถัดไปของอาคารเดียวกัน (ชั้นบนสุด = ค่ามาตรฐาน) */
+function storeyHeight(floors: Floor[], floor: Floor): number {
+  const above = floors
+    .filter((f) => f.area === 'building' && !f.mezzanine && buildingOf(f) === buildingOf(floor) && f.elevation > floor.elevation + 1e-6)
+    .map((f) => f.elevation - floor.elevation)
+  return above.length ? Math.min(...above) : DEFAULT_STOREY
+}
+
+interface Annex {
+  id: string
+  /** ชั้นล่างสุดของอาคาร (ใช้ตำแหน่ง/ขนาดวาดตัวอาคาร) */
+  ground: Floor
+  floors: number
+  storey: number
+  mezzanine: boolean
+  /** ช่องว่างระหว่างผนังหน้าอาคารต่อกับผนังหลังอาคารหลัก (พิกัด site) — วาดเป็นส่วนเชื่อมหลังคาต่อกัน */
+  link: [number, number][] | null
+}
+
+function annexBuildings(floors: Floor[], mainId: string): Annex[] {
+  const main = floors.find((f) => f.id === mainId)
+  const groups = new Map<string, Floor[]>()
+  for (const f of floors) if (f.area === 'building') groups.set(buildingOf(f), [...(groups.get(buildingOf(f)) ?? []), f])
+  return [...groups]
+    .filter(([id]) => !main || id !== buildingOf(main))
+    .map(([id, list]) => {
+      const full = list.filter((f) => !f.mezzanine).sort((a, b) => a.elevation - b.elevation)
+      const ground = full[0] ?? list[0]
+      return { id, ground, floors: Math.max(1, full.length), storey: storeyHeight(floors, ground), mezzanine: list.some((f) => f.mezzanine), link: main ? linkPolygon(main, ground) : null }
+    })
+}
+
+/** ผนังหน้าอาคารต่อ (z = depth) ส่วนที่อยู่หลังอาคารหลักไม่เกิน 12 ม. + จุดตั้งฉากบนผนังหลังอาคารหลัก */
+function linkPolygon(main: Floor, annex: Floor): [number, number][] | null {
+  const front: [number, number][] = []
+  const back: [number, number][] = []
+  const steps = Math.ceil(annex.width)
+  for (let i = 0; i <= steps; i++) {
+    const p = toSite(annex, (annex.width * i) / steps, annex.depth)
+    const [mx, mz] = toLocal(main, ...p)
+    if (mx < 0 || mx > main.width || mz > 0.05 || mz < -12) continue
+    front.push(p)
+    back.push(toSite(main, mx, 0))
+  }
+  return front.length >= 2 ? [...front, ...back.reverse()] : null
+}
+
+/** รูปหลายเหลี่ยมบนพื้น (พิกัด site) → Shape สำหรับวาดด้วยการหมุน -90° รอบแกน x */
+const groundShape = (polygon: [number, number][]) => new Shape(polygon.map(([x, z]) => new Vector2(x, -z)))
+
+/** ส่วนเชื่อมหลังคาต่อกันระหว่างอาคาร (ภายนอก): ผนังสีเดียวกับอาคาร หลังคาสีน้ำเงิน */
+function LinkBlock({ polygon, height }: { polygon: [number, number][]; height: number }) {
+  const shape = useMemo(() => groundShape(polygon), [polygon])
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} castShadow receiveShadow>
+      <extrudeGeometry args={[shape, { depth: height, bevelEnabled: false }]} />
+      <meshStandardMaterial attach="material-0" color={BRAND.roofBlue} roughness={0.6} metalness={0.3} />
+      <meshStandardMaterial attach="material-1" color={BRAND.siding} roughness={0.7} />
+    </mesh>
+  )
+}
+
+/** พื้นทางเชื่อมระหว่างอาคาร (ภายใน) */
+function LinkFloor({ polygon, y }: { polygon: [number, number][]; y: number }) {
+  const shape = useMemo(() => groundShape(polygon), [polygon])
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, y, 0]} receiveShadow>
+      <shapeGeometry args={[shape]} />
+      <meshStandardMaterial color={MATERIAL.epoxyGreen} roughness={0.5} />
+    </mesh>
+  )
+}
+
+/** ช่องหัวบันไดบนขอบหน้าชั้นลอย (ไม่ต้องมีราวกันตก) จากโหนดหัวบันได *-ST ของชั้น */
+function stairGaps(layout: FactoryLayout, floor: Floor): [number, number][] {
+  return layout.nodes.filter((n) => n.floorId === floor.id && n.id.endsWith('-ST')).map((n) => [n.x - 1.9, n.x + 1.9])
+}
 
 function siteCenter(layout: FactoryLayout): [number, number] {
   // จัดกึ่งกลางฉากตามขอบที่ดิน (หรือขนาดชั้นถ้าไม่มีข้อมูล site)
@@ -547,6 +709,9 @@ const FloorShell = memo(function FloorShell({
   rise,
   isGround,
   dockX,
+  drop = 0,
+  railGaps = NO_GAPS,
+  mezzanines = NO_FLOORS,
 }: {
   floor: Floor
   paint: FloorPaint
@@ -554,11 +719,24 @@ const FloorShell = memo(function FloorShell({
   rise: number
   isGround: boolean
   dockX?: [number, number]
+  /** ชั้นลอย: ความสูงเสารับพื้นลงไปถึงชั้นล่าง */
+  drop?: number
+  railGaps?: [number, number][]
+  /** ชั้นลอยเหนือชั้นนี้ */
+  mezzanines?: Floor[]
 }) {
   // เสาทุกต้นที่ไม่ชนโซน (ขยับ rack ทับตำแหน่งเสาได้ เสาจะถูกซ่อน)
   const columns = useMemo(
-    () => paint.columns.filter(([x, z]) => !zones.some((zone) => zone.kind !== 'stairs' && zone.kind !== 'lift' && pointInRect(x, z, zone, 0.3))),
-    [paint.columns, zones],
+    () =>
+      paint.columns.filter(
+        ([x, z]) =>
+          !zones.some((zone) => zone.kind !== 'stairs' && zone.kind !== 'lift' && pointInRect(x, z, zone, 0.3)) &&
+          !mezzanines.some((m) => {
+            const [mx, mz] = toLocal(m, ...toSite(floor, x, z))
+            return mx > -0.5 && mx < m.width + 0.5 && mz > -0.5 && mz < m.depth + 0.5
+          }),
+      ),
+    [paint.columns, zones, mezzanines, floor],
   )
   const gaps = useMemo<[number, number][]>(() => {
     if (!isGround) return []
@@ -576,6 +754,19 @@ const FloorShell = memo(function FloorShell({
     })
   }, [paint.aisles])
   const Vehicle = isGround ? Forklift : PalletJack
+
+  if (floor.mezzanine)
+    return (
+      <group>
+        <FloorPlate paint={paint} />
+        <MezzanineEdge width={floor.width} depth={floor.depth} drop={drop} gaps={railGaps} />
+        <Html position={[0, 1.6, 0]} className="pointer-events-none" zIndexRange={[10, 0]}>
+          <div className="whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-semibold text-white shadow-sm" style={{ background: BRAND.primary }}>
+            {floor.name}
+          </div>
+        </Html>
+      </group>
+    )
 
   return (
     <group>
@@ -610,6 +801,7 @@ const OUTLINE: Record<Zone['kind'], string> = {
 const ZoneModel = memo(function ZoneModel({
   zone,
   rise,
+  clearance,
   stock,
   selected,
   editing,
@@ -623,6 +815,8 @@ const ZoneModel = memo(function ZoneModel({
 }: {
   zone: Zone
   rise: number
+  /** ระยะถึงพื้นชั้นที่อยู่เหนือโซน — rack ใต้/บนชั้นลอยจะเตี้ยลง */
+  clearance: number
   stock?: ZoneContents
   selected: boolean
   editing: boolean
@@ -635,21 +829,32 @@ const ZoneModel = memo(function ZoneModel({
   onPalletClick?: (index: number) => void
 }) {
   const { width, depth } = zone
-  const height = zone.kind === 'storage' ? RACK.height : zone.kind === 'assembly' ? 2 : zone.kind === 'lift' ? 3.2 : zone.kind === 'stairs' ? rise : 1.2
+  const rack = useMemo(() => rackSpec(clearance), [clearance])
+  const height = zone.kind === 'storage' ? rack.height : zone.kind === 'assembly' ? 2 : zone.kind === 'lift' ? 3.2 : zone.kind === 'stairs' ? rise : 1.2
   const outline = overlapping ? '#e34948' : editing ? '#2563eb' : selected ? '#f97316' : OUTLINE[zone.kind]
   const showLabel = zone.kind !== 'stairs' && zone.kind !== 'lift'
   const pieces = stock?.totalQty ?? 0
   // ความจุ rack ที่ใช้อยู่ (%)
   const usage = useMemo(() => {
     if (zone.kind !== 'storage') return null
-    const slots = planRack(width, depth).slots.length
+    const slots = planRack(width, depth, rack.levels).slots.length
     return slots ? Math.round((Math.min(palletsFor(stock).length, slots) / slots) * 100) : 0
-  }, [zone.kind, width, depth, stock])
+  }, [zone.kind, width, depth, stock, rack])
 
   return (
     <group position={[zone.x, 0, zone.z]}>
       {zone.kind === 'storage' && (
-        <PalletRack zoneId={zone.id} width={width} depth={depth} code={zone.code} stock={stock} highlightLot={highlightLot} selectedIndex={selectedPallet} />
+        <PalletRack
+          zoneId={zone.id}
+          width={width}
+          depth={depth}
+          code={zone.code}
+          stock={stock}
+          highlightLot={highlightLot}
+          selectedIndex={selectedPallet}
+          levels={rack.levels}
+          height={rack.height}
+        />
       )}
       {zone.kind === 'assembly' && <AssemblyLine width={width} depth={depth} title={`${zone.code} · ${zone.name}`} />}
       {zone.kind === 'receiving' && <ReceivingArea width={width} depth={depth} />}

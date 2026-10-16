@@ -3,7 +3,7 @@
 import { writeFileSync } from 'node:fs'
 import { sampleLayout } from '../src/data/factoryLayout'
 import { CUSTOMERS, MODELS, PARTS, ZONE_RULES } from '../src/inventory/masterData'
-import { defaultLocations } from '../src/wms/locations'
+import { layoutLocations } from '../src/wms/locations'
 
 type Value = string | number | string[] | undefined
 const str = (v: string) => `'${v.replace(/'/g, "''")}'`
@@ -18,8 +18,8 @@ const SITE_ID = 'UAM1'
 const { floors, nodes, edges, zones, site } = sampleLayout
 const sql = [
   '-- สร้างอัตโนมัติจาก web/src/data/factoryLayout.ts — อย่าแก้ไขด้วยมือ',
-  rows('floors', ['id', 'name', 'level', 'elevation', 'area', 'x', 'z', 'rotation', 'width', 'depth'],
-    floors.map((f) => [f.id, f.name, f.level, f.elevation, f.area, f.x, f.z, f.rotation ?? 0, f.width, f.depth])),
+  rows('floors', ['id', 'name', 'level', 'elevation', 'area', 'x', 'z', 'rotation', 'width', 'depth', 'building', 'mezzanine'],
+    floors.map((f) => [f.id, f.name, f.level, f.elevation, f.area, f.x, f.z, f.rotation ?? 0, f.width, f.depth, f.building ?? 'A', f.mezzanine ? 'true' : 'false'])),
   rows('nav_nodes', ['id', 'floor_id', 'x', 'z'], nodes.map((n) => [n.id, n.floorId, n.x, n.z])),
   rows('nav_edges', ['from_node_id', 'to_node_id', 'mode'], edges.map((e) => [e.from, e.to, e.mode])),
   rows('zones', ['id', 'code', 'name', 'floor_id', 'kind', 'x', 'z', 'width', 'depth', 'access_node_id', 'stores'],
@@ -40,7 +40,7 @@ const sql = [
     `insert into public.part_models (part_id, model_code) select id, ${q(m)} from public.parts where part_no = ${q(p.partNo)};`)).join('\n') + '\n',
   rows('zone_rules', ['customer_id', 'part_type', 'zone_id'], ZONE_RULES.map((r) => [r.customerId, r.type ?? undefined, r.zoneId])),
   '-- ช่องเก็บตั้งต้น (Rack = โซน-ช่อง-ชั้น, เต็นท์ = โซน-บล็อก) — แก้เพิ่มได้ในหน้าหลังบ้าน',
-  rows('locations', ['code', 'zone_id', 'kind'], defaultLocations(zones).map((l) => [l.code, l.zoneId, l.kind])),
+  rows('locations', ['code', 'zone_id', 'kind'], layoutLocations(sampleLayout).map((l) => [l.code, l.zoneId, l.kind])),
 ].join('\n')
 
 writeFileSync(new URL('../../supabase/seed.sql', import.meta.url), sql)

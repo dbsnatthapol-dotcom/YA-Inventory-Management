@@ -236,10 +236,10 @@ export function PlanCanvas({ floor, paint, zones, nodes, selectedId, onSelect, o
 
         {/* ทิศทาง */}
         <text x={floor.width / 2} y={floor.depth + 3.2} textAnchor="middle" fontSize={1.4} fill="#475569" fontWeight={600}>
-          ด้านหน้าอาคาร (ฝั่งถนน) ▼
+          {(floor.building ?? 'A') === 'A' ? 'ด้านหน้าอาคาร (ฝั่งถนน) ▼' : 'ด้านหน้า (ฝั่งอาคาร A) ▼'}
         </text>
         <text x={floor.width / 2} y={-2.2} textAnchor="middle" fontSize={1.2} fill="#94a3b8">
-          ด้านหลังอาคาร
+          {(floor.building ?? 'A') === 'A' ? 'ด้านหลังอาคาร' : 'ด้านหลัง (แนวรั้ว)'}
         </text>
         {/* มาตราส่วน 10 ม. */}
         <g transform={`translate(${floor.width - 10}, ${floor.depth + 2})`}>

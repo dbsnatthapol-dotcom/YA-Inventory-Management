@@ -15,6 +15,7 @@ import { MapToolbar } from './components/map/MapToolbar'
 import { PalletCard } from './components/map/PalletCard'
 import { SearchBox } from './components/map/SearchBox'
 import { palletsFor } from './data/warehouse'
+import { buildingOf } from './lib/geometry'
 import { mapStats } from './lib/mapStats'
 import type { SearchHit } from './lib/search'
 import { InventoryPage } from './components/inventory/InventoryPage'
@@ -124,7 +125,11 @@ function FactoryApp() {
       return next
     })
 
-  const buildingFloors = layout.floors.filter((f) => f.area === 'building')
+  // เรียงตามอาคารแล้วตามความสูง (A ชั้น 1-3, F ชั้น 1 / ชั้นลอย / ชั้น 2)
+  const buildingFloors = useMemo(
+    () => layout.floors.filter((f) => f.area === 'building').sort((a, b) => buildingOf(a).localeCompare(buildingOf(b)) || a.elevation - b.elevation),
+    [layout.floors],
+  )
   const zoneStock = useMemo(() => zoneTotals(inventory.state), [inventory.state])
 
   /** เปิดผัง 3D ที่โซนจัดเก็บ (เรียกจากหน้ารับเข้า/สต็อก) */

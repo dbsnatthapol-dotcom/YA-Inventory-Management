@@ -51,7 +51,7 @@ describe('layout edits', () => {
     const layout = applyLayoutEdits(sampleLayout, withPatch(emptyEdits(), 'F1-RK-B', { x: 20, z: 14 }))
     expect(zoneIssues(layout, zoneIn(layout, 'F1-RK-B')).map((i) => i.text)).toContain('ทับกับ RK-A')
     const floor = sampleLayout.floors[0]
-    expect(clampToFloor({ x: 60, z: -3, width: 18, depth: 10 }, floor)).toEqual({ x: 44, z: 0, width: 18, depth: 10 })
+    expect(clampToFloor({ x: 60, z: -3, width: 18, depth: 10 }, floor)).toEqual({ x: floor.width - 18, z: 0, width: 18, depth: 10 })
     expect(rotated({ x: 10, z: 12, width: 18, depth: 10 })).toEqual({ x: 14, z: 8, width: 10, depth: 18 })
   })
 

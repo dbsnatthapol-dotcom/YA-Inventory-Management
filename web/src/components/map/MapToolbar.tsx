@@ -44,7 +44,7 @@ export function MapToolbar(p: Props) {
         <>
           {p.floors.map((f) => (
             <button key={f.id} className={pill(!p.hiddenFloors.has(f.id))} onClick={() => p.onToggleFloor(f.id)} title="แสดง/ซ่อนชั้นนี้">
-              {f.name.replace('อาคาร A ', '')}
+              {f.name.replace('อาคาร ', '')}
             </button>
           ))}
           <label className="flex items-center gap-1.5 whitespace-nowrap px-1 text-xs text-slate-500" title="ระยะห่างระหว่างชั้น">

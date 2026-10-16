@@ -24,6 +24,10 @@ export interface Floor {
   /** ขนาดพื้น (พิกัดภายใน) */
   width: number
   depth: number
+  /** อาคารที่ชั้นนี้อยู่ (ค่าเริ่มต้น 'A') — ชั้นของอาคารเดียวกันใช้โมเดลภายนอกร่วมกัน */
+  building?: string
+  /** ชั้นลอย: พื้นยกบางส่วนระหว่างชั้น (ไม่มีผนัง ไม่นับเป็นชั้นของอาคารภายนอก) */
+  mezzanine?: boolean
 }
 
 export type ZoneKind =

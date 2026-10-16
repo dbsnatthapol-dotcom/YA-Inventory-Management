@@ -1,7 +1,7 @@
 import { sampleLayout } from '../data/factoryLayout'
 import { MODELS, PARTS, ZONE_RULES } from '../inventory/masterData'
 import type { WmsApi } from './api'
-import { defaultLocations } from './locations'
+import { layoutLocations } from './locations'
 import type {
   Grn,
   GrnLine,
@@ -51,7 +51,7 @@ function seed(): DemoDb {
       parts: PARTS.map((p) => ({ partNo: p.partNo, name: p.description, type: p.type, customerId: p.customerId, models: p.models })),
       models: MODELS.map((m) => ({ code: m.code, customerId: m.customerId, requiresInspection: m.requiresInspection })),
       rules: ZONE_RULES.map((r) => ({ customerId: r.customerId, partType: r.type, zoneId: r.zoneId })),
-      locations: defaultLocations(sampleLayout.zones).map((l) => ({ ...l, active: true })),
+      locations: layoutLocations(sampleLayout).map((l) => ({ ...l, active: true })),
       zoneHeads: [],
     },
     // ค่าเริ่มต้นเดียวกับ supabase/migrations/0008_wms_receiving.sql

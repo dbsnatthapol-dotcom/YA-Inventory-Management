@@ -1,6 +1,6 @@
 import type { ThreeEvent } from '@react-three/fiber'
-import { useMemo } from 'react'
-import { DoubleSide, Shape, Vector2 } from 'three'
+import { useLayoutEffect, useMemo, useRef } from 'react'
+import { DoubleSide, type InstancedMesh, Object3D, Shape, Vector2 } from 'three'
 import { BRAND, MATERIAL } from '../../data/brand'
 import { companySign, concreteSlab, corrugated, roadSurface, thaiFlag, tiled, windowBay } from './textures'
 
@@ -45,7 +45,7 @@ export function Warehouse({ width, depth, height }: { width: number; depth: numb
 }
 
 /** เต็นท์โครงเหล็กหลังคาจั่วคู่ ด้านข้างเปิดโล่ง (เต็นท์ B) — มุมซ้ายบนที่ (0,0) */
-export function TwinGableTent({ width, depth, onClick }: { width: number; depth: number } & Click) {
+export function TwinGableTent({ width, depth, contents = 'pallets', onClick }: { width: number; depth: number; contents?: 'pallets' | 'tyres' } & Click) {
   const bays = 2
   const bayW = width / bays
   const eave = 6
@@ -72,37 +72,89 @@ export function TwinGableTent({ width, depth, onClick }: { width: number; depth:
         <planeGeometry args={[width - 1, depth - 1]} />
         <meshStandardMaterial color="#a39c90" />
       </mesh>
-      <Pallets width={width} depth={depth} />
+      {contents === 'tyres' ? <TyreStacks width={width} depth={depth} /> : <Pallets width={width} depth={depth} />}
     </group>
   )
 }
 
-/** เต็นท์ผ้าใบทรงโค้ง (เต็นท์ C) — มุมซ้ายบนที่ (0,0) */
-export function ArchTent({ width, depth, onClick }: { width: number; depth: number } & Click) {
+/** ความสูงเต็นท์โค้งทุกหลัง (ให้มองเทียบกันได้) */
+const ARCH_TENT_HEIGHT = 8.5
+const BASE_WALL = 1.2
+
+/**
+ * เต็นท์ผ้าใบทรงโค้ง (เต็นท์ C, D, เต็นท์ยาง) — มุมซ้ายบนที่ (0,0)
+ * สูงเท่ากันทุกหลัง: เต็นท์แคบโค้งเตี้ยลงแล้วยกผนังผ้าใบด้านข้างขึ้นแทน
+ * contents = ของที่เก็บข้างใน (ยาง = กองยางวางซ้อน)
+ */
+export function ArchTent({ width, depth, contents = 'pallets', onClick }: { width: number; depth: number; contents?: 'pallets' | 'tyres' } & Click) {
   // โค้งพาดด้านแคบเสมอ: ถ้ากว้างกว่ายาว หมุน 90° แล้ววาดด้วยขนาดสลับกัน
   if (width > depth)
     return (
       <group position={[width, 0, 0]} rotation={[0, -Math.PI / 2, 0]}>
-        <ArchTent width={depth} depth={width} onClick={onClick} />
+        <ArchTent width={depth} depth={width} contents={contents} onClick={onClick} />
       </group>
     )
   const r = width / 2
-  const height = Math.min(8.5, 1.2 + r * 1.4)
+  const rise = Math.min(ARCH_TENT_HEIGHT - BASE_WALL, r * 1.4)
+  const wall = ARCH_TENT_HEIGHT - rise
   return (
     <group onClick={onClick} {...pointer}>
-      <mesh position={[r, 1.2, depth / 2]} rotation={[Math.PI / 2, 0, 0]} scale={[1, 1, (height - 1.2) / r]} castShadow receiveShadow>
+      <mesh position={[r, wall, depth / 2]} rotation={[Math.PI / 2, 0, 0]} scale={[1, 1, rise / r]} castShadow receiveShadow>
         <cylinderGeometry args={[r, r, depth, 40, 1, true, Math.PI / 2, Math.PI]} />
         <meshStandardMaterial color={MATERIAL.tentDark} side={DoubleSide} roughness={0.85} />
       </mesh>
-      {/* ผนังฐานเตี้ย */}
+      {/* ผนังฐานเตี้ย + ผนังผ้าใบด้านข้าง (เต็นท์แคบ) */}
       {[0.15, width - 0.15].map((x) => (
-        <mesh key={x} position={[x, 0.6, depth / 2]} castShadow>
-          <boxGeometry args={[0.3, 1.2, depth]} />
-          <meshStandardMaterial color="#8a8f99" />
-        </mesh>
+        <group key={x}>
+          <mesh position={[x, BASE_WALL / 2, depth / 2]} castShadow>
+            <boxGeometry args={[0.3, BASE_WALL, depth]} />
+            <meshStandardMaterial color="#8a8f99" />
+          </mesh>
+          {wall > BASE_WALL + 0.1 && (
+            <mesh position={[x, (BASE_WALL + wall) / 2, depth / 2]} rotation={[0, Math.PI / 2, 0]} castShadow receiveShadow>
+              <planeGeometry args={[depth, wall - BASE_WALL]} />
+              <meshStandardMaterial color={MATERIAL.tentDark} side={DoubleSide} roughness={0.85} />
+            </mesh>
+          )}
+        </group>
       ))}
-      <Pallets width={width} depth={depth} />
+      {contents === 'tyres' ? <TyreStacks width={width} depth={depth} /> : <Pallets width={width} depth={depth} />}
     </group>
+  )
+}
+
+/** กองยางวางซ้อนสองแถวเว้นทางเดินกลาง (เต็นท์ยาง) */
+function TyreStacks({ width, depth }: { width: number; depth: number }) {
+  const ref = useRef<InstancedMesh>(null)
+  const tyres = useMemo(() => {
+    const list: [number, number, number][] = []
+    const rand = seededRandom(Math.round(width * 13 + depth * 7))
+    const rows = width >= 5 ? [1.2, width - 1.2] : [width / 2]
+    for (const x of rows)
+      for (let z = 1.2; z < depth - 0.8; z += 0.85) {
+        const n = 5 + Math.floor(rand() * 4)
+        for (let k = 0; k < n; k++) list.push([x, 0.12 + k * 0.24, z])
+      }
+    return list
+  }, [width, depth])
+  useLayoutEffect(() => {
+    const mesh = ref.current
+    if (!mesh) return
+    const o = new Object3D()
+    o.rotation.set(Math.PI / 2, 0, 0)
+    tyres.forEach(([x, y, z], i) => {
+      o.position.set(x, y, z)
+      o.updateMatrix()
+      mesh.setMatrixAt(i, o.matrix)
+    })
+    mesh.instanceMatrix.needsUpdate = true
+    mesh.computeBoundingSphere()
+  }, [tyres])
+  return (
+    <instancedMesh key={tyres.length} ref={ref} args={[undefined, undefined, tyres.length]} castShadow receiveShadow>
+      <torusGeometry args={[0.3, 0.11, 10, 24]} />
+      <meshStandardMaterial color="#26282c" roughness={0.9} />
+    </instancedMesh>
   )
 }
 
