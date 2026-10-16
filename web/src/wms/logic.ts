@@ -79,6 +79,8 @@ export const TX_LABEL: Record<Tx['kind'], string> = {
   COUNT: 'ตรวจนับ',
   QI: 'ผล MI3',
   MERGE: 'รวมกล่อง',
+  UNMERGE: 'ยกเลิกการรวม',
+  SPLIT: 'แยกกล่อง',
 }
 
 export function txSummary(t: Tx): string {
@@ -98,5 +100,9 @@ export function txSummary(t: Tx): string {
       return `${t.partNo} ผ่าน ${fmt(t.passQty)} · NG ${fmt(t.ngQty)}`
     case 'MERGE':
       return `รวม ${t.ref ?? ''}`
+    case 'UNMERGE':
+      return `คืนป้ายเดิม ${t.ref ?? ''}`
+    case 'SPLIT':
+      return `→ ${t.docNo ?? ''} · ${t.ref ?? ''}`
   }
 }

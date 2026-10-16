@@ -1,3 +1,4 @@
+import { toSite } from '../lib/geometry'
 import type { FactoryLayout, Floor, Landmark, NavEdge, NavNode, Zone } from '../types/layout'
 
 /**
@@ -8,16 +9,30 @@ import type { FactoryLayout, Floor, Landmark, NavEdge, NavNode, Zone } from '../
  * ยืนยันกับเจ้าของแล้ว: อาคาร A = อาคารหลัก 3 ชั้น, B และ C = เต็นท์เก็บ FG/Component,
  *                   D = เต็นท์ที่ใช้วาง Component เป็นบางครั้ง,
  *                   ทางเดินจากเต็นท์เข้าอาคาร A ใช้ประตูด้านหน้า (ฝั่งถนน)
- * ⚠️ สมมติฐาน (รอยืนยันหน้างาน): ตำแหน่งประตู, บันได, ลิฟต์, rack และไลน์ประกอบภายในอาคาร A
+ *                   อาคาร F = ส่วนต่อด้านหลังของโรงงาน (หลังคาต่อกับ A เดินทะลุได้) สูง 2 ชั้น
+ *                   ชั้น 1 มีชั้นลอยเก็บ part, ชั้นลอยและชั้น 2 ใช้เก็บ part
+ * ⚠️ สมมติฐาน (รอยืนยันหน้างาน): ตำแหน่งประตู, บันได, ลิฟต์, rack และไลน์ประกอบภายในอาคาร A,
+ *                              ขนาด/ตำแหน่งชั้นลอย (ตั้งไว้ครึ่งด้านตะวันออกของอาคาร F สูงกึ่งกลางชั้น)
  *
  * พิกัด site: x = ไปทางขวาของภาพดาวเทียม, z = ลงล่าง (ไปทางถนน)
  */
 
 const FLOOR_HEIGHT = 4.5
 
-// อาคาร A: จุดมุมหลังซ้าย (ฝั่งทิศเหนือ) วางเอียงตามแนวที่ดิน ~12°
-// พิกัดภายใน: x = ความกว้าง 62 ม. (ซ้าย→ขวา), z = ความยาว 98 ม. (ด้านหลัง→ด้านหน้าติดถนน)
-const BUILDING_A = { x: 100, z: 19, rotation: 12, width: 62, depth: 98 }
+// อาคาร A: จุดมุมหลังซ้าย (ฝั่งทิศเหนือ) วางเอียงตามแนวที่ดิน 13.5°
+// พิกัดภายใน: x = ความกว้าง 60 ม. (ซ้าย→ขวา), z = ความยาว 98 ม. (ด้านหลัง→ด้านหน้าติดถนน)
+// ขนาด/มุมคำนวณให้ใกล้ภาพดาวเทียมที่สุดโดยหลังคา (ชายคา 1.2 ม.) ไม่เลยรั้วด้านขวา
+const BUILDING_A = { x: 102.5, z: 16, rotation: 13.5, width: 60, depth: 98, building: 'A' }
+
+// อาคาร F: แถบยาวด้านหลังอาคาร A ไปจนสุดที่ดินทางขวา (มุมหลังซ้าย, เอียง 2° ตามแนวรั้วด้านหลัง)
+// พิกัดภายใน: x = ความยาว 87 ม. (ซ้าย→ขวา), z = ความลึก 11.5 ม. (รั้วหลัง→ฝั่งอาคาร A)
+// ขนาดคำนวณให้หลังคา (ชายคา 1.2 ม.) ไม่เลยรั้ว และไม่ทับอาคาร A (ช่องว่างระหว่างอาคาร = ส่วนเชื่อมหลังคา)
+const BUILDING_F = { x: 130.5, z: 10.25, rotation: 2, width: 87, depth: 11.5, building: 'F' }
+/** ชั้นลอยเริ่มที่ x นี้ของอาคาร F ยาวไปจนสุดอาคาร (ครึ่งด้านตะวันออก) */
+const MEZZ_START = 44
+const round2 = (v: number) => Math.round(v * 100) / 100
+const [mezzX, mezzZ] = toSite(BUILDING_F, MEZZ_START, 0).map(round2)
+const MEZZANINE = { x: mezzX, z: mezzZ, rotation: BUILDING_F.rotation, width: BUILDING_F.width - MEZZ_START, depth: BUILDING_F.depth, building: 'F', mezzanine: true }
 
 // กริดทางเดินภายในอาคาร A (พิกัดภายใน)
 const AISLE_COLS = [6, 18, 31, 44, 56]
@@ -27,6 +42,9 @@ const floors: Floor[] = [
   { id: 'F1', name: 'อาคาร A ชั้น 1', level: 1, elevation: 0, area: 'building', ...BUILDING_A },
   { id: 'F2', name: 'อาคาร A ชั้น 2', level: 2, elevation: FLOOR_HEIGHT, area: 'building', ...BUILDING_A },
   { id: 'F3', name: 'อาคาร A ชั้น 3', level: 3, elevation: FLOOR_HEIGHT * 2, area: 'building', ...BUILDING_A },
+  { id: 'FB1', name: 'อาคาร F ชั้น 1', level: 1, elevation: 0, area: 'building', ...BUILDING_F },
+  { id: 'FBM', name: 'อาคาร F ชั้นลอย', level: 1, elevation: FLOOR_HEIGHT / 2, area: 'building', ...MEZZANINE },
+  { id: 'FB2', name: 'อาคาร F ชั้น 2', level: 2, elevation: FLOOR_HEIGHT, area: 'building', ...BUILDING_F },
   { id: 'YARD', name: 'ลานนอกอาคาร', level: 1, elevation: 0, area: 'yard', x: 0, z: 0, width: 225, depth: 165 },
 ]
 
@@ -44,7 +62,7 @@ function buildFloorGrid(floorId: string): { nodes: NavNode[]; edges: NavEdge[] }
   )
   // สมมติ: บันไดอยู่ด้านหน้าซ้ายใกล้ประตู, ลิฟต์ขนของอยู่กลางอาคารฝั่งขวา
   nodes.push({ id: `${floorId}-ST`, floorId, x: 2, z: 92 })
-  nodes.push({ id: `${floorId}-LF`, floorId, x: 59, z: 44 })
+  nodes.push({ id: `${floorId}-LF`, floorId, x: 57, z: 44 })
   edges.push({ from: `${floorId}-ST`, to: node(floorId, 5, 0), mode: 'walk' })
   edges.push({ from: `${floorId}-LF`, to: node(floorId, 2, 4), mode: 'walk' })
   return { nodes, edges }
@@ -52,6 +70,37 @@ function buildFloorGrid(floorId: string): { nodes: NavNode[]; edges: NavEdge[] }
 
 const buildingFloors = ['F1', 'F2', 'F3']
 const grids = buildingFloors.map(buildFloorGrid)
+
+// อาคาร F: ทางเดินหลักแนวยาวกลางอาคาร (z = 5.5)
+const F_AISLE_Z = 5.5
+const F_COLS = [4, 16, 28, 40, 52, 64, 76, 84]
+const MEZZ_COLS = [2, 12, 22, 32, 42]
+function buildLineGrid(floorId: string, cols: number[]): { nodes: NavNode[]; edges: NavEdge[] } {
+  const nodes = cols.map((x, c) => ({ id: node(floorId, 0, c), floorId, x, z: F_AISLE_Z }))
+  const edges = cols.slice(1).map((_, c): NavEdge => ({ from: node(floorId, 0, c), to: node(floorId, 0, c + 1), mode: 'walk' }))
+  return { nodes, edges }
+}
+const fGrids = [buildLineGrid('FB1', F_COLS), buildLineGrid('FBM', MEZZ_COLS), buildLineGrid('FB2', F_COLS)]
+
+// ทางเชื่อม A ↔ F (หลังคาต่อกัน เดินทะลุได้ทั้งชั้น 1 และ 2) และบันไดขึ้นชั้นลอย
+const fLinkNodes: NavNode[] = [
+  ...['1', '2'].flatMap((n): NavNode[] => [
+    { id: `F${n}-BK`, floorId: `F${n}`, x: 31, z: 1 }, // ประตูหลังอาคาร A
+    { id: `FB${n}-FR`, floorId: `FB${n}`, x: 2.5, z: 10.5 }, // ประตูหน้าอาคาร F ฝั่ง A
+  ]),
+  { id: 'FB1-ST', floorId: 'FB1', x: 45.75, z: 10.5 }, // ตีนบันไดชั้นลอย
+  { id: 'FBM-ST', floorId: 'FBM', x: 1.75, z: 6.6 }, // หัวบันไดบนชั้นลอย
+]
+const fLinkEdges: NavEdge[] = [
+  ...['1', '2'].flatMap((n): NavEdge[] => [
+    { from: node(`F${n}`, 0, 2), to: `F${n}-BK`, mode: 'walk' },
+    { from: `F${n}-BK`, to: `FB${n}-FR`, mode: 'walk' },
+    { from: `FB${n}-FR`, to: node(`FB${n}`, 0, 0), mode: 'walk' },
+  ]),
+  { from: node('FB1', 0, 3), to: 'FB1-ST', mode: 'walk' },
+  { from: 'FB1-ST', to: 'FBM-ST', mode: 'stairs' },
+  { from: 'FBM-ST', to: node('FBM', 0, 0), mode: 'walk' },
+]
 
 const verticalEdges: NavEdge[] = [
   { from: 'F1-ST', to: 'F2-ST', mode: 'stairs' },
@@ -87,7 +136,7 @@ const yardEdges: NavEdge[] = [
 
 const coreZones: Zone[] = buildingFloors.flatMap((f) => [
   { id: `${f}-STAIRS`, code: `${f}-STAIRS`, name: 'บันได', floorId: f, kind: 'stairs', x: 0, z: 87, width: 4, depth: 10, accessNodeId: `${f}-ST` },
-  { id: `${f}-LIFT`, code: `${f}-LIFT`, name: 'ลิฟต์ขนของ', floorId: f, kind: 'lift', x: 58, z: 40, width: 4, depth: 8, accessNodeId: `${f}-LF` },
+  { id: `${f}-LIFT`, code: `${f}-LIFT`, name: 'ลิฟต์ขนของ', floorId: f, kind: 'lift', x: 56, z: 40, width: 4, depth: 8, accessNodeId: `${f}-LF` },
 ])
 
 const zones: Zone[] = [
@@ -108,6 +157,16 @@ const zones: Zone[] = [
   // ชั้น 3 — ไลน์ประกอบวงล้อ
   { id: 'F3-RK-F', code: 'RK-F', name: 'Rack F', floorId: 'F3', kind: 'storage', x: 10, z: 30, width: 18, depth: 10, accessNodeId: node('F3', 1, 1), stores: ['Component'] },
   { id: 'F3-ASM', code: 'ASM-W3', name: 'ไลน์ประกอบวงล้อ ชั้น 3', floorId: 'F3', kind: 'assembly', x: 30, z: 66, width: 24, depth: 10, accessNodeId: node('F3', 3, 3) },
+  // อาคาร F ชั้น 1 — บันไดขึ้นชั้นลอย (ใต้ขอบชั้นลอย)
+  { id: 'FB1-STAIRS', code: 'FB1-STAIRS', name: 'บันไดขึ้นชั้นลอย', floorId: 'FB1', kind: 'stairs', x: 44, z: 7, width: 3.5, depth: 4, accessNodeId: 'FB1-ST' },
+  // อาคาร F ชั้นลอย — ชั้นวาง part (ชั้นวางเตี้ยตามระยะถึงพื้นชั้น 2) · พิกัดชั้นลอย
+  { id: 'FBM-RK-G', code: 'RK-G', name: 'Rack G (ชั้นลอย F)', floorId: 'FBM', kind: 'storage', x: 1, z: 0.4, width: 41, depth: 3.4, accessNodeId: node('FBM', 0, 2), stores: ['Component'] },
+  { id: 'FBM-RK-H', code: 'RK-H', name: 'Rack H (ชั้นลอย F)', floorId: 'FBM', kind: 'storage', x: 4.5, z: 7.2, width: 38.5, depth: 3.4, accessNodeId: node('FBM', 0, 2), stores: ['Component'] },
+  // อาคาร F ชั้น 2 — ชั้นวาง part
+  { id: 'FB2-RK-J', code: 'RK-J', name: 'Rack J (อาคาร F ชั้น 2)', floorId: 'FB2', kind: 'storage', x: 2, z: 0.4, width: 40, depth: 3.4, accessNodeId: node('FB2', 0, 2), stores: ['Component'] },
+  { id: 'FB2-RK-K', code: 'RK-K', name: 'Rack K (อาคาร F ชั้น 2)', floorId: 'FB2', kind: 'storage', x: 46, z: 0.4, width: 40, depth: 3.4, accessNodeId: node('FB2', 0, 5), stores: ['Component'] },
+  { id: 'FB2-RK-L', code: 'RK-L', name: 'Rack L (อาคาร F ชั้น 2)', floorId: 'FB2', kind: 'storage', x: 8, z: 7.2, width: 34, depth: 3.4, accessNodeId: node('FB2', 0, 2), stores: ['Component'] },
+  { id: 'FB2-RK-M', code: 'RK-M', name: 'Rack M (อาคาร F ชั้น 2)', floorId: 'FB2', kind: 'storage', x: 46, z: 7.2, width: 40, depth: 3.4, accessNodeId: node('FB2', 0, 5), stores: ['Component'] },
   // ลานนอก — เต็นท์ (พิกัด site)
   { id: 'TENT-B', code: 'TENT-B', name: 'เต็นท์ B', floorId: 'YARD', kind: 'tent', x: 36, z: 23, width: 31, depth: 25, accessNodeId: 'Y-B', stores: ['FG', 'Component'] },
   { id: 'TENT-C', code: 'TENT-C', name: 'เต็นท์ C', floorId: 'YARD', kind: 'tent', x: 27, z: 49, width: 29, depth: 30, accessNodeId: 'Y-C', stores: ['FG', 'Component'] },
@@ -131,7 +190,6 @@ const landmarks: Landmark[] = [
   // G = ลานรถส่งของ: ที่จอดรถมีหลังคา 1 แถวติดรั้วฝั่งถนน ที่เหลือเป็นที่กลับรถ/จอดส่งของ (รูปร่างจริงอยู่ใน siteAppearance.TRUCK_YARD)
   { id: 'G', name: 'ลานรถส่งของ (G)', kind: 'parking', x: 50, z: 95, width: 60, depth: 22, rotation: 4, height: 0 },
   { id: 'G-CARPORT', name: 'ที่จอดรถมีหลังคา', kind: 'carport', x: 38.8, z: 103.4, width: 50, depth: 5.5, rotation: 30.2, height: 3 },
-  { id: 'F', name: 'อาคาร F (2 ชั้น)', kind: 'building', x: 174, z: 21, width: 92, depth: 14, rotation: 6, height: 8 },
   { id: 'ROAD', name: 'ถ.ปู่เจ้าสมิงพราย', kind: 'road', x: 55.4, z: 140.3, width: 260, depth: 35, rotation: 30.2, height: 0.05 },
 ]
 
@@ -140,6 +198,6 @@ export const sampleLayout: FactoryLayout = {
   site: { boundary, landmarks },
   floors,
   zones,
-  nodes: [...grids.flatMap((g) => g.nodes), ...yardNodes],
-  edges: [...grids.flatMap((g) => g.edges), ...verticalEdges, ...yardEdges],
+  nodes: [...grids.flatMap((g) => g.nodes), ...fGrids.flatMap((g) => g.nodes), ...fLinkNodes, ...yardNodes],
+  edges: [...grids.flatMap((g) => g.edges), ...fGrids.flatMap((g) => g.edges), ...fLinkEdges, ...verticalEdges, ...yardEdges],
 }

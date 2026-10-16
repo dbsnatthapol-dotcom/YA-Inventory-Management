@@ -1,5 +1,6 @@
 import { BRAND } from '../../data/brand'
-import { palletsFor, planRack } from '../../data/warehouse'
+import { palletsFor, planRack, rackSpec } from '../../data/warehouse'
+import { zoneClearance } from '../../lib/geometry'
 import type { ZoneContents } from '../../inventory/reports'
 import { clampToFloor, rotated, zoneIssues, type ZonePatch } from '../../lib/layoutEdit'
 import type { FactoryLayout, Zone } from '../../types/layout'
@@ -45,7 +46,7 @@ export function ZoneForm({ zone, layout, stock, onUpdate, onRemove }: { zone: Zo
     </label>
   )
 
-  const plan = zone.kind === 'storage' ? planRack(zone.width, zone.depth) : null
+  const plan = zone.kind === 'storage' ? planRack(zone.width, zone.depth, rackSpec(zoneClearance(layout.floors, zone)).levels) : null
   const pallets = plan ? palletsFor(stock).length : 0
 
   return (

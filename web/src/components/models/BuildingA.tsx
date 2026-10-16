@@ -9,19 +9,23 @@ interface Props {
   depth: number
   floors: number
   floorHeight: number
+  /** กันสาด + พื้น epoxy หน้าอาคาร และป้ายชื่อบริษัท (อาคารหลักเท่านั้น) */
+  frontage?: boolean
+  /** ความสูงหลังคาจั่ว */
+  roofRise?: number
   onClick?: (e: ThreeEvent<MouseEvent>) => void
 }
 
 const BAY = 6 // ความกว้างช่วงผนัง/หน้าต่าง (ม.)
-const ROOF_RISE = 5
 const OVERHANG = 1.2
 
 /**
- * อาคารหลัก A (ภายนอก): ผนังเมทัลชีทสีครีม + หน้าต่างบานยาว, แถบสีฟ้าเหล็กคั่นแต่ละชั้น,
+ * อาคารโรงงาน (ภายนอก) — อาคาร A และส่วนต่ออาคาร F (frontage = false)
+ * อาคารหลัก A: ผนังเมทัลชีทสีครีม + หน้าต่างบานยาว, แถบสีฟ้าเหล็กคั่นแต่ละชั้น,
  * ชั้นล่างผนังปูนสีขาว, หลังคาจั่วสีน้ำตาลสนิมพร้อมแนวแผ่นโปร่งแสง, ป้ายชื่อบริษัทด้านหน้า (ฝั่งถนน)
  * พิกัดภายใน: x = 0..width, z = 0..depth, ด้านหน้าอยู่ที่ z = depth
  */
-export function BuildingA({ width: W, depth: D, floors, floorHeight: H, onClick }: Props) {
+export function BuildingA({ width: W, depth: D, floors, floorHeight: H, frontage = true, roofRise: ROOF_RISE = 5, onClick }: Props) {
   const top = floors * H
   const slopeAngle = Math.atan(ROOF_RISE / (W / 2))
   const slopeLen = Math.hypot(W / 2 + OVERHANG, ROOF_RISE + OVERHANG * Math.tan(slopeAngle))
@@ -49,8 +53,8 @@ export function BuildingA({ width: W, depth: D, floors, floorHeight: H, onClick 
     s.lineTo(W / 2, ROOF_RISE)
     s.closePath()
     return s
-  }, [W])
-  const gableMap = useMemo(() => tiled(corrugated(BRAND.siding), W, ROOF_RISE), [W])
+  }, [W, ROOF_RISE])
+  const gableMap = useMemo(() => tiled(corrugated(BRAND.siding), W, ROOF_RISE), [W, ROOF_RISE])
   const roofMap = useMemo(() => tiled(corrugated(BRAND.roofBlue, false), 1, D), [D])
 
   return (
@@ -76,32 +80,36 @@ export function BuildingA({ width: W, depth: D, floors, floorHeight: H, onClick 
       ))}
 
       {/* กันสาดหน้าอาคารชั้นล่าง + เสาสีขาว (ตามภาพหน้าโรงงาน) */}
-      <mesh position={[W / 2, 3.3, D + 1.6]} castShadow>
-        <boxGeometry args={[W, 0.25, 3.2]} />
-        <meshStandardMaterial color={BRAND.roofBlue} metalness={0.3} roughness={0.5} />
-      </mesh>
-      {Array.from({ length: Math.floor(W / 10) + 1 }, (_, i) => i * (W / Math.floor(W / 10))).map((x) => (
-        <group key={x} position={[x, 0, D + 3]}>
-          <mesh position={[0, 1.6, 0]} castShadow>
-            <cylinderGeometry args={[0.32, 0.32, 3.2, 16]} />
-            <meshStandardMaterial color={BRAND.white} roughness={0.6} />
+      {frontage && (
+        <>
+          <mesh position={[W / 2, 3.3, D + 1.6]} castShadow>
+            <boxGeometry args={[W, 0.25, 3.2]} />
+            <meshStandardMaterial color={BRAND.roofBlue} metalness={0.3} roughness={0.5} />
           </mesh>
-          <mesh position={[0, 0.3, 0]}>
-            <cylinderGeometry args={[0.36, 0.36, 0.6, 16]} />
-            <meshStandardMaterial color={BRAND.green} />
-          </mesh>
-        </group>
-      ))}
+          {Array.from({ length: Math.floor(W / 10) + 1 }, (_, i) => i * (W / Math.floor(W / 10))).map((x) => (
+            <group key={x} position={[x, 0, D + 3]}>
+              <mesh position={[0, 1.6, 0]} castShadow>
+                <cylinderGeometry args={[0.32, 0.32, 3.2, 16]} />
+                <meshStandardMaterial color={BRAND.white} roughness={0.6} />
+              </mesh>
+              <mesh position={[0, 0.3, 0]}>
+                <cylinderGeometry args={[0.36, 0.36, 0.6, 16]} />
+                <meshStandardMaterial color={BRAND.green} />
+              </mesh>
+            </group>
+          ))}
 
-      {/* พื้น epoxy หน้าอาคาร: เขียว พร้อมทางเดินสีเหลือง */}
-      <mesh position={[W / 2, 0.03, D + 3]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[W, 6]} />
-        <meshStandardMaterial color={MATERIAL.epoxyGreen} roughness={0.35} />
-      </mesh>
-      <mesh position={[W / 2, 0.04, D + 5.2]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <planeGeometry args={[W, 1.6]} />
-        <meshStandardMaterial color={BRAND.safetyYellow} roughness={0.35} />
-      </mesh>
+          {/* พื้น epoxy หน้าอาคาร: เขียว พร้อมทางเดินสีเหลือง */}
+          <mesh position={[W / 2, 0.03, D + 3]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+            <planeGeometry args={[W, 6]} />
+            <meshStandardMaterial color={MATERIAL.epoxyGreen} roughness={0.35} />
+          </mesh>
+          <mesh position={[W / 2, 0.04, D + 5.2]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+            <planeGeometry args={[W, 1.6]} />
+            <meshStandardMaterial color={BRAND.safetyYellow} roughness={0.35} />
+          </mesh>
+        </>
+      )}
 
       {/* หน้าจั่ว */}
       {[0, D].map((z) => (
@@ -141,10 +149,12 @@ export function BuildingA({ width: W, depth: D, floors, floorHeight: H, onClick 
       </mesh>
 
       {/* ป้ายชื่อบริษัท ชั้นบนสุดด้านหน้า */}
-      <mesh position={[W / 2, top - H / 2 - 0.2, D + 0.06]}>
-        <planeGeometry args={[34, 4.25]} />
-        <meshStandardMaterial map={companySign()} roughness={0.6} />
-      </mesh>
+      {frontage && (
+        <mesh position={[W / 2, top - H / 2 - 0.2, D + 0.06]}>
+          <planeGeometry args={[34, 4.25]} />
+          <meshStandardMaterial map={companySign()} roughness={0.6} />
+        </mesh>
+      )}
     </group>
   )
 }

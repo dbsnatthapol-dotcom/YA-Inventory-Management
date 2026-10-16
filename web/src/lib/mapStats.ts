@@ -1,4 +1,5 @@
-import { palletsFor, planRack } from '../data/warehouse'
+import { palletsFor, planRack, rackSpec } from '../data/warehouse'
+import { zoneClearance } from './geometry'
 import { bucketBalance } from '../inventory/ledger'
 import { dashboardSummary, type ZoneContents } from '../inventory/reports'
 import type { InventoryState } from '../inventory/types'
@@ -28,7 +29,7 @@ export function mapStats(layout: FactoryLayout, state: InventoryState, stock: Ma
     const n = palletsFor(stock.get(zone.id)).length
     pallets += n
     if (zone.kind !== 'storage') continue
-    const capacity = planRack(zone.width, zone.depth).slots.length
+    const capacity = planRack(zone.width, zone.depth, rackSpec(zoneClearance(layout.floors, zone)).levels).slots.length
     slots += capacity
     usedSlots += Math.min(n, capacity)
   }

@@ -101,7 +101,7 @@ export function LayoutEditorPage({ layout, baseLayout, api, stock, onOpen3D }: P
       <aside className="flex shrink-0 flex-col gap-3 lg:w-60">
         <section className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
           <h2 className="mb-2 text-sm font-bold" style={{ color: BRAND.primary }}>
-            เพิ่มลงใน{floor.name.replace('อาคาร ', '')}
+            เพิ่มลงใน {floor.name.replace('อาคาร ', '')}
           </h2>
           <div className="grid grid-cols-2 gap-1.5 lg:grid-cols-1">
             {ADDABLE.map((a) => (
@@ -143,7 +143,7 @@ export function LayoutEditorPage({ layout, baseLayout, api, stock, onOpen3D }: P
                 className={`rounded-md px-3 py-1 text-sm transition ${f.id === floor.id ? 'font-semibold text-white' : 'text-slate-600 hover:bg-slate-50'}`}
                 style={f.id === floor.id ? { background: BRAND.primary } : undefined}
               >
-                {f.name.replace('อาคาร A ', '')}
+                {f.name.replace('อาคาร ', '')}
               </button>
             ))}
           </div>

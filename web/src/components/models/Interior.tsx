@@ -159,6 +159,47 @@ export function CutawayWalls({ width, depth, gaps }: { width: number; depth: num
   )
 }
 
+/**
+ * ขอบชั้นลอย: ราวกันตกสีเหลืองรอบพื้น (เว้นช่องหัวบันไดด้านหน้า) + เสาเหล็กรับพื้นลงไปถึงชั้นล่าง
+ * drop = ระยะจากพื้นชั้นลอยลงไปถึงพื้นชั้นล่างในฉาก
+ */
+export function MezzanineEdge({ width, depth, drop, gaps }: { width: number; depth: number; drop: number; gaps: [number, number][] }) {
+  const { rails, posts } = useMemo(() => {
+    const rails: Box[] = []
+    const posts: Box[] = []
+    const run = (from: number, to: number, at: (u: number) => [number, number], alongX: boolean) => {
+      const len = to - from
+      if (len < 0.2) return
+      const [cx, cz] = at((from + to) / 2)
+      for (const y of [0.55, 1.1]) rails.push({ p: [cx, y, cz], s: alongX ? [len, 0.05, 0.05] : [0.05, 0.05, len] })
+      const step = len / Math.ceil(len / 2)
+      for (let u = from; u <= to + 1e-6; u += step) {
+        const [x, z] = at(u)
+        rails.push({ p: [x, 0.55, z], s: [0.05, 1.1, 0.05] })
+      }
+    }
+    run(0, width, (u) => [u, 0.05], true)
+    run(0, depth, (u) => [0.05, u], false)
+    run(0, depth, (u) => [width - 0.05, u], false)
+    let from = 0
+    for (const [a, b] of [...[...gaps].sort((p, q) => p[0] - q[0]), [width, width] as [number, number]]) {
+      run(from, a, (u) => [u, depth - 0.05], true)
+      from = Math.max(from, b)
+    }
+    // เสารับพื้นทุก ~6 ม. ตามแนวขอบ + คานขอบใต้พื้น
+    const n = Math.max(1, Math.round(width / 6))
+    for (let i = 0; i <= n; i++) for (const z of [0.15, depth - 0.15]) posts.push({ p: [0.15 + ((width - 0.3) * i) / n, -drop / 2, z], s: [0.16, drop, 0.16] })
+    for (const z of [0.08, depth - 0.08]) posts.push({ p: [width / 2, -0.15, z], s: [width, 0.3, 0.16] })
+    return { rails, posts }
+  }, [width, depth, drop, gaps])
+  return (
+    <group>
+      <InstancedBoxes boxes={rails} color="#f2c200" metalness={0.2} roughness={0.5} castShadow={false} />
+      <InstancedBoxes boxes={posts} color={STEEL} metalness={0.5} roughness={0.4} />
+    </group>
+  )
+}
+
 /** เส้นกรอบพื้นที่บนพื้น (สีตามมาตรฐาน 5S) */
 export function ZoneOutline({ width, depth, color, thickness = 0.12, y = 0.02 }: { width: number; depth: number; color: string; thickness?: number; y?: number }) {
   const t = thickness
@@ -217,18 +258,23 @@ export const PalletRack = memo(function PalletRack({
   stock,
   highlightLot,
   selectedIndex,
+  levels = RACK.levels,
+  height = RACK.height,
 }: {
   zoneId: string
   width: number
   depth: number
   code: string
+  /** ระดับชั้นวาง/ความสูง rack (ใต้หรือบนชั้นลอยเตี้ยกว่าปกติ) */
+  levels?: readonly number[]
+  height?: number
   stock?: ZoneContents
   /** lot ที่ค้นหาเจอ — ไฮไลต์ทุกพาเลทของ lot นี้ */
   highlightLot?: string | null
   /** พาเลทที่กำลังดูรายละเอียด (ลำดับใน palletsFor) */
   selectedIndex?: number | null
 }) {
-  const plan = useMemo(() => planRack(width, depth), [width, depth])
+  const plan = useMemo(() => planRack(width, depth, levels), [width, depth, levels])
   const pallets = useMemo(() => palletsFor(stock), [stock])
   const { frame, beams, guards, bases, loads } = useMemo(() => {
     const frame: Box[] = []
@@ -240,14 +286,14 @@ export const PalletRack = memo(function PalletRack({
       const faces = [row.offset + 0.05, row.offset + rowDepth - 0.05]
       for (let b = 0; b <= bays; b++) {
         const u = plan.start + b * RACK.bayLength
-        for (const v of faces) frame.push({ p: [u, RACK.height / 2, v], s: [0.09, RACK.height, 0.09] })
-        if (row.units === 2) frame.push({ p: [u, RACK.height / 2, row.offset + rowDepth / 2], s: [0.09, RACK.height, 0.09] })
+        for (const v of faces) frame.push({ p: [u, height / 2, v], s: [0.09, height, 0.09] })
+        if (row.units === 2) frame.push({ p: [u, height / 2, row.offset + rowDepth / 2], s: [0.09, height, 0.09] })
         // ค้ำยันแนวลึก
-        for (const y of [0.4, 2.0, 3.6]) frame.push({ p: [u, y, row.offset + rowDepth / 2], s: [0.05, 0.05, rowDepth - 0.1] })
+        for (const y of [0.4, 2.0, 3.6].filter((y) => y < height - 0.2)) frame.push({ p: [u, y, row.offset + rowDepth / 2], s: [0.05, 0.05, rowDepth - 0.1] })
       }
       for (let b = 0; b < bays; b++) {
         const u = plan.start + (b + 0.5) * RACK.bayLength
-        for (const y of [...RACK.levels.slice(1).map((l) => l - 0.07), RACK.height - 0.1])
+        for (const y of [...levels.slice(1).map((l) => l - 0.07), height - 0.1])
           for (const v of faces) beams.push({ p: [u, y, v], s: [RACK.bayLength - 0.1, 0.12, 0.06] })
       }
       // กันชนสีเหลืองที่หัว-ท้ายแถว
@@ -274,7 +320,7 @@ export const PalletRack = memo(function PalletRack({
       }
     })
     return { frame, beams, guards, bases, loads }
-  }, [plan, pallets])
+  }, [plan, pallets, height, levels])
 
   const marks = useMemo(() => {
     const lot: Box[] = []
@@ -305,7 +351,7 @@ export const PalletRack = memo(function PalletRack({
               key={i}
               text={`${code}-${i + 1}`}
               width={1.6}
-              position={[plan.start - 0.05, RACK.height + 0.35, row.offset + (row.units * RACK.singleDepth) / 2]}
+              position={[plan.start - 0.05, height < RACK.height ? height - 0.3 : height + 0.35, row.offset + (row.units * RACK.singleDepth) / 2]}
               background={UPRIGHT}
             />
           ))}

@@ -19,6 +19,14 @@ export const RACK = {
   palletLoadHeight: 1.0,
 } as const
 
+/** ระดับชั้นวางและความสูง rack ตามระยะถึงเพดาน — ใต้/บนชั้นลอยใช้ชั้นวางเตี้ยห่างกันชั้นละ 0.95 ม. */
+export function rackSpec(clearance = Infinity): { levels: number[]; height: number } {
+  if (clearance >= RACK.height + 0.2) return { levels: [...RACK.levels], height: RACK.height }
+  const levels: number[] = []
+  for (let y = 0; y + RACK.palletLoadHeight + 0.15 <= clearance - 0.15 + 1e-9; y += 0.95) levels.push(Math.round(y * 100) / 100)
+  return { levels: levels.length ? levels : [0], height: Math.max(1.2, Math.min(RACK.height, clearance - 0.15)) }
+}
+
 /** จำนวนชิ้นต่อพาเลท (สมมติ) — ใช้แปลงยอดคงคลังเป็นจำนวนพาเลทบนชั้นวาง */
 export const PIECES_PER_PALLET: Record<string, number> = {
   RIM: 60,
@@ -72,7 +80,7 @@ export interface RackPlan {
  * จัดวาง rack ในโซน: แถวเดี่ยวชิดขอบ แล้วสลับ ทางเดิน → แถวคู่ ไปเรื่อย ๆ
  * โซน 18 × 10 ม. ⇒ แถวเดี่ยว + ทางเดิน + แถวคู่ + ทางเดิน + แถวเดี่ยว, 6 bay, 3 ระดับ = 144 ช่องพาเลท
  */
-export function planRack(width: number, depth: number): RackPlan {
+export function planRack(width: number, depth: number, levels: readonly number[] = RACK.levels): RackPlan {
   const length = Math.max(width, depth)
   const span = Math.min(width, depth)
   const rows: RackRow[] = []
@@ -98,7 +106,7 @@ export function planRack(width: number, depth: number): RackPlan {
   const bays = Math.max(0, Math.floor((length + 1e-9) / RACK.bayLength))
   const start = (length - bays * RACK.bayLength) / 2
   const slots: RackSlot[] = []
-  for (const y of RACK.levels)
+  for (const y of levels)
     for (const row of rows)
       for (let unit = 0; unit < row.units; unit++)
         for (let b = 0; b < bays; b++)

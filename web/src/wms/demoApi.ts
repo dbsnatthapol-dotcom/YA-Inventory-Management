@@ -1,7 +1,7 @@
 import { sampleLayout } from '../data/factoryLayout'
 import { MODELS, PARTS, ZONE_RULES } from '../inventory/masterData'
 import type { WmsApi } from './api'
-import { defaultLocations } from './locations'
+import { layoutLocations } from './locations'
 import type {
   Grn,
   GrnLine,
@@ -51,7 +51,7 @@ function seed(): DemoDb {
       parts: PARTS.map((p) => ({ partNo: p.partNo, name: p.description, type: p.type, customerId: p.customerId, models: p.models })),
       models: MODELS.map((m) => ({ code: m.code, customerId: m.customerId, requiresInspection: m.requiresInspection })),
       rules: ZONE_RULES.map((r) => ({ customerId: r.customerId, partType: r.type, zoneId: r.zoneId })),
-      locations: defaultLocations(sampleLayout.zones).map((l) => ({ ...l, active: true })),
+      locations: layoutLocations(sampleLayout).map((l) => ({ ...l, active: true })),
       zoneHeads: [],
     },
     // ค่าเริ่มต้นเดียวกับ supabase/migrations/0008_wms_receiving.sql
@@ -236,7 +236,7 @@ export function demoWms(): WmsApi {
       return clone({
         grn,
         lines: db.grnLines.filter((l) => l.grnId === grnId).sort((a, b) => a.lineNo - b.lineNo),
-        lpns: db.lpns.filter((l) => l.grnId === grnId && l.status !== 'merged').sort((a, b) => a.lpnNo.localeCompare(b.lpnNo)),
+        lpns: db.lpns.filter((l) => l.grnId === grnId && l.status !== 'merged' && l.status !== 'void').sort((a, b) => a.lpnNo.localeCompare(b.lpnNo)),
       })
     },
 
@@ -257,13 +257,70 @@ export function demoWms(): WmsApi {
           createdAt: nowIso(),
           items: src.flatMap((l) => l.items),
         }
-        lpn.items.forEach((i) => (i.lpnId = lpn.id))
+        lpn.items.forEach((i) => {
+          i.prevLpnId = i.lpnId
+          i.lpnId = lpn.id
+        })
         src.forEach((l) => {
           l.status = 'merged'
           l.items = []
         })
         db.lpns.push(lpn)
         log({ kind: 'MERGE', docNo: lpn.lpnNo, lpnId: lpn.id, lpnNo: lpn.lpnNo, toLoc: lpn.locationCode, ref: src.map((l) => l.lpnNo).join(', ') })
+        return { lpnId: lpn.id, lpnNo: lpn.lpnNo }
+      }),
+
+    unmergeLpn: (lpnId) =>
+      commit(() => {
+        const box = lpnById(lpnId)
+        if (box.status !== 'active') fail('ป้ายนี้ใช้งานไม่ได้แล้ว (อาจถูกรวมต่อ ใช้หมด หรือยกเลิกไปแล้ว)')
+        const src = db.lpns.filter((l) => l.status === 'merged' && box.items.some((i) => i.prevLpnId === l.id))
+        if (!src.length) fail('กล่องนี้ไม่ได้เกิดจากการรวม · ถ้าจะแบ่งของใช้ "แยกกล่อง"')
+        if (db.tx.some((t) => t.kind !== 'MERGE' && (t.lpnId === lpnId || box.items.some((i) => i.id === t.lpnItemId))))
+          fail('กล่องนี้มีการเคลื่อนไหวหลังรวมแล้ว (ย้าย/เบิก/แก้ยอด/ตรวจ/แยก) ยกเลิกการรวมไม่ได้ · ใช้ "แยกกล่อง" แทน')
+        if (box.items.some((i) => !src.some((l) => l.id === i.prevLpnId))) fail('ไม่พบข้อมูลป้ายเดิมของบางรายการ · ใช้ "แยกกล่อง" แทน')
+        for (const l of src) {
+          l.items = box.items.filter((i) => i.prevLpnId === l.id)
+          l.items.forEach((i) => {
+            i.lpnId = l.id
+            i.prevLpnId = null
+          })
+          l.status = 'active'
+        }
+        box.items = []
+        box.status = 'void'
+        const lpnNos = src.map((l) => l.lpnNo).sort().join(', ')
+        log({ kind: 'UNMERGE', docNo: box.lpnNo, lpnId, lpnNo: box.lpnNo, fromLoc: box.locationCode, ref: lpnNos })
+        return { lpnNos }
+      }),
+
+    splitLpn: (lpnId, picks) =>
+      commit(() => {
+        const box = lpnById(lpnId)
+        if (box.status !== 'active') fail('ไม่พบป้าย หรือป้ายนี้ใช้งานไม่ได้แล้ว')
+        const lpn: Lpn = { id: uid(), lpnNo: nextDoc('LPN'), grnId: box.grnId, locationCode: box.locationCode, hold: box.hold, status: 'active', createdAt: nowIso(), items: [] }
+        for (const p of picks) {
+          if (!(p.qty > 0)) continue
+          const item = box.items.find((i) => i.id === p.itemId) ?? fail('รายการที่เลือกไม่ได้อยู่ในกล่องนี้')
+          if (!Number.isInteger(p.qty)) fail('จำนวนต้องเป็นจำนวนเต็ม')
+          if (p.qty > item.qty) fail(`${item.partNo} มีในกล่องแค่ ${item.qty} ชิ้น`)
+          if (p.qty === item.qty) {
+            box.items = box.items.filter((i) => i !== item)
+            lpn.items.push({ ...item, lpnId: lpn.id, prevLpnId: null })
+          } else {
+            item.qty -= p.qty
+            lpn.items.push({ id: uid(), lpnId: lpn.id, grnLineId: item.grnLineId, partNo: item.partNo, qty: p.qty })
+          }
+        }
+        if (!lpn.items.length) fail('ใส่จำนวนที่จะแยกออกอย่างน้อย 1 รายการ')
+        if (!box.items.some((i) => i.qty > 0)) fail('ต้องเหลือของในกล่องเดิมอย่างน้อย 1 รายการ · ถ้าจะย้ายทั้งกล่องใช้ "ย้ายที่" ในแท็บสแกน')
+        if (box.hold) {
+          const held = (l: Lpn) => l.items.some((i) => i.qty > 0 && db.grnLines.find((g) => g.id === i.grnLineId)?.needsQi)
+          box.hold = held(box)
+          lpn.hold = held(lpn)
+        }
+        db.lpns.push(lpn)
+        log({ kind: 'SPLIT', docNo: lpn.lpnNo, lpnId, lpnNo: box.lpnNo, fromLoc: box.locationCode, toLoc: box.locationCode, ref: lpn.items.map((i) => `${i.partNo} ${i.qty}`).join(', ') })
         return { lpnId: lpn.id, lpnNo: lpn.lpnNo }
       }),
 

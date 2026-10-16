@@ -49,9 +49,9 @@ const toGrnLine = (r: Row): GrnLine => ({
   homeLocation: str(r.home_location),
 })
 
-const toItem = (r: Row): LpnItem => ({ id: String(r.id), lpnId: String(r.lpn_id), grnLineId: String(r.grn_line_id), partNo: String(r.part_no), qty: Number(r.qty) })
+const toItem = (r: Row): LpnItem => ({ id: String(r.id), lpnId: String(r.lpn_id), grnLineId: String(r.grn_line_id), partNo: String(r.part_no), qty: Number(r.qty), prevLpnId: str(r.prev_lpn_id) })
 
-const LPN_SELECT = 'id, lpn_no, grn_id, location_code, hold, status, created_at, lpn_items(id, lpn_id, grn_line_id, part_no, qty)'
+const LPN_SELECT = 'id, lpn_no, grn_id, location_code, hold, status, created_at, lpn_items(id, lpn_id, grn_line_id, part_no, qty, prev_lpn_id)'
 const toLpn = (r: Row): Lpn => ({
   id: String(r.id),
   lpnNo: String(r.lpn_no),
@@ -186,7 +186,7 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
       const [g, lines, lpns] = await Promise.all([
         run(sb.from('grns').select(GRN_SELECT).eq('id', grnId).maybeSingle()),
         run(sb.from('grn_lines').select('*').eq('grn_id', grnId).order('line_no')),
-        run(sb.from('lpns').select(LPN_SELECT).eq('grn_id', grnId).neq('status', 'merged').order('lpn_no')),
+        run(sb.from('lpns').select(LPN_SELECT).eq('grn_id', grnId).not('status', 'in', '(merged,void)').order('lpn_no')),
       ])
       if (!g) return null
       return { grn: toGrn(g as Row), lines: (lines as Row[]).map(toGrnLine), lpns: (lpns as Row[]).map(toLpn) }
@@ -198,6 +198,8 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
     },
 
     mergeLpns: (lpnIds, location) => rpc('merge_lpns', { p_lpn_ids: lpnIds, p_location: location ?? null }),
+    unmergeLpn: (lpnId) => rpc('unmerge_lpn', { p_lpn: lpnId }),
+    splitLpn: (lpnId, items) => rpc('split_lpn', { p_lpn: lpnId, p_items: items }),
 
     async findLpn(lpnNo) {
       const r = await run(sb.from('lpns').select(LPN_SELECT).eq('lpn_no', lpnNo.trim().toUpperCase()).maybeSingle())
