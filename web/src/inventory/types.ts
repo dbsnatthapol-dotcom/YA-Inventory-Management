@@ -36,6 +36,8 @@ export interface Part {
   customerId: string
   /** Model ที่ใช้ part นี้ */
   models: string[]
+  /** revision ในต้นฉบับ (ตัวหลัง /) — ระบบอ้างอิงด้วยเลขฐาน */
+  revision?: string | null
 }
 
 /** ใบรายงาน STOCK ของ Model กลุ่มหนึ่ง (เช่น J1D + J1D4) */

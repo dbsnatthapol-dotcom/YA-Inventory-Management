@@ -10,13 +10,13 @@ const at = '2026-10-14T02:00:00.000Z'
 
 describe('invoice matching', () => {
   it('corrects common OCR confusions (O vs 0) and flags unknown parts', () => {
-    expect(matchPart('RAJ0O550/B')).toMatchObject({ status: 'corrected', part: { partNo: 'RAJ00550/B' } })
-    expect(matchPart('raj00537/b ')).toMatchObject({ status: 'corrected', part: { partNo: 'RAJ00537/B' } })
+    expect(matchPart('RAJ0O550')).toMatchObject({ status: 'corrected', part: { partNo: 'RAJ00550' } })
+    expect(matchPart('raj00537/b ')).toMatchObject({ status: 'exact', part: { partNo: 'RAJ00537' } })
     expect(matchPart('ZZZ99999')).toEqual({ status: 'unknown', part: null })
   })
 
   it('suggests a zone by customer + part type and falls back to the customer default', () => {
-    expect(suggestZone(PARTS.find((p) => p.partNo === 'RAJ00537/B')!)).toBe('F1-RK-C')
+    expect(suggestZone(PARTS.find((p) => p.partNo === 'RAJ00537')!)).toBe('F1-RK-C')
     expect(suggestZone({ ...PARTS[0], type: 'NEW-TYPE' })).toBe('TENT-D')
   })
 
@@ -30,7 +30,7 @@ describe('invoice matching', () => {
 describe('receiving', () => {
   it('puts good qty in BOI, damaged in NG and reports shortages', () => {
     const s = receiveInvoice(emptyState(), { ...base, invoiceNo: 'INV-1', model: 'K1G', receivedAt: at }, [
-      { partNo: 'RAJ00538/B', invoiceQty: 100, countedQty: 95, damagedQty: 5, zoneId: 'F1-RK-A' },
+      { partNo: 'RAJ00538', invoiceQty: 100, countedQty: 95, damagedQty: 5, zoneId: 'F1-RK-A' },
     ])
     expect(bucketBalance(s, 'INV-1#1', 'BOI')).toBe(90)
     expect(bucketBalance(s, 'INV-1#1', 'NG_SUPPLIER')).toBe(5)
@@ -42,7 +42,7 @@ describe('receiving', () => {
 
   it('rejects the same invoice twice', () => {
     const s = receiveInvoice(emptyState(), { ...base, invoiceNo: 'INV-1', model: 'K1G' }, [
-      { partNo: 'RAJ00538/B', invoiceQty: 1, countedQty: 1, damagedQty: 0, zoneId: 'F1-RK-A' },
+      { partNo: 'RAJ00538', invoiceQty: 1, countedQty: 1, damagedQty: 0, zoneId: 'F1-RK-A' },
     ])
     expect(() => receiveInvoice(s, { ...base, invoiceNo: 'INV-1', model: 'K1G' }, [])).toThrow(InventoryError)
   })
@@ -51,7 +51,7 @@ describe('receiving', () => {
 describe('issuing and inspection rules', () => {
   const received = (model: string) =>
     receiveInvoice(emptyState(), { ...base, invoiceNo: 'INV-2', model, receivedAt: at }, [
-      { partNo: '150324/A', invoiceQty: 100, countedQty: 100, damagedQty: 0, zoneId: 'F2-RK-E' },
+      { partNo: '150324', invoiceQty: 100, countedQty: 100, damagedQty: 0, zoneId: 'F2-RK-E' },
     ])
 
   it('lets K1G go straight from BOI to MRA', () => {
@@ -87,24 +87,24 @@ describe('daily stock report', () => {
   it('splits flows by Bangkok day and keeps balances consistent', () => {
     const s = buildDemoState('2026-10-14')
     const rows = dailyStockReport(s, '2026-10-14')
-    const rimFront = rows.find((r) => r.part.partNo === 'RAJ00537/B')!
+    const rimFront = rows.find((r) => r.part.partNo === 'RAJ00537')!
     expect(rimFront).toMatchObject({ invoiceQty: 0, actualReceive: 0, mraIssued: 120, boi: 177, ngCustomer: 2, ngSupplier: 3 })
-    const yesterday = dailyStockReport(s, '2026-10-13').find((r) => r.part.partNo === 'RAJ00537/B')!
+    const yesterday = dailyStockReport(s, '2026-10-13').find((r) => r.part.partNo === 'RAJ00537')!
     expect(yesterday).toMatchObject({ invoiceQty: 300, actualReceive: 297, mraIssued: 0, balance: 297 })
     // ใบรายงาน J1D นับเฉพาะ lot ของ invoice J1D/J1D4
     const j1d = STOCK_SHEETS.find((sh) => sh.id === 'RE-J1D')!
-    const bearingJ1D = dailyStockReport(s, '2026-10-14', j1d).find((r) => r.part.partNo === '150324/A')!
+    const bearingJ1D = dailyStockReport(s, '2026-10-14', j1d).find((r) => r.part.partNo === '150324')!
     expect(bearingJ1D).toMatchObject({ boi: 590, mi3: 0, mraIssued: 200, pendingQc: 400, ngSupplier: 10, balance: 590 })
     // ภาพรวมทุก Model รวม lot ของ TWIN ที่อยู่ระหว่างตรวจ MI3 ด้วย
-    expect(rows.find((r) => r.part.partNo === '150324/A')).toMatchObject({ boi: 590, mi3: 240, balance: 830 })
+    expect(rows.find((r) => r.part.partNo === '150324')).toMatchObject({ boi: 590, mi3: 240, balance: 830 })
   })
 })
 
 describe('multi-model master', () => {
   it('merges shared parts across model sheets into one part', () => {
     expect(STOCK_SHEETS.map((sh) => sh.id)).toEqual(['RE-K1G', 'RE-J1D', 'RE-J1A', 'RE-J1C', 'RE-TWIN', 'RE-P4'])
-    expect(PARTS.filter((p) => p.partNo === '150324/A')).toHaveLength(1)
-    expect(PARTS.find((p) => p.partNo === '150324/A')!.models).toEqual(['K1G', 'J1D', 'J1D4', 'J1A', 'J1C', 'TWIN', 'P4M', 'P4D'])
+    expect(PARTS.filter((p) => p.partNo === '150324')).toHaveLength(1)
+    expect(PARTS.find((p) => p.partNo === '150324')!.models).toEqual(['K1G', 'J1D', 'J1D4', 'J1A', 'J1C', 'TWIN', 'P4M', 'P4D'])
     expect(new Set(PARTS.map((p) => p.partNo)).size).toBe(PARTS.length)
   })
 })

@@ -1,5 +1,6 @@
 import type { FactoryLayout } from '../../types/layout'
 import { lpnFromScan } from '../../wms/logic'
+import { basePartNo } from '../../wms/partCodes'
 import type { Lpn, MasterData } from '../../wms/types'
 
 export interface StockBox {
@@ -64,9 +65,12 @@ export function searchStock(query: string, lpns: Lpn[], master: Pick<MasterData,
 
   // 3) Part (มีของก่อน แล้วตามด้วย part ใน Master ที่ยังไม่มีของ)
   const names = new Map(master.parts.map((p) => [p.partNo, p.name]))
+  const uams = new Map(master.parts.map((p) => [p.partNo, p.uamCode ?? '']))
   const partNos = new Set([...boxes.map((b) => b.partNo), ...master.parts.map((p) => p.partNo)])
+  // พิมพ์มาพร้อม revision (RAT00586/B) ก็หาเจอ · ค้นด้วยรหัส UAM ได้
+  const base = basePartNo(t)
   const parts = [...partNos]
-    .filter((p) => p.toUpperCase().includes(t) || (names.get(p) ?? '').toUpperCase().includes(t))
+    .filter((p) => p.toUpperCase().includes(t) || (base && p.toUpperCase().includes(base)) || (names.get(p) ?? '').toUpperCase().includes(t) || uams.get(p) === t)
     .map((p) => ({ partNo: p, own: boxes.filter((b) => b.partNo === p) }))
     .sort((a, b) => b.own.length - a.own.length || a.partNo.localeCompare(b.partNo))
     .slice(0, MAX_PARTS)

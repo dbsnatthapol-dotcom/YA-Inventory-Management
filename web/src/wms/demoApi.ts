@@ -2,6 +2,8 @@ import { sampleLayout } from '../data/factoryLayout'
 import { MODELS, PARTS, ZONE_RULES } from '../inventory/masterData'
 import type { WmsApi } from './api'
 import { layoutLocations, zoneCodeOf } from './locations'
+import { buildLedger, monthRange } from './ledger'
+import { canonPartNo, partRevision, partsOfModel } from './partCodes'
 import type {
   Grn,
   GrnLine,
@@ -14,6 +16,7 @@ import type {
   PermRow,
   ReceivePayload,
   Requisition,
+  StockClosing,
   Settings,
   StaffBrief,
   Tx,
@@ -36,9 +39,15 @@ interface DemoDb {
   perms: PermRow[]
   staff: StaffBrief[]
   requisitions: Requisition[]
+  closings: StockClosing[]
 }
 
-const KEY = 'uam-wms-demo-v1'
+/** โซนที่มีหัวหน้าโซน (ตรงกับหน้าหลังบ้าน) */
+const HEAD_KINDS = new Set(['storage', 'tent', 'receiving', 'inspection', 'ng', 'assembly', 'utility'])
+const DEMO_HEAD = { id: 'demo-head', employeeCode: 'DEMO-WH', fullName: 'เต็มดวง (เจี๊ยบ)', role: 'warehouse' }
+
+// v2: รหัส part เป็นเลขฐาน (ข้อมูลสาธิตเก่าที่มี /A /B เริ่มใหม่)
+const KEY = 'uam-wms-demo-v2'
 const ME = 'DEMO'
 
 function seed(): DemoDb {
@@ -46,17 +55,21 @@ function seed(): DemoDb {
     settings: { mode: 'trial', trialRound: 1, qiPartTypes: ['RIM', 'HUB'] },
     counters: {},
     requisitions: [],
+    closings: [],
     invoices: [],
     grns: [],
     grnLines: [],
     lpns: [],
     tx: [],
     master: {
-      parts: PARTS.map((p) => ({ partNo: p.partNo, name: p.description, type: p.type, customerId: p.customerId, models: p.models })),
+      parts: PARTS.map((p) => ({ partNo: p.partNo, name: p.description, type: p.type, customerId: p.customerId, models: p.models, revision: p.revision ?? null })),
       models: MODELS.map((m) => ({ code: m.code, customerId: m.customerId, requiresInspection: m.requiresInspection })),
       rules: ZONE_RULES.map((r) => ({ customerId: r.customerId, partType: r.type, zoneId: r.zoneId })),
       locations: layoutLocations(sampleLayout).map((l) => ({ ...l, active: true })),
-      zoneHeads: [],
+      // หัวหน้าโซนทุกโซน: พี่เต็มดวง (เจี๊ยบ) · ภายหลังแยกตามสายงาน
+      zoneHeads: sampleLayout.zones
+        .filter((z) => HEAD_KINDS.has(z.kind))
+        .map((z) => ({ zoneId: z.id, staffId: DEMO_HEAD.id, employeeCode: DEMO_HEAD.employeeCode, fullName: DEMO_HEAD.fullName })),
       // ตัวอย่างชุดวงล้อ (สาธิต) ตามสัดส่วนใน FM-P-005 290 วง: ลูกปืน 2 ตัว, ซี่ลวดแต่ละแบบ 9 ซี่ ต่อ 1 วง
       fgItems: [
         {
@@ -65,13 +78,13 @@ function seed(): DemoDb {
           modelCode: 'K1G',
           active: true,
           lines: [
-            { partNo: 'RAT00586/B', qtyPer: 1 },
-            { partNo: 'RAT1088/A', qtyPer: 1 },
-            { partNo: 'RAT00282/D', qtyPer: 1 },
-            { partNo: 'RAT00283/A', qtyPer: 1 },
-            { partNo: '150324/A', qtyPer: 2 },
-            { partNo: 'RAT00566/B', qtyPer: 9 },
-            { partNo: 'RAT00567/B', qtyPer: 9 },
+            { partNo: 'RAT00586', qtyPer: 1 },
+            { partNo: 'RAT01088', qtyPer: 1 },
+            { partNo: 'RAT00282', qtyPer: 1 },
+            { partNo: 'RAT00283', qtyPer: 1 },
+            { partNo: '150324', qtyPer: 2 },
+            { partNo: 'RAT00566', qtyPer: 9 },
+            { partNo: 'RAT00567', qtyPer: 9 },
           ],
         },
       ],
@@ -82,10 +95,11 @@ function seed(): DemoDb {
         ['warehouse', ['receive.create', 'label.print', 'scan.put', 'scan.move', 'scan.issue', 'scan.adjust', 'scan.count', 'invoice.report']],
         ['mi3', ['scan.qi', 'scan.move', 'label.print']],
         ['engineer', ['scan.adjust.approve', 'invoice.close', 'invoice.report', 'layout.edit']],
-        ['manager', ['scan.adjust.approve', 'invoice.close', 'invoice.report', 'accesslog.view', 'master.edit', 'layout.edit']],
+        ['manager', ['scan.adjust.approve', 'invoice.close', 'invoice.report', 'accesslog.view', 'master.edit', 'layout.edit', 'ledger.close', 'ledger.ack.account']],
+        ['planner', ['ledger.ack.planning']],
       ] as [string, string[]][]
     ).flatMap(([role, perms]) => perms.map((perm) => ({ role, perm, allowed: true }))),
-    staff: [{ id: 'demo', employeeCode: ME, fullName: 'ผู้ใช้สาธิต', role: 'admin' }],
+    staff: [{ id: 'demo', employeeCode: ME, fullName: 'ผู้ใช้สาธิต', role: 'admin' }, DEMO_HEAD],
   }
 }
 
@@ -119,7 +133,12 @@ export function demoWms(): WmsApi {
   }
   const fail = (msg: string): never => {
     throw new Error(msg)
+  }  // เดือนที่ปิดยอดแล้ว: ใบเบิกของ Model นั้นแก้ไม่ได้ (เหมือน trigger requisition_month_lock)
+  const assertOpen = (model: string | null | undefined, day: string) => {
+    if (model && db.closings.some((c) => c.modelCode === model && c.month === day.slice(0, 7) && c.status === 'closed'))
+      fail(`บัญชีคุม ${model} เดือน ${day.slice(0, 7)} ปิดยอดแล้ว · ให้ผู้มีสิทธิ์เปิดเดือนก่อน`)
   }
+
   const nextDoc = (prefix: string) => {
     const d = new Date()
     const yymm = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}`
@@ -212,7 +231,7 @@ export function demoWms(): WmsApi {
   }
   const today = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Bangkok' })
 
-  return {
+  const api: WmsApi = {
     kind: 'demo',
     myPermissions: async () => ['*'],
     settings: async () => clone(db.settings),
@@ -223,8 +242,15 @@ export function demoWms(): WmsApi {
       return inv ? { id: inv.id, grnCount: db.grns.filter((g) => g.invoiceId === inv.id).length } : null
     },
 
-    createGrn: (p: ReceivePayload) =>
+    createGrn: (input: ReceivePayload) =>
       commit(() => {
+        // รหัสหลัก (เลขฐาน) เหมือน trigger part_canon ฝั่งฐานข้อมูล
+        const canon = (c: string) => canonPartNo(db.master.parts, c)
+        const p: ReceivePayload = {
+          ...input,
+          lines: input.lines.map((l) => ({ ...l, partNo: canon(l.partNo) })),
+          invoice: input.invoice && { ...input.invoice, lines: input.invoice.lines.map((l) => ({ ...l, partNo: canon(l.partNo) })) },
+        }
         if (!p.lines.length) fail('ไม่มีรายการรับเข้า')
         if (!p.packingList.refDoc.trim()) fail('ต้องมีเลขอ้างอิงของ Packing List')
         const model = db.master.models.find((m) => m.code === p.modelCode)
@@ -533,13 +559,15 @@ export function demoWms(): WmsApi {
     upsertPart: (p) =>
       commit(() => {
         if (!p.partNo.trim() || !p.name.trim()) fail('ต้องมี Part No. และชื่อ')
-        const i = db.master.parts.findIndex((x) => x.partNo === p.partNo.trim())
+        const partNo = canonPartNo(db.master.parts, p.partNo)
+        const i = db.master.parts.findIndex((x) => x.partNo === partNo)
         const prev = i >= 0 ? db.master.parts[i] : null
         const uam = p.uamCode?.trim() || null
-        if (uam && db.master.parts.some((x) => x.uamCode === uam && x.partNo !== p.partNo.trim())) fail(`รหัส UAM ${uam} ใช้กับ part อื่นแล้ว`)
+        if (uam && db.master.parts.some((x) => x.uamCode === uam && x.partNo !== partNo)) fail(`รหัส UAM ${uam} ใช้กับ part อื่นแล้ว`)
         const next = {
           ...p,
-          partNo: p.partNo.trim(),
+          partNo,
+          revision: (!partNo.includes('/') && partRevision(p.partNo)) || prev?.revision || null,
           type: p.type?.trim().toUpperCase() || null,
           uamCode: uam,
           models: [...new Set([...(prev?.models ?? []), ...p.models])],
@@ -566,13 +594,14 @@ export function demoWms(): WmsApi {
       commit(() => {
         const code = fg.code.trim().toUpperCase()
         if (!code || !fg.name.trim()) fail('ต้องมีรหัสและชื่อชุดวงล้อ')
-        const next = { ...fg, code, name: fg.name.trim(), lines: fg.lines.filter((l) => l.qtyPer > 0) }
+        const next = { ...fg, code, name: fg.name.trim(), lines: fg.lines.filter((l) => l.qtyPer > 0).map((l) => ({ ...l, partNo: canonPartNo(db.master.parts, l.partNo) })) }
         const i = db.master.fgItems.findIndex((x) => x.code === code)
         if (i >= 0) db.master.fgItems[i] = next
         else db.master.fgItems.push(next)
       }),
     postRequisition: (p) =>
       commit(() => {
+        assertOpen(p.modelCode, p.docDate || today())
         const lines = p.lines.filter((l) => l.qty > 0)
         if (!lines.length) fail('ไม่มีรายการที่จะเบิก')
         const reqNo = nextDoc('RQ')
@@ -606,6 +635,7 @@ export function demoWms(): WmsApi {
         const docNo = p.docNo.trim()
         if (!docNo) fail('ใส่เลขที่ FM-P-005')
         if (!p.docDate || !p.modelCode) fail('ใส่วันที่และ Model')
+        assertOpen(p.modelCode, p.docDate)
         if (db.requisitions.some((r) => r.kind === 'fm005' && r.docNo === docNo && r.status === 'posted')) fail(`FM-P-005 เลขที่ ${docNo} บันทึกไปแล้ว`)
         const subs = db.requisitions.filter((r) => r.kind === 'line' && r.status === 'posted' && !r.reconciledBy && r.docDate === p.docDate && r.modelCode === p.modelCode)
         const subIds = subs.map((r) => r.id)
@@ -650,6 +680,7 @@ export function demoWms(): WmsApi {
         if (r!.kind === 'fm005') fail('ยกเลิก FM-P-005 ไม่ได้ · แจ้งผู้ดูแลระบบ')
         if (r!.reconciledBy) fail('ใบนี้กระทบยอดกับ FM-P-005 แล้ว ยกเลิกไม่ได้')
         if (!reason.trim()) fail('ระบุเหตุผลที่ยกเลิก')
+        assertOpen(r!.modelCode, r!.docDate)
         for (const t of db.tx.filter((x) => x.kind === 'ISSUE' && x.requisitionId === id)) putBack(t, t.qty ?? 0, r!.reqNo, t.ref, id, `ยกเลิกใบเบิก: ${reason.trim()}`)
         r!.status = 'void'
         r!.note = [r!.note, `ยกเลิก: ${reason.trim()}`].filter(Boolean).join(' · ')
@@ -685,6 +716,46 @@ export function demoWms(): WmsApi {
       return rows
     },
     // สาธิต: ผังเก็บในเครื่อง (useLayoutEdits) — ที่นี่ปรับเฉพาะช่องเก็บให้ตรงกับผัง (กติกาเดียวกับ layout_save)
+    listClosings: async () => clone(db.closings),
+    closeMonth: async (model, month, note) => {
+      if (month >= today().slice(0, 7)) fail(`ปิดยอดได้เมื่อจบเดือน ${month} แล้ว`)
+      const prev = db.closings.find((c) => c.modelCode === model && c.month === month)
+      if (prev?.status === 'closed') fail(`${model} เดือน ${month} ปิดยอดไปแล้ว`)
+      const parts = partsOfModel(db.master, model)
+      const sheets = buildLedger(await api.ledgerRows(parts.map((p) => p.partNo), monthRange(month).to), parts, month)
+      const totals = sheets.map((x) => ({ partNo: x.partNo, opening: x.opening, in: x.totalIn, out: x.totalOut, closing: x.closing }))
+      const next: StockClosing = {
+        id: prev?.id ?? uid(),
+        modelCode: model,
+        month,
+        status: 'closed',
+        totals,
+        closedBy: `ผู้ใช้สาธิต (${ME})`,
+        closedAt: nowIso(),
+        planningBy: null,
+        planningAt: null,
+        accountBy: null,
+        accountAt: null,
+        note: note?.trim() || null,
+      }
+      db.closings = [next, ...db.closings.filter((c) => c.id !== next.id)]
+      save()
+    },
+    reopenMonth: (id, reason) =>
+      commit(() => {
+        const c = db.closings.find((x) => x.id === id && x.status === 'closed')
+        if (!c) fail('ไม่พบรายการปิดยอด')
+        if (!reason.trim()) fail('ระบุเหตุผลที่เปิดเดือน')
+        c!.status = 'reopened'
+        c!.note = [c!.note, `เปิดเดือน: ${reason.trim()} โดย ผู้ใช้สาธิต`].filter(Boolean).join(' · ')
+      }),
+    ackClosing: (id, side) =>
+      commit(() => {
+        const c = db.closings.find((x) => x.id === id && x.status === 'closed')
+        if (!c || (side === 'planning' ? c.planningAt : c.accountAt)) fail('ไม่พบรายการ หรือรับทราบไปแล้ว')
+        if (side === 'planning') Object.assign(c!, { planningBy: `ผู้ใช้สาธิต (${ME})`, planningAt: nowIso() })
+        else Object.assign(c!, { accountBy: `ผู้ใช้สาธิต (${ME})`, accountAt: nowIso() })
+      }),
     saveLayout: (p) =>
       commit(() => {
         const busy = (codes: (code: string) => boolean) => db.lpns.filter((l) => l.status === 'active' && codes(l.locationCode)).map((l) => l.lpnNo)
@@ -706,4 +777,5 @@ export function demoWms(): WmsApi {
         }
       }),
   }
+  return api
 }

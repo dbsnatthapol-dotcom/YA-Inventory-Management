@@ -1,6 +1,6 @@
 import type { Borders, Workbook, Worksheet } from 'exceljs'
 import type { LedgerSheet } from './ledger'
-import type { PartMaster, Requisition } from './types'
+import type { PartMaster, Requisition, StockClosing } from './types'
 
 /**
  * Export Excel: บัญชีคุม FM-P-537 (1 ไฟล์ต่อ Model, sheet สรุป + 1 sheet ต่อ part ตามแบบฟอร์มเดิม)
@@ -23,6 +23,8 @@ export const monthLabel = (month: string) => {
 }
 /** 'YYYY-MM-DD' → '15/10/26' (แบบที่เขียนในเอกสาร) */
 const shortDate = (d: string | null) => (d ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(2, 4)}` : '')
+/** วันเวลาไทยแบบสั้น */
+const stamp = (iso: string | null) => (iso ? new Date(iso).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Bangkok' }) : '')
 
 /** ชื่อ sheet ต้องไม่มี / \ ? * [ ] : และยาวไม่เกิน 31 ตัว ไม่ซ้ำ */
 function sheetName(wb: Workbook, raw: string) {
@@ -32,7 +34,7 @@ function sheetName(wb: Workbook, raw: string) {
   return name
 }
 
-function save(wb: Workbook, filename: string) {
+export function saveWorkbook(wb: Workbook, filename: string) {
   return wb.xlsx.writeBuffer().then((buf) => {
     const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
     const a = document.createElement('a')
@@ -139,7 +141,7 @@ function partSheet(wb: Workbook, model: string, month: string, s: LedgerSheet) {
 }
 
 /** บัญชีคุม FM-P-537 ของ Model ทั้งเดือน: sheet สรุป + 1 sheet ต่อ part */
-export async function exportLedger(model: string, month: string, sheets: LedgerSheet[]) {
+export async function exportLedger(model: string, month: string, sheets: LedgerSheet[], closing?: StockClosing | null) {
   const { Workbook } = await import('exceljs')
   const wb = new Workbook()
   wb.creator = 'UAM WMS'
@@ -160,8 +162,19 @@ export async function exportLedger(model: string, month: string, sheets: LedgerS
   for (const s of sheets) sum.addRow([s.partNo, s.uamCode ?? '', s.name, s.opening, s.totalIn, s.totalOut, s.closing])
   box(sum, 'A3', `G${3 + sheets.length}`)
   for (let r = 4; r <= 3 + sheets.length; r++) for (const c of ['D', 'E', 'F', 'G']) sum.getCell(`${c}${r}`).numFmt = NUM
+  // ลายเซ็นในระบบ: ปิดยอด / Planning / บัญชี รับทราบ
+  sum.addRow([])
+  const signed = (by: string | null, at: string | null) => (by ? `${by} · ${stamp(at)}` : 'ยังไม่รับทราบ')
+  for (const [k, v] of closing?.status === 'closed'
+    ? [
+        ['ปิดยอดโดย', signed(closing.closedBy, closing.closedAt)],
+        ['Planning รับทราบ', signed(closing.planningBy, closing.planningAt)],
+        ['บัญชี รับทราบ', signed(closing.accountBy, closing.accountAt)],
+      ]
+    : [['สถานะ', 'ยังไม่ปิดยอด (ตัวเลขอาจเปลี่ยน)']])
+    sum.addRow([k, '', v]).getCell(1).font = { bold: true }
   for (const s of sheets) partSheet(wb, model, month, s)
-  await save(wb, `FM-P-537_${model}_${month}.xlsx`)
+  await saveWorkbook(wb, `FM-P-537_${model}_${month}.xlsx`)
 }
 
 /** สรุป FM-P-005 ส่ง Planning: 1 แถวต่อ part ต่อใบ */
@@ -182,5 +195,5 @@ export async function exportPlanning(fm: Requisition[], parts: PartMaster[], fro
       ws.addRow([shortDate(r.docDate), r.docNo ?? '', r.modelCode ?? '', r.fgQty ?? '', l.partNo, name.get(l.partNo)?.uamCode ?? '', name.get(l.partNo)?.name ?? '', l.reqQty ?? 0, l.qty, l.qty - (l.reqQty ?? 0), l.balance ?? ''])
   box(ws, 'A3', `K${ws.rowCount}`)
   for (let r = 4; r <= ws.rowCount; r++) for (const c of ['H', 'I', 'J', 'K']) ws.getCell(`${c}${r}`).numFmt = NUM
-  await save(wb, `FM-P-005_Planning_${from}${from === to ? '' : `_${to}`}.xlsx`)
+  await saveWorkbook(wb, `FM-P-005_Planning_${from}${from === to ? '' : `_${to}`}.xlsx`)
 }

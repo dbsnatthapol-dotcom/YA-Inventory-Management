@@ -12,6 +12,7 @@ import type {
   StaffBrief,
   FgItem,
   LedgerRow,
+  StockClosing,
   ReconcilePayload,
   Requisition,
   RequisitionPayload,
@@ -78,6 +79,13 @@ export interface WmsApi {
   listRequisitions(from: string, to: string): Promise<Requisition[]>
   /** รายการเคลื่อนไหวของ part ก่อนเวลา to (ISO) สำหรับบัญชีคุม */
   ledgerRows(parts: string[], to: string): Promise<LedgerRow[]>
+  /** ปิดยอดทุก Model (ใช้ดูสถานะและงานรอรับทราบ) */
+  listClosings(): Promise<StockClosing[]>
+  /** ปิดยอดเดือนที่จบแล้ว (สิทธิ์ ledger.close) · ใบเบิกของเดือนนั้นแก้ไม่ได้จนกว่าจะเปิดเดือน */
+  closeMonth(model: string, month: string, note?: string): Promise<void>
+  reopenMonth(id: string, reason: string): Promise<void>
+  /** รับทราบยอด: planning (ledger.ack.planning) หรือ account (ledger.ack.account) */
+  ackClosing(id: string, side: 'planning' | 'account'): Promise<void>
 
   /** บันทึกผังที่แก้ลงฐานข้อมูลกลาง (สิทธิ์ layout.edit) */
   saveLayout(p: LayoutSavePayload): Promise<void>

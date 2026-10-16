@@ -19,19 +19,21 @@ export interface TourStep {
 const STEP_MS = 9000
 
 /**
- * โหมดนำเสนอผู้บริหาร: เล่นอัตโนมัติทีละจุด (9 วินาที) กดหยุด/ถัดไป/ย้อนได้ · ← → เลื่อน, Space หยุด, Esc ออก
- * ปุ่มเต็มจอสำหรับจอห้องประชุม
+ * โหมดนำเสนอผู้บริหาร: เล่นอัตโนมัติทีละจุด (9 วินาที) กดหยุด/ถัดไป/ย้อนได้ · ← → เลื่อน, Space หยุด, L วนซ้ำ, Esc ออก
+ * ปุ่มเต็มจอสำหรับจอห้องประชุม · วนซ้ำ = เปิดค้างบนจอ TV ทั้งวัน (ตัวเลขเป็นของจริงตามเวลา)
  */
 export function ExecTour({ steps, index, onIndex, onExit }: { steps: TourStep[]; index: number; onIndex: (i: number) => void; onExit: () => void }) {
   const [playing, setPlaying] = useState(true)
+  const [loop, setLoop] = useState(false)
   const step = steps[index]
   const last = index === steps.length - 1
+  const moving = playing && (!last || loop)
 
   useEffect(() => {
-    if (!playing || last) return
-    const t = setTimeout(() => onIndex(index + 1), STEP_MS)
+    if (!moving) return
+    const t = setTimeout(() => onIndex(last ? 0 : index + 1), STEP_MS)
     return () => clearTimeout(t)
-  }, [playing, index, last, onIndex])
+  }, [moving, index, last, onIndex])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -40,7 +42,8 @@ export function ExecTour({ steps, index, onIndex, onExit }: { steps: TourStep[];
       else if (e.key === ' ') {
         e.preventDefault()
         setPlaying((p) => !p)
-      } else if (e.key === 'Escape') onExit()
+      } else if (e.key === 'l' || e.key === 'L') setLoop((v) => !v)
+      else if (e.key === 'Escape') onExit()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -75,11 +78,11 @@ export function ExecTour({ steps, index, onIndex, onExit }: { steps: TourStep[];
             {steps.map((s, i) => (
               <button key={s.title} className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/20" onClick={() => onIndex(i)} aria-label={s.title}>
                 <span
-                  key={`${i}-${index}-${playing}`}
+                  key={`${i}-${index}-${moving}`}
                   className="block h-full rounded-full bg-sky-400"
                   style={{
-                    width: i < index ? '100%' : i > index ? '0%' : playing && !last ? '0%' : '100%',
-                    animation: i === index && playing && !last ? `tour-fill ${STEP_MS}ms linear forwards` : undefined,
+                    width: i < index ? '100%' : i > index ? '0%' : moving ? '0%' : '100%',
+                    animation: i === index && moving ? `tour-fill ${STEP_MS}ms linear forwards` : undefined,
                   }}
                 />
               </button>
@@ -94,6 +97,14 @@ export function ExecTour({ steps, index, onIndex, onExit }: { steps: TourStep[];
             </button>
             <button className="rounded-lg px-2.5 py-1 hover:bg-white/10 disabled:opacity-30" disabled={last} onClick={() => onIndex(index + 1)} aria-label="ถัดไป">
               ▶▶
+            </button>
+            <button
+              className={`rounded-lg px-2.5 py-1 hover:bg-white/10 ${loop ? 'bg-sky-500/30 text-sky-200' : ''}`}
+              onClick={() => setLoop((v) => !v)}
+              aria-pressed={loop}
+              title="วนซ้ำต่อเนื่อง สำหรับเปิดค้างบนจอ TV (L)"
+            >
+              🔁
             </button>
             <button className="rounded-lg px-2.5 py-1 hover:bg-white/10" onClick={fullscreen} title="เต็มจอ">
               ⛶

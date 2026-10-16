@@ -4,6 +4,7 @@ import { aiReaderAvailable, readInvoicePhoto, readPackingListPhoto } from '../..
 import { useIsMobile } from '../../lib/viewMode'
 import { zoneCodeOf } from '../../wms/locations'
 import { fmt, needsQi, suggestedZone } from '../../wms/logic'
+import { basePartNo, resolvePart } from '../../wms/partCodes'
 import { SAMPLE_INVOICE, SAMPLE_MODEL, SAMPLE_PACKING_LIST } from '../../wms/sampleDocs'
 import { useWms } from '../../wms/useWms'
 import { Alert, BigButton, Card, Field, inputCls, Pill, tdCls, thCls } from './ui'
@@ -47,6 +48,8 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
   const [inv, setInv] = useState({ invoiceNo: '', poNo: '', docDate: '', movementType: '' })
   const [existing, setExisting] = useState<{ grnCount: number } | null>(null)
   const [rows, setRows] = useState<Row[]>([])
+  /** รหัสในระบบ: เลขฐาน (ไม่สน /A /B) · เลข 0 นำหน้าหายก็หาเจอ (RAT1088 → RAT01088) */
+  const canon = (code: string) => resolvePart(master.parts, code)?.partNo ?? basePartNo(code)
   const [plFile, setPlFile] = useState<File | null>(null)
   const [invFile, setInvFile] = useState<File | null>(null)
   const [reading, setReading] = useState<'pl' | 'invoice' | null>(null)
@@ -72,7 +75,7 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
       // invoice เดิม: ใช้จำนวนตามที่บันทึกไว้ครั้งแรก
       const view = await api.invoiceView(no).catch(() => null)
       if (view) {
-        setRows((rs) => rs.map((r) => ({ ...r, invQty: view.lines.find((l) => l.partNo === r.partNo)?.qty ?? null, invLine: view.lines.find((l) => l.partNo === r.partNo)?.lineNo ?? null })))
+        setRows((rs) => rs.map((r) => ({ ...r, invQty: view.lines.find((l) => canon(l.partNo) === canon(r.partNo))?.qty ?? null, invLine: view.lines.find((l) => canon(l.partNo) === canon(r.partNo))?.lineNo ?? null })))
         setInv((v) => ({ ...v, poNo: view.invoice.poNo ?? v.poNo, docDate: view.invoice.docDate ?? v.docDate, movementType: view.invoice.movementType ?? v.movementType }))
       }
     }
@@ -84,8 +87,8 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
     setInv({ invoiceNo: SAMPLE_INVOICE.invoiceNo, poNo: SAMPLE_INVOICE.poNo, docDate: SAMPLE_INVOICE.docDate, movementType: SAMPLE_INVOICE.movementType })
     setRows(
       SAMPLE_PACKING_LIST.lines.map((l) => {
-        const il = SAMPLE_INVOICE.lines.find((x) => x.partNo === l.partNo)
-        return { key: newKey(), partNo: l.partNo, description: l.description, plQty: l.qty, counted: l.qty, invQty: il?.qty ?? null, invLine: il?.lineNo ?? null, zoneId: null }
+        const il = SAMPLE_INVOICE.lines.find((x) => canon(x.partNo) === canon(l.partNo))
+        return { key: newKey(), partNo: canon(l.partNo), description: l.description, plQty: l.qty, counted: l.qty, invQty: il?.qty ?? null, invLine: il?.lineNo ?? null, zoneId: null }
       }),
     )
     setMsg({ tone: 'info', text: 'ใส่เอกสารตัวอย่าง RE TWIN แล้ว (Packing List 55035596 + Invoice 4957930126) · ยอดนับจริงตั้งต้นเท่ากับ Packing List แก้ได้ทุกช่อง' })
@@ -100,7 +103,7 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
     try {
       const d = await readPackingListPhoto(file)
       setPl({ refDoc: d.refDoc, soNo: d.soNo, packages: d.packages })
-      setRows(d.lines.map((l) => ({ key: newKey(), partNo: l.partNo, description: l.description, plQty: l.qty, counted: l.qty, invQty: null, invLine: l.invoiceLineNo, zoneId: null })))
+      setRows(d.lines.map((l) => ({ key: newKey(), partNo: canon(l.partNo), description: l.description, plQty: l.qty, counted: l.qty, invQty: null, invLine: l.invoiceLineNo, zoneId: null })))
       setMsg({ tone: 'ok', text: `AI อ่าน Packing List ได้ ${d.lines.length} รายการ · ตรวจทานกับเอกสารก่อนยืนยัน` })
     } catch (e) {
       setMsg({ tone: 'warn', text: `อ่านภาพอัตโนมัติไม่ได้ (${errorText(e)}) · กรอกเอง หรือถ่ายใหม่ให้ตรงและชัดขึ้น` })
@@ -119,11 +122,11 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
       setInv({ invoiceNo: d.invoiceNo, poNo: d.poNo, docDate: d.docDate, movementType: d.movementType })
       setRows((rs) => {
         const next = rs.map((r) => {
-          const il = d.lines.find((l) => l.partNo === r.partNo)
+          const il = d.lines.find((l) => canon(l.partNo) === canon(r.partNo))
           return il ? { ...r, invQty: il.qty, invLine: il.lineNo } : r
         })
         // part ที่มีใน invoice แต่ไม่มีใน packing list → เพิ่มเป็นแถว (รับจริง 0)
-        for (const l of d.lines) if (!next.some((r) => r.partNo === l.partNo)) next.push({ key: newKey(), partNo: l.partNo, description: l.description, plQty: 0, counted: 0, invQty: l.qty, invLine: l.lineNo, zoneId: null })
+        for (const l of d.lines) if (!next.some((r) => canon(r.partNo) === canon(l.partNo))) next.push({ key: newKey(), partNo: canon(l.partNo), description: l.description, plQty: 0, counted: 0, invQty: l.qty, invLine: l.lineNo, zoneId: null })
         return next
       })
       setMsg({ tone: 'ok', text: `AI อ่าน Invoice ${d.invoiceNo} ได้ ${d.lines.length} รายการ` })
@@ -137,14 +140,16 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
 
   const patch = (key: string, p: Partial<Row>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...p } : r)))
   const pickPart = (key: string, partNo: string) => {
-    const part = master.parts.find((p) => p.partNo === partNo.trim())
-    patch(key, { partNo: partNo.trim(), ...(part ? { description: part.name } : {}) })
+    const part = resolvePart(master.parts, partNo)
+    patch(key, { partNo: partNo.trimStart(), ...(part ? { description: part.name } : {}) })
   }
+  // พิมพ์เสร็จ: เปลี่ยนเป็นรหัสหลัก (RAT00586/B → RAT00586)
+  const settlePart = (key: string, partNo: string) => patch(key, { partNo: canon(partNo) })
 
   const offPl = rows.filter((r) => r.counted !== r.plQty).length
   const offInv = rows.filter((r) => r.invQty !== null && r.counted !== r.invQty).length
-  const mi3 = rows.filter((r) => needsQi(master, settings.qiPartTypes, modelCode, r.partNo)).length
-  const unknown = rows.filter((r) => r.partNo && !master.parts.some((p) => p.partNo === r.partNo)).length
+  const mi3 = rows.filter((r) => needsQi(master, settings.qiPartTypes, modelCode, canon(r.partNo))).length
+  const unknown = rows.filter((r) => r.partNo && !resolvePart(master.parts, r.partNo)).length
   const total = rows.reduce((s, r) => s + r.counted, 0)
   const problems = [
     !modelCode && 'เลือก Model',
@@ -168,10 +173,10 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
               poNo: inv.poNo.trim(),
               docDate: inv.docDate.trim(),
               movementType: inv.movementType.trim(),
-              lines: rows.filter((r) => r.invQty !== null).map((r, i) => ({ lineNo: r.invLine ?? i + 1, partNo: r.partNo, description: r.description, qty: r.invQty ?? 0 })),
+              lines: rows.filter((r) => r.invQty !== null).map((r, i) => ({ lineNo: r.invLine ?? i + 1, partNo: canon(r.partNo), description: r.description, qty: r.invQty ?? 0 })),
             }
           : undefined,
-        lines: rows.map((r) => ({ partNo: r.partNo.trim(), description: r.description, plQty: r.plQty, countedQty: r.counted, ...(r.zoneId ? { zoneId: r.zoneId } : {}) })),
+        lines: rows.map((r) => ({ partNo: canon(r.partNo), description: r.description, plQty: r.plQty, countedQty: r.counted, ...(r.zoneId ? { zoneId: r.zoneId } : {}) })),
       })
       // ภาพเอกสารเป็นหลักฐาน: อัปโหลดหลังบันทึก GRN แล้ว (ถ้าเน็ตช้า/ล้ม การรับของยังสำเร็จ)
       const [plPath, invPath] = await Promise.all([plFile ? api.uploadDoc(plFile, 'pl') : null, invFile ? api.uploadDoc(invFile, 'invoice') : null])
@@ -186,9 +191,10 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
 
   /** ช่องกรอกของแต่ละรายการ: ใช้ทั้งตาราง (จอคอม) และการ์ด (มือถือ) */
   const cells = (r: Row, wide: boolean) => {
-    const qi = needsQi(master, settings.qiPartTypes, modelCode, r.partNo)
-    const known = master.parts.some((p) => p.partNo === r.partNo)
-    const zone = suggestedZone(master, customerId, r.partNo)
+    const partNo = canon(r.partNo)
+    const qi = needsQi(master, settings.qiPartTypes, modelCode, partNo)
+    const known = !!resolvePart(master.parts, r.partNo)
+    const zone = suggestedZone(master, customerId, partNo)
     const bad = r.counted !== r.plQty || (r.invQty !== null && r.counted !== r.invQty)
     const num = `rounded-md px-2 text-right font-mono ${wide ? 'w-full py-2.5 text-base' : 'w-24 py-1.5'}`
     return {
@@ -200,6 +206,7 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
           className={`rounded-md border border-slate-300 px-2 font-mono ${wide ? 'w-full py-2.5 text-base' : 'w-36 py-1.5 text-sm'}`}
           value={r.partNo}
           onChange={(e) => pickPart(r.key, e.target.value)}
+          onBlur={(e) => settlePart(r.key, e.target.value)}
           aria-label="Part No."
         />
       ),

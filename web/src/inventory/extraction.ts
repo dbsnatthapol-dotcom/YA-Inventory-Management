@@ -1,4 +1,5 @@
 import { MODELS, PARTS, SAMPLE_INVOICES, ZONE_RULES } from './masterData'
+import { basePartNo, canonPartNo } from '../wms/partCodes'
 import type { ExtractedInvoice, Part } from './types'
 
 /**
@@ -47,13 +48,15 @@ export interface MatchedLine {
 
 /** เทียบรหัสที่อ่านได้กับ Part Master */
 export function matchPart(readPartNo: string, parts: Part[] = PARTS): { status: MatchStatus; part: Part | null } {
-  const exact = parts.find((p) => p.partNo === readPartNo.trim())
+  // revision (/A /B) ไม่นับ: RAT00586/B ตรงกับ RAT00586
+  const canon = canonPartNo(parts, readPartNo)
+  const exact = parts.find((p) => p.partNo === canon)
   if (exact) return { status: 'exact', part: exact }
-  const norm = normalizePartNo(readPartNo)
-  const normalized = parts.find((p) => normalizePartNo(p.partNo) === norm)
+  const norm = normalizePartNo(basePartNo(readPartNo))
+  const normalized = parts.find((p) => normalizePartNo(basePartNo(p.partNo)) === norm)
   if (normalized) return { status: 'corrected', part: normalized }
   const near = parts
-    .map((p) => ({ p, d: editDistance(normalizePartNo(p.partNo), norm) }))
+    .map((p) => ({ p, d: editDistance(normalizePartNo(basePartNo(p.partNo)), norm) }))
     .sort((a, b) => a.d - b.d)[0]
   if (near && near.d <= 1) return { status: 'corrected', part: near.p }
   return { status: 'unknown', part: null }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { BRAND } from '../../data/brand'
 import { useWms } from '../../wms/useWms'
+import { pendingAcks } from '../../wms/closing'
 import { InvoiceTab } from './InvoiceTab'
 import { IssueTab } from './IssueTab'
 import { LabelsTab } from './LabelsTab'
@@ -27,7 +28,7 @@ export interface WmsDeepLink {
 }
 
 export function WarehousePage({ deepLink }: { deepLink: WmsDeepLink | null }) {
-  const { api, ready, error, settings } = useWms()
+  const { api, ready, error, settings, can } = useWms()
   const [tab, setTab] = useState<WmsTab>(deepLink?.kind === 'lpn' ? 'scan' : deepLink?.kind === 'grn' ? 'labels' : 'receive')
   const [grnId, setGrnId] = useState<string | null>(null)
 
@@ -39,6 +40,20 @@ export function WarehousePage({ deepLink }: { deepLink: WmsDeepLink | null }) {
       alive = false
     }
   }, [api, deepLink])
+
+  // ปิดยอดที่รอผู้ใช้คนนี้รับทราบ (Planning / บัญชี) ⇒ ตัวเลขแดงที่แท็บบัญชีคุม
+  const [toAck, setToAck] = useState(0)
+  useEffect(() => {
+    if (!ready || !(can('ledger.ack.planning') || can('ledger.ack.account'))) return
+    let alive = true
+    api
+      .listClosings()
+      .then((c) => alive && setToAck(pendingAcks(c, can).length))
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [api, ready, can, tab])
 
   const openGrn = (id: string) => {
     setGrnId(id)
@@ -60,6 +75,11 @@ export function WarehousePage({ deepLink }: { deepLink: WmsDeepLink | null }) {
               >
                 <span className={`grid h-6 w-6 place-items-center rounded-full border-2 text-xs ${tab === k ? 'border-white' : 'border-slate-300'}`}>{n}</span>
                 {label}
+                {k === 'ledger' && toAck > 0 && (
+                  <span className="grid h-5 min-w-5 place-items-center rounded-full bg-rose-600 px-1 text-[11px] font-bold text-white" title="ปิดยอดรอคุณรับทราบ">
+                    {toAck}
+                  </span>
+                )}
               </button>
             ))}
           </nav>

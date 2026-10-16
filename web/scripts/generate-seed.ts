@@ -35,7 +35,7 @@ const sql = [
   rows('customers', ['id', 'name'], CUSTOMERS.map((c) => [c.id, c.name])),
   rows('product_models', ['code', 'customer_id', 'requires_inspection'],
     MODELS.map((m) => [m.code, m.customerId, m.requiresInspection ? 'true' : 'false']).map((r) => r as Value[])),
-  rows('parts', ['part_no', 'name', 'part_type', 'customer_id'], PARTS.map((p) => [p.partNo, p.description, p.type, p.customerId])),
+  rows('parts', ['part_no', 'name', 'part_type', 'customer_id', 'revision'], PARTS.map((p) => [p.partNo, p.description, p.type, p.customerId, p.revision ?? undefined])),
   PARTS.flatMap((p) => p.models.map((m) =>
     `insert into public.part_models (part_id, model_code) select id, ${q(m)} from public.parts where part_no = ${q(p.partNo)};`)).join('\n') + '\n',
   rows('zone_rules', ['customer_id', 'part_type', 'zone_id'], ZONE_RULES.map((r) => [r.customerId, r.type ?? undefined, r.zoneId])),
