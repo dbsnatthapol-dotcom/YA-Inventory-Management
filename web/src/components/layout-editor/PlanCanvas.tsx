@@ -18,7 +18,8 @@ interface View {
 
 type Drag =
   | { kind: 'zone'; id: string; handle: Handle | 'move'; start: [number, number]; orig: Rect; moved: boolean }
-  | { kind: 'pan'; startClient: [number, number]; orig: View; perPx: number; moved: boolean }
+  | { kind: 'pan'; startClient: [number, number]; orig: View; perPx: number; moved: boolean; tap?: string }
+  | { kind: 'pinch'; dist: number; mid: [number, number]; orig: View }
 
 interface Props {
   floor: Floor
@@ -32,6 +33,10 @@ interface Props {
   stock: Map<string, ZoneContents>
   showAisles: boolean
   isEditable: (zone: Zone) => boolean
+  /** เส้นทางนำทางบนชั้นนี้ (พิกัดภายในชั้น) */
+  route?: [number, number][][]
+  /** หมุดบนผัง เช่น จุดเริ่ม / ปลายทาง */
+  marks?: { x: number; z: number; color: string; label: string }[]
 }
 
 const MIN_SIZE = 1
@@ -68,8 +73,10 @@ function resize(orig: Rect, handle: Handle | 'move', dx: number, dz: number, flo
 }
 
 /** ผังพื้นมุมบน: ลากโซนเพื่อย้าย ลากจุดมุม/ขอบเพื่อปรับขนาด ลากพื้นที่ว่างเพื่อเลื่อนผัง หมุนล้อเมาส์เพื่อซูม */
-export function PlanCanvas({ floor, paint, zones, nodes, selectedId, onSelect, onCommit, issues, stock, showAisles, isEditable }: Props) {
+export function PlanCanvas({ floor, paint, zones, nodes, selectedId, onSelect, onCommit, issues, stock, showAisles, isEditable, route, marks }: Props) {
   const svg = useRef<SVGSVGElement>(null)
+  // นิ้วที่แตะจออยู่ (2 นิ้ว = ซูมแบบบีบ)
+  const pointers = useRef(new Map<number, [number, number]>())
   const fit = useMemo<View>(() => ({ x: -7, y: -6, w: floor.width + 14, h: floor.depth + 13 }), [floor.width, floor.depth])
   const [view, setView] = useState<View>(fit)
   const [drag, setDrag] = useState<Drag | null>(null)
@@ -104,23 +111,43 @@ export function PlanCanvas({ floor, paint, zones, nodes, selectedId, onSelect, o
       return { x: cx - (v.w * k) / 2, y: cy - (v.h * k) / 2, w, h: v.h * k }
     })
 
-  const startPan = (e: ReactPointerEvent) => {
+  const startPan = (e: ReactPointerEvent, tap?: string) => {
     const el = svg.current!
     const box = el.getBoundingClientRect()
     el.setPointerCapture(e.pointerId)
-    setDrag({ kind: 'pan', startClient: [e.clientX, e.clientY], orig: view, perPx: Math.max(view.w / box.width, view.h / box.height), moved: false })
+    pointers.current.set(e.pointerId, [e.clientX, e.clientY])
+    if (pointers.current.size === 2) {
+      const [a, b] = [...pointers.current.values()]
+      setDrag({ kind: 'pinch', dist: Math.hypot(a[0] - b[0], a[1] - b[1]), mid: toPlan((a[0] + b[0]) / 2, (a[1] + b[1]) / 2), orig: view })
+      return
+    }
+    setDrag({ kind: 'pan', startClient: [e.clientX, e.clientY], orig: view, perPx: Math.max(view.w / box.width, view.h / box.height), moved: false, tap })
   }
 
   const startZone = (e: ReactPointerEvent, zone: Zone, handle: Handle | 'move') => {
     e.stopPropagation()
+    // โซนที่แก้ไม่ได้: ลากเพื่อเลื่อนผังได้ แตะเฉย ๆ = เลือก
+    if (!isEditable(zone)) return startPan(e, zone.id)
     onSelect(zone.id)
-    if (!isEditable(zone)) return
     svg.current!.setPointerCapture(e.pointerId)
     setDrag({ kind: 'zone', id: zone.id, handle, start: toPlan(e.clientX, e.clientY), orig: { x: zone.x, z: zone.z, width: zone.width, depth: zone.depth }, moved: false })
   }
 
   const onMove = (e: ReactPointerEvent) => {
     if (!drag) return
+    if (pointers.current.has(e.pointerId)) pointers.current.set(e.pointerId, [e.clientX, e.clientY])
+    if (drag.kind === 'pinch') {
+      if (pointers.current.size < 2) return
+      const [a, b] = [...pointers.current.values()]
+      const d = Math.hypot(a[0] - b[0], a[1] - b[1])
+      if (d < 1) return
+      const o = drag.orig
+      const w = Math.min(Math.max((o.w * drag.dist) / d, 12), 320)
+      const k = w / o.w
+      const [px, py] = drag.mid
+      setView({ x: px - (px - o.x) * k, y: py - (py - o.y) * k, w, h: o.h * k })
+      return
+    }
     if (drag.kind === 'pan') {
       const dx = (e.clientX - drag.startClient[0]) * drag.perPx
       const dy = (e.clientY - drag.startClient[1]) * drag.perPx
@@ -134,8 +161,14 @@ export function PlanCanvas({ floor, paint, zones, nodes, selectedId, onSelect, o
     setDraft({ id: drag.id, ...next })
   }
 
-  const onUp = () => {
-    if (drag?.kind === 'pan' && !drag.moved) onSelect(null)
+  const onUp = (e: ReactPointerEvent) => {
+    pointers.current.delete(e.pointerId)
+    if (drag?.kind === 'pinch') {
+      // ยกนิ้วหนึ่งออก: จบการซูม (ไม่เลื่อนผังต่อ)
+      if (pointers.current.size === 0) setDrag(null)
+      return
+    }
+    if (drag?.kind === 'pan' && !drag.moved) onSelect(drag.tap ?? null)
     if (drag?.kind === 'zone' && draft && draft.id === drag.id) {
       const o = drag.orig
       if (draft.x !== o.x || draft.z !== o.z || draft.width !== o.width || draft.depth !== o.depth)
@@ -166,7 +199,7 @@ export function PlanCanvas({ floor, paint, zones, nodes, selectedId, onSelect, o
         viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
         preserveAspectRatio="xMidYMid meet"
         onWheel={onWheel}
-        onPointerDown={startPan}
+        onPointerDown={(e) => startPan(e)}
         onPointerMove={onMove}
         onPointerUp={onUp}
         onPointerCancel={onUp}
@@ -233,6 +266,22 @@ export function PlanCanvas({ floor, paint, zones, nodes, selectedId, onSelect, o
             onHandle={(e, h) => startZone(e, selected, h)}
           />
         )}
+
+        {/* เส้นทางนำทาง */}
+        {route?.map((pts, i) => (
+          <g key={`r${i}`} fill="none" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points={pts.map((p) => p.join(',')).join(' ')} stroke="#ffffff" strokeWidth={unit * 2.4} />
+            <polyline points={pts.map((p) => p.join(',')).join(' ')} stroke="#2563eb" strokeWidth={unit * 1.4} />
+          </g>
+        ))}
+        {marks?.map((m) => (
+          <g key={m.label} transform={`translate(${m.x}, ${m.z})`}>
+            <circle r={unit * 2.6} fill={m.color} stroke="#fff" strokeWidth={unit * 0.6} />
+            <text y={unit * 0.9} textAnchor="middle" fontSize={unit * 2.6} fontWeight={700} fill="#fff">
+              {m.label}
+            </text>
+          </g>
+        ))}
 
         {/* ทิศทาง */}
         <text x={floor.width / 2} y={floor.depth + 3.2} textAnchor="middle" fontSize={1.4} fill="#475569" fontWeight={600}>

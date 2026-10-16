@@ -4,6 +4,7 @@ import { fmt, lpnFromScan, TX_LABEL, txSummary } from '../../wms/logic'
 import type { Grn, Lpn, Perm, Tx } from '../../wms/types'
 import { useWms } from '../../wms/useWms'
 import { zoneHeadOf } from '../../wms/labels'
+import { useIsMobile } from '../../lib/viewMode'
 import { QrScanner } from './QrScanner'
 import { Alert, BigButton, Card, Field, inputCls, Pill, type Tone } from './ui'
 
@@ -40,6 +41,7 @@ interface Current {
 
 export function ScanTab({ initialCode }: { initialCode: string | null }) {
   const { api, master, can } = useWms()
+  const mobile = useIsMobile()
   const [mode, setModeState] = useState<Mode>(loadMode)
   const [cur, setCur] = useState<Current | null>(null)
   const [code, setCode] = useState('')
@@ -172,8 +174,29 @@ export function ScanTab({ initialCode }: { initialCode: string | null }) {
   const locChoices = [cur?.homeLocation, 'MI3-QC', 'NG-HOLD', 'RCV-01'].filter((x, i, a): x is string => !!x && a.indexOf(x) === i && x !== lpn?.locationCode)
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[1fr_380px]">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
       <div className="flex min-w-0 flex-col gap-4">
+        {mobile ? (
+          <Card eyebrow="1 · เลือกงาน (ระบบจำไว้)">
+            <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1" role="radiogroup" aria-label="งานที่จะสแกน">
+              {MODES.map((m) => {
+                const ok = m.perm === null || can(m.perm)
+                return (
+                  <button
+                    key={m.k}
+                    role="radio"
+                    aria-checked={mode === m.k}
+                    onClick={() => setMode(m.k)}
+                    className={`min-h-[44px] shrink-0 rounded-full px-4 text-sm font-semibold ring-1 ${mode === m.k ? 'bg-sky-700 text-white ring-sky-700' : 'bg-white text-slate-700 ring-slate-300'} ${ok ? '' : 'opacity-40'}`}
+                  >
+                    {m.name}
+                  </button>
+                )
+              })}
+            </div>
+            <p className="text-xs text-slate-500">{MODES.find((m) => m.k === mode)?.hint}</p>
+          </Card>
+        ) : (
         <Card eyebrow="ขั้นที่ 1 · เลือกงานก่อนสแกน (ระบบจำโหมดไว้ สแกนกล่องถัดไปได้เลย)">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
             {MODES.map((m) => {
@@ -193,8 +216,9 @@ export function ScanTab({ initialCode }: { initialCode: string | null }) {
             })}
           </div>
         </Card>
+        )}
 
-        <Card eyebrow="ขั้นที่ 2 · สแกน QR ที่กล่อง">
+        <Card eyebrow={mobile ? '2 · สแกน QR ที่กล่อง' : 'ขั้นที่ 2 · สแกน QR ที่กล่อง'}>
           {camera && (
             <QrScanner
               onCode={(t) => {

@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { errorText } from '../../wms/api'
 import { aiReaderAvailable, readInvoicePhoto, readPackingListPhoto } from '../../wms/docReader'
+import { useIsMobile } from '../../lib/viewMode'
 import { zoneCodeOf } from '../../wms/locations'
 import { fmt, needsQi, suggestedZone } from '../../wms/logic'
 import { SAMPLE_INVOICE, SAMPLE_MODEL, SAMPLE_PACKING_LIST } from '../../wms/sampleDocs'
@@ -39,6 +40,7 @@ function PhotoPick({ id, label, file, onFile }: { id: string; label: string; fil
 
 export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }) {
   const { api, master, settings, can } = useWms()
+  const mobile = useIsMobile()
   const [modelCode, setModelCode] = useState('')
   const [pl, setPl] = useState({ refDoc: '', soNo: '', packages: '' })
   const [inv, setInv] = useState({ invoiceNo: '', poNo: '', docDate: '', movementType: '' })
@@ -180,10 +182,80 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
     }
   }
 
+  /** ช่องกรอกของแต่ละรายการ: ใช้ทั้งตาราง (จอคอม) และการ์ด (มือถือ) */
+  const cells = (r: Row, wide: boolean) => {
+    const qi = needsQi(master, settings.qiPartTypes, modelCode, r.partNo)
+    const known = master.parts.some((p) => p.partNo === r.partNo)
+    const zone = suggestedZone(master, customerId, r.partNo)
+    const bad = r.counted !== r.plQty || (r.invQty !== null && r.counted !== r.invQty)
+    const num = `rounded-md px-2 text-right font-mono ${wide ? 'w-full py-2.5 text-base' : 'w-24 py-1.5'}`
+    return {
+      bad,
+      part: (
+        <input
+          id={`part-${r.key}`}
+          list="wms-parts"
+          className={`rounded-md border border-slate-300 px-2 font-mono ${wide ? 'w-full py-2.5 text-base' : 'w-36 py-1.5 text-sm'}`}
+          value={r.partNo}
+          onChange={(e) => pickPart(r.key, e.target.value)}
+          aria-label="Part No."
+        />
+      ),
+      pl: (
+        <input id={`pl-${r.key}`} type="number" min={0} inputMode="numeric" className={`${num} border border-slate-300`} value={r.plQty} onChange={(e) => patch(r.key, { plQty: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} aria-label="จำนวน Packing List" />
+      ),
+      counted: (
+        <input id={`cnt-${r.key}`} type="number" min={0} inputMode="numeric" className={`${num} border-2 border-sky-300 font-semibold`} value={r.counted} onChange={(e) => patch(r.key, { counted: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} aria-label="นับได้จริง" />
+      ),
+      inv: (
+        <>
+          {existing ? (
+            <span className={`block font-mono ${wide ? 'py-2.5 text-right text-base' : ''}`}>{fmt(r.invQty)}</span>
+          ) : (
+            <input id={`inv-${r.key}`} type="number" min={0} inputMode="numeric" className={`${num} border border-slate-300`} value={r.invQty ?? ''} placeholder="–" onChange={(e) => patch(r.key, { invQty: e.target.value === '' ? null : Math.max(0, Math.floor(Number(e.target.value) || 0)) })} aria-label="จำนวนใน Invoice" />
+          )}
+          {r.invLine !== null && <div className="text-[10px] text-slate-400">บรรทัด {r.invLine}</div>}
+        </>
+      ),
+      zone: (
+        <>
+          <select
+            className={`rounded-md border px-1.5 font-mono ${wide ? 'w-full py-2.5 text-sm' : 'w-32 py-1.5 text-xs'} ${r.zoneId ? 'border-sky-400 bg-sky-50' : 'border-slate-300'}`}
+            value={r.zoneId ?? ''}
+            onChange={(e) => patch(r.key, { zoneId: e.target.value || null })}
+            aria-label="โซนเก็บ"
+            title={qi ? 'ตรวจ MI3 ก่อน แล้วจึงเก็บเข้าโซนนี้' : undefined}
+          >
+            <option value="">{zone ? `${zoneLabel.get(zone) ?? zone} (แนะนำ)` : 'ระบบเลือก (–)'}</option>
+            {storageZones.map((z) => (
+              <option key={z.id} value={z.id}>
+                {z.label}
+              </option>
+            ))}
+          </select>
+          {qi && <div className="text-[10px] text-slate-400">ผ่าน MI3-QC ก่อน</div>}
+        </>
+      ),
+      pills: (
+        <>
+          {r.counted === r.plQty ? <Pill tone="ok">ตรง PL</Pill> : r.counted < r.plQty ? <Pill tone="bad">ขาด {fmt(r.plQty - r.counted)}</Pill> : <Pill tone="warn">เกิน {fmt(r.counted - r.plQty)}</Pill>}
+          {r.invQty !== null && r.counted !== r.invQty && <Pill tone="bad">ไม่ตรง Invoice</Pill>}
+          {qi && <Pill tone="mi3">ส่ง MI3</Pill>}
+          {r.partNo && !known && <Pill tone="warn">ไม่มีใน Master</Pill>}
+        </>
+      ),
+      remove: (
+        <button className={`rounded-md text-slate-400 hover:bg-rose-50 hover:text-rose-600 ${wide ? 'h-11 w-11 ring-1 ring-slate-200' : 'px-2 py-1'}`} onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))} aria-label="ลบแถว">
+          ✕
+        </button>
+      ),
+    }
+  }
+
   if (!allowed) return <Alert tone="warn">บัญชีนี้ยังไม่มีสิทธิ์รับของ · ให้ผู้ดูแลระบบเปิดสิทธิ์ "รับของ / ออก GRN" ในหน้าหลังบ้าน</Alert>
 
   return (
-    <div className="flex flex-col gap-4 pb-28">
+    <div className={`flex flex-col gap-4 ${mobile ? 'pb-4' : 'pb-28'}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-1.5 text-xs">
           {['1 ถ่าย/กรอกเอกสาร', '2 นับจริง', '3 ยืนยัน → ออก GRN', '4 ติดป้าย'].map((s, i) => (
@@ -256,7 +328,44 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
         }
       >
         <p className="text-xs text-slate-500">จับคู่ด้วย Part No. ไม่ใช้ลำดับบรรทัด · ยอดที่เข้าสต็อกคือ "นับได้จริง" · ช่องเก็บจริงระบบเลือกให้ตอนยืนยัน</p>
-        <div ref={tableRef} className="overflow-x-auto rounded-lg ring-1 ring-slate-200">
+        <div ref={tableRef} className={mobile ? 'flex flex-col gap-2' : 'overflow-x-auto rounded-lg ring-1 ring-slate-200'}>
+          {mobile ? (
+            <>
+              {rows.length === 0 && <p className="py-6 text-center text-sm text-slate-500">ถ่าย Packing List ให้ AI อ่าน หรือกด "+ เพิ่มรายการ" เพื่อกรอกเอง</p>}
+              {rows.map((r, i) => {
+                const c = cells(r, true)
+                return (
+                  <div key={r.key} className={`flex flex-col gap-2 rounded-xl border p-3 ${c.bad ? 'border-rose-200 bg-rose-50/60' : 'border-slate-200 bg-white'}`}>
+                    <div className="flex items-center gap-2">
+                      <span className="w-6 shrink-0 text-right font-mono text-xs text-slate-400">{i + 1}</span>
+                      <div className="min-w-0 flex-1">{c.part}</div>
+                      {c.remove}
+                    </div>
+                    {r.description && <p className="text-sm text-slate-600">{r.description}</p>}
+                    <div className="grid grid-cols-3 gap-2 text-xs text-slate-500">
+                      <label className="flex flex-col gap-1">
+                        Packing List
+                        {c.pl}
+                      </label>
+                      <label className="flex flex-col gap-1 font-semibold text-sky-800">
+                        นับได้จริง
+                        {c.counted}
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        Invoice
+                        {c.inv}
+                      </label>
+                    </div>
+                    <label className="flex flex-col gap-1 text-xs text-slate-500">
+                      โซนเก็บ
+                      {c.zone}
+                    </label>
+                    <div className="flex flex-wrap gap-1">{c.pills}</div>
+                  </div>
+                )
+              })}
+            </>
+          ) : (
           <table className="w-full min-w-[920px] text-sm">
             <thead>
               <tr>
@@ -280,71 +389,24 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
                 </tr>
               )}
               {rows.map((r, i) => {
-                const qi = needsQi(master, settings.qiPartTypes, modelCode, r.partNo)
-                const known = master.parts.some((p) => p.partNo === r.partNo)
-                const zone = suggestedZone(master, customerId, r.partNo)
-                const bad = r.counted !== r.plQty || (r.invQty !== null && r.counted !== r.invQty)
+                const c = cells(r, false)
                 return (
-                  <tr key={r.key} className={bad ? 'bg-rose-50/60' : undefined}>
+                  <tr key={r.key} className={c.bad ? 'bg-rose-50/60' : undefined}>
                     <td className={`${tdCls} text-right font-mono text-slate-400`}>{i + 1}</td>
-                    <td className={tdCls}>
-                      <input
-                        id={`part-${r.key}`}
-                        list="wms-parts"
-                        className="w-36 rounded-md border border-slate-300 px-2 py-1.5 font-mono text-sm"
-                        value={r.partNo}
-                        onChange={(e) => pickPart(r.key, e.target.value)}
-                        aria-label="Part No."
-                      />
-                    </td>
+                    <td className={tdCls}>{c.part}</td>
                     <td className={`${tdCls} max-w-[260px] text-slate-600`}>{r.description}</td>
-                    <td className={`${tdCls} text-right`}>
-                      <input id={`pl-${r.key}`} type="number" min={0} inputMode="numeric" className="w-24 rounded-md border border-slate-300 px-2 py-1.5 text-right font-mono" value={r.plQty} onChange={(e) => patch(r.key, { plQty: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} aria-label="จำนวน Packing List" />
-                    </td>
-                    <td className={`${tdCls} text-right`}>
-                      <input id={`cnt-${r.key}`} type="number" min={0} inputMode="numeric" className="w-24 rounded-md border-2 border-sky-300 px-2 py-1.5 text-right font-mono font-semibold" value={r.counted} onChange={(e) => patch(r.key, { counted: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} aria-label="นับได้จริง" />
-                    </td>
-                    <td className={`${tdCls} text-right`}>
-                      {existing ? (
-                        <span className="font-mono">{fmt(r.invQty)}</span>
-                      ) : (
-                        <input id={`inv-${r.key}`} type="number" min={0} inputMode="numeric" className="w-24 rounded-md border border-slate-300 px-2 py-1.5 text-right font-mono" value={r.invQty ?? ''} placeholder="–" onChange={(e) => patch(r.key, { invQty: e.target.value === '' ? null : Math.max(0, Math.floor(Number(e.target.value) || 0)) })} aria-label="จำนวนใน Invoice" />
-                      )}
-                      {r.invLine !== null && <div className="text-[10px] text-slate-400">บรรทัด {r.invLine}</div>}
-                    </td>
-                    <td className={tdCls}>
-                      <select
-                        className={`w-32 rounded-md border px-1.5 py-1.5 font-mono text-xs ${r.zoneId ? 'border-sky-400 bg-sky-50' : 'border-slate-300'}`}
-                        value={r.zoneId ?? ''}
-                        onChange={(e) => patch(r.key, { zoneId: e.target.value || null })}
-                        aria-label="โซนเก็บ"
-                        title={qi ? 'ตรวจ MI3 ก่อน แล้วจึงเก็บเข้าโซนนี้' : undefined}
-                      >
-                        <option value="">{zone ? `${zoneLabel.get(zone) ?? zone} (แนะนำ)` : 'ระบบเลือก (–)'}</option>
-                        {storageZones.map((z) => (
-                          <option key={z.id} value={z.id}>
-                            {z.label}
-                          </option>
-                        ))}
-                      </select>
-                      {qi && <div className="text-[10px] text-slate-400">ผ่าน MI3-QC ก่อน</div>}
-                    </td>
-                    <td className={`${tdCls} space-x-1 space-y-1`}>
-                      {r.counted === r.plQty ? <Pill tone="ok">ตรง PL</Pill> : r.counted < r.plQty ? <Pill tone="bad">ขาด {fmt(r.plQty - r.counted)}</Pill> : <Pill tone="warn">เกิน {fmt(r.counted - r.plQty)}</Pill>}
-                      {r.invQty !== null && r.counted !== r.invQty && <Pill tone="bad">ไม่ตรง Invoice</Pill>}
-                      {qi && <Pill tone="mi3">ส่ง MI3</Pill>}
-                      {r.partNo && !known && <Pill tone="warn">ไม่มีใน Master</Pill>}
-                    </td>
-                    <td className={tdCls}>
-                      <button className="rounded-md px-2 py-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600" onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))} aria-label="ลบแถว">
-                        ✕
-                      </button>
-                    </td>
+                    <td className={`${tdCls} text-right`}>{c.pl}</td>
+                    <td className={`${tdCls} text-right`}>{c.counted}</td>
+                    <td className={`${tdCls} text-right`}>{c.inv}</td>
+                    <td className={tdCls}>{c.zone}</td>
+                    <td className={`${tdCls} space-x-1 space-y-1`}>{c.pills}</td>
+                    <td className={tdCls}>{c.remove}</td>
                   </tr>
                 )
               })}
             </tbody>
           </table>
+          )}
           <datalist id="wms-parts">
             {master.parts.map((p) => (
               <option key={p.partNo} value={p.partNo}>
@@ -355,7 +417,8 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
         </div>
       </Card>
 
-      <div className="sticky bottom-2 z-20 flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-sky-700 bg-white px-4 py-3 shadow-lg">
+      {!(mobile && rows.length === 0) && (
+      <div className={`sticky bottom-2 z-20 flex flex-wrap items-center justify-between rounded-xl border-2 border-sky-700 bg-white shadow-lg ${mobile ? 'gap-2 px-3 py-2' : 'gap-3 px-4 py-3'}`}>
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <strong className="text-base">
             {rows.length} รายการ · {fmt(total)} ชิ้น
@@ -366,13 +429,14 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
           {unknown > 0 && <Pill tone="warn">ไม่มีใน Master {unknown}</Pill>}
           {settings.mode === 'trial' && <Pill tone="warn">โหมดทดลอง</Pill>}
         </div>
-        <div className="flex items-center gap-3">
+        <div className={`flex items-center gap-3 ${mobile ? 'w-full flex-col items-stretch gap-1' : ''}`}>
           {problems.length > 0 && <span className="text-xs text-rose-600">{problems[0]}</span>}
-          <BigButton disabled={busy || problems.length > 0} onClick={submit} className="!py-3 text-base">
+          <BigButton disabled={busy || problems.length > 0} onClick={submit} className={`!py-3 text-base ${mobile ? 'w-full' : ''}`}>
             {busy ? 'กำลังบันทึก…' : 'ยืนยันรับเข้า → ออก GRN'}
           </BigButton>
         </div>
       </div>
+      )}
     </div>
   )
 }

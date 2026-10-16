@@ -8,6 +8,8 @@ import { WarehousePage, type WmsDeepLink } from './components/wms/WarehousePage'
 import { WmsProvider } from './wms/WmsProvider'
 import { useWms } from './wms/useWms'
 import { layoutSavePayload } from './lib/layoutSave'
+import { useViewModeState, ViewModeContext } from './lib/viewMode'
+import { MobileShell } from './components/mobile/MobileShell'
 import { FactoryScene, type CameraCommand, type MapPinSpec, type ViewMode } from './components/FactoryScene'
 import { CameraButtons } from './components/map/CameraButtons'
 import { IconClose, IconPanel } from './components/map/icons'
@@ -77,6 +79,7 @@ function FactoryApp() {
   const [loaded, setLoaded] = useState<LoadedLayout>({ layout: sampleLayout, source: 'sample' })
   const layoutEdits = useLayoutEdits()
   const wms = useWms()
+  const view = useViewModeState()
   // สิทธิ์แก้ผังกำหนดในตารางสิทธิ์ (layout.edit) · โหมดสาธิตเปิดให้ทดลอง
   const canEditLayout = role === null || wms.can('layout.edit')
   // ผังที่ใช้งานจริง = ผังหลัก + ตำแหน่งที่ผู้ใช้ปรับ (ทางเดินที่ถูกขวางถูกปิด, จุดเข้า-ออกคำนวณใหม่)
@@ -218,6 +221,20 @@ function FactoryApp() {
     setSelectedPallet(null)
   }
 
+  // มือถือ: หน้าจอหน้างาน (ไม่โหลดผัง 3D)
+  if (view.mode === 'mobile')
+    return (
+      <ViewModeContext.Provider value="mobile">
+        <MobileShell
+          layout={layout}
+          deepLink={deepLink}
+          user={auth.profile ? { name: auth.profile.full_name, code: auth.profile.employee_code, role: ROLE_LABEL[auth.profile.role] } : null}
+          onSignOut={auth.profile ? () => void auth.signOut() : undefined}
+          onDesktop={() => view.setPref('desktop')}
+        />
+      </ViewModeContext.Provider>
+    )
+
   return (
     <div className="flex h-full flex-col bg-slate-100">
       <header className="relative z-30 flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-slate-200 bg-white px-4 py-2">
@@ -257,6 +274,13 @@ function FactoryApp() {
         </div>
 
         <div className="ml-auto flex items-center gap-3">
+          <button
+            className="rounded-full px-2.5 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+            onClick={() => view.setPref('mobile')}
+            title="หน้าจอสำหรับหน้างาน: สแกน รับของ ค้นหา ผัง 2D (เครื่องนี้จะจำไว้)"
+          >
+            📱 โหมดมือถือ
+          </button>
           <span className="hidden items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200 lg:flex" title="แหล่งข้อมูลผัง">
             <i className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
             {loaded.source === 'supabase' ? 'Supabase' : 'ผังตัวอย่าง'}
