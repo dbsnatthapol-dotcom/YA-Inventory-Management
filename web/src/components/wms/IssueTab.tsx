@@ -4,6 +4,8 @@ import { fmt } from '../../wms/logic'
 import { bomQty, fgOfModel, partsOfModel, resolvePart, stockByPart } from '../../wms/partCodes'
 import type { FgItem, Lpn, PartMaster, Requisition } from '../../wms/types'
 import { useWms } from '../../wms/useWms'
+import { PrintDialog } from './Print'
+import { PlanningPage } from './ReportPages'
 import { Alert, BigButton, Card, Field, inputCls, Pill, Segmented, tdCls, thCls } from './ui'
 
 type Mode = 'sub' | 'fm005' | 'report'
@@ -509,6 +511,7 @@ function PlanningReport() {
   const [to, setTo] = useState(today)
   const [reqs, setReqs] = useState<Requisition[] | null>(null)
   const [busy, setBusy] = useState(false)
+  const [printing, setPrinting] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -539,7 +542,7 @@ function PlanningReport() {
         eyebrow="จาก FM-P-005 ที่บันทึกแล้ว · คงเหลือ = สต็อกหลังตัดยอดใบนั้น"
         action={
           <div className="flex gap-2">
-            <BigButton tone="secondary" onClick={() => window.print()}>
+            <BigButton tone="secondary" disabled={!fm.length} onClick={() => setPrinting(true)}>
               พิมพ์
             </BigButton>
             <BigButton disabled={busy || !fm.length} onClick={() => void exportXlsx()}>
@@ -559,6 +562,9 @@ function PlanningReport() {
         {reqs && !fm.length && <p className="text-sm text-slate-500">ยังไม่มี FM-P-005 ในช่วงนี้</p>}
       </Card>
 
+      <PrintDialog open={printing} onClose={() => setPrinting(false)} format="a4" title="ตัวอย่างก่อนพิมพ์ · สรุปส่ง Planning" subtitle={`FM-P-005 ${fm.length} ใบ`} printLabel="พิมพ์">
+        <PlanningPage fm={fm} parts={master.parts} from={from} to={to} />
+      </PrintDialog>
       {pending.length > 0 && (
         <Alert tone="warn">
           มีใบเบิกย่อยรอ FM-P-005 {pending.length} ใบ:{' '}

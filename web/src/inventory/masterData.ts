@@ -1,8 +1,10 @@
+import { canonCodes, partRevision } from '../wms/partCodes'
 import type { Customer, ExtractedInvoice, Part, ProductModel, StockSheet, ZoneRule } from './types'
 
 /**
  * Master: ใบรายงาน STOCK ประจำวันแผนก W/H ASSY ของลูกค้า Royal Enfield แยกตาม Model (คัดลอกจากไฟล์ Excel ของแผนก)
- * part ที่ใช้ร่วมกันหลาย Model (เช่น 150324/A) มีรหัสเดียว แต่โยงกับหลาย Model ผ่าน models[]
+ * part ที่ใช้ร่วมกันหลาย Model (เช่น 150324) มีรหัสเดียว แต่โยงกับหลาย Model ผ่าน models[]
+ * รหัสในระบบเป็นเลขฐาน (/A /B ท้ายรหัสเป็นแค่ revision) · ยกเว้นเลขฐานซ้ำกันแต่เป็นคนละ part (RAT00322/A ยางใน กับ /D ยางนอก — รอยืนยัน)
  *
  * ข้อมูลในต้นฉบับที่ควรตรวจ (ใส่ตามที่เห็น):
  *  - K1G: ไม่มีแถวที่ 34, แถว 19 TYPE "SPKOE" (แก้เป็น SPOKE)
@@ -40,7 +42,7 @@ const SHEETS_SOURCE: SheetSource[] = [
       ['RIM', 'RAJ00537/B', 'RIM, FRONT, TUBELESS,21X 2.15"'],
       ['RIM', 'RAT00587/B', 'RIM, REAR, TUBELESS, 17" X 3.5"'],
       ['RIM', 'RAJ00995/A', 'RIM, FRONT, TUBELESS,21X 2.15" BLACK'],
-      ['RIM', 'RAT1088/A', 'RIM, REAR, TUBELESS, 17" X 3.5" BLACK'],
+      ['RIM', 'RAT01088/A', 'RIM, REAR, TUBELESS, 17" X 3.5" BLACK'],
       ['RIM', 'PK1G0021', 'RIM,FRONT 21x2.15" GOLD'],
       ['RIM', 'PK1G0022', 'RIM,REAR,TL,17x3.5" GOLD'],
       ['RIM', 'RAJ00994/B', 'RIM,FRONT 21x2.15" JF,GOLD'],
@@ -280,17 +282,21 @@ const SHEETS_SOURCE: SheetSource[] = [
   },
 ]
 
+/** รหัสต้นฉบับ → รหัสในระบบ (เลขฐาน) */
+const CANON = canonCodes(SHEETS_SOURCE.flatMap((s) => s.rows.map((r) => r[1])))
+
 /** ใบรายงานแยกตาม Model (ลำดับแถวตามแบบฟอร์มเดิม) */
-export const STOCK_SHEETS: StockSheet[] = SHEETS_SOURCE.map(({ rows, ...sheet }) => ({ ...sheet, partNos: rows.map((r) => r[1]) }))
+export const STOCK_SHEETS: StockSheet[] = SHEETS_SOURCE.map(({ rows, ...sheet }) => ({ ...sheet, partNos: rows.map((r) => CANON.get(r[1])!) }))
 
 /** รวม part จากทุกใบรายงาน: รหัสเดียวกันเป็น part เดียว และรวม Model ที่ใช้ */
 function buildParts(sources: SheetSource[]): Part[] {
   const byNo = new Map<string, Part>()
   for (const sheet of sources)
-    for (const [type, partNo, description] of sheet.rows) {
+    for (const [type, raw, description] of sheet.rows) {
+      const partNo = CANON.get(raw)!
       const existing = byNo.get(partNo)
       if (existing) existing.models = [...new Set([...existing.models, ...sheet.models])]
-      else byNo.set(partNo, { partNo, type, description, customerId: sheet.customerId, models: [...sheet.models] })
+      else byNo.set(partNo, { partNo, type, description, customerId: sheet.customerId, models: [...sheet.models], revision: partNo.includes('/') ? null : partRevision(raw) })
     }
   return [...byNo.values()]
 }

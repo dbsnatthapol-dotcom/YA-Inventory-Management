@@ -15,6 +15,9 @@ export type Perm =
   | 'master.edit'
   | 'accesslog.view'
   | 'layout.edit'
+  | 'ledger.close'
+  | 'ledger.ack.planning'
+  | 'ledger.ack.account'
 
 export const PERMS: { key: Perm; label: string; group: string }[] = [
   { key: 'receive.create', label: 'รับของ / ออก GRN', group: 'รับของ' },
@@ -31,6 +34,9 @@ export const PERMS: { key: Perm; label: string; group: string }[] = [
   { key: 'master.edit', label: 'แก้ข้อมูลหลัก (part, ช่องเก็บ)', group: 'หลังบ้าน' },
   { key: 'accesslog.view', label: 'ดูประวัติการเข้าใช้', group: 'หลังบ้าน' },
   { key: 'layout.edit', label: 'แก้ผังคลัง (โซน ชั้นวาง บันได ลิฟต์)', group: 'หลังบ้าน' },
+  { key: 'ledger.close', label: 'ปิดยอด / เปิดเดือน บัญชีคุม FM-P-537', group: 'บัญชีคุม' },
+  { key: 'ledger.ack.planning', label: 'รับทราบยอดปิดเดือน (Planning)', group: 'บัญชีคุม' },
+  { key: 'ledger.ack.account', label: 'รับทราบยอดปิดเดือน (บัญชี)', group: 'บัญชีคุม' },
 ]
 
 export interface Settings {
@@ -164,7 +170,7 @@ export interface StaffBrief {
 }
 
 export interface PartMaster {
-  /** รหัสลูกค้า (หลัก) เช่น RAT00586/B */
+  /** รหัสลูกค้าแบบเลขฐาน (หลัก) เช่น RAT00586 · revision /B แยกไว้ที่ revision */
   partNo: string
   name: string
   type: string | null
@@ -172,6 +178,8 @@ export interface PartMaster {
   models: string[]
   /** รหัสภายใน UAM เช่น 2011409 */
   uamCode?: string | null
+  /** revision ล่าสุดที่เห็น เช่น B (ข้อมูลประกอบ) */
+  revision?: string | null
 }
 
 /** ชุดวงล้อสำเร็จรูป (FG) ที่ไลน์เบิก + BOM จำนวน part ต่อ 1 วง */
@@ -277,6 +285,66 @@ export interface LedgerRow {
   docNo: string | null
   lot: string | null
   note: string | null
+}
+
+/** ยอดต่อ part ตอนปิดเดือน */
+export interface ClosingTotal {
+  partNo: string
+  opening: number
+  in: number
+  out: number
+  closing: number
+}
+
+/** ปิดยอดบัญชีคุม FM-P-537 ของ Model ในเดือน + การรับทราบของ Planning / บัญชี */
+export interface StockClosing {
+  id: string
+  modelCode: string
+  /** YYYY-MM */
+  month: string
+  status: 'closed' | 'reopened'
+  totals: ClosingTotal[]
+  closedBy: string | null
+  closedAt: string | null
+  planningBy: string | null
+  planningAt: string | null
+  accountBy: string | null
+  accountAt: string | null
+  note: string | null
+}
+
+/** ใบตรวจนับจากไฟล์ Excel (รอผู้มีสิทธิ์อนุมัติก่อนปรับยอด) */
+export interface StockCountLine {
+  lineNo: number
+  /** รหัสช่องเก็บหรือรหัสโซนตามที่กรอก */
+  loc: string
+  zoneId: string | null
+  partNo: string
+  /** ยอดในระบบตอนส่ง */
+  systemQty: number
+  countedQty: number
+  /** ส่วนต่างที่ปรับจริงตอนอนุมัติ */
+  appliedQty: number | null
+}
+
+export interface StockCount {
+  id: string
+  countNo: string
+  status: 'pending' | 'approved' | 'rejected'
+  note: string | null
+  createdCode: string | null
+  createdAt: string
+  decidedCode: string | null
+  decidedAt: string | null
+  decisionNote: string | null
+  /** เอกสารของกล่องใหม่ (ยอดนับเกินและไม่มีกล่องเดิม) ใช้พิมพ์ป้าย */
+  grnId: string | null
+  lines: StockCountLine[]
+}
+
+export interface StockCountPayload {
+  note?: string
+  lines: { loc: string; partNo: string; counted: number }[]
 }
 
 /** ข้อมูลที่หน้ารับของส่งไปสร้าง GRN */

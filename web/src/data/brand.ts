@@ -4,6 +4,8 @@
  */
 export const BRAND = {
   companyName: 'UNION AUTOPARTS MANUFACTURING CO.,LTD.',
+  /** ชื่อนิติบุคคลบนป้ายและเอกสารทุกชนิด */
+  legalName: 'Union Autoparts Manufacturing Co., Ltd.',
   shortName: 'UAM',
   logoBlue: '#0099ff', // สีโลโก้
   primary: '#0b5aa8', // สีหลักของหน้าจอ (น้ำเงินเข้มจากโลโก้ เพื่อให้อ่านตัวอักษรขาวได้ชัด)

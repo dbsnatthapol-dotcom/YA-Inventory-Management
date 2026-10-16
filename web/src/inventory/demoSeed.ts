@@ -35,11 +35,11 @@ export function buildDemoState(today: string, now: string = `${today}T09:00:00.0
       receivedAt: t(yesterday, '02:30'),
     },
     [
-      { partNo: 'RAJ00537/B', invoiceQty: 300, countedQty: 300, damagedQty: 3, zoneId: zoneOf('RAJ00537/B') },
-      { partNo: 'RAT00587/B', invoiceQty: 300, countedQty: 300, damagedQty: 0, zoneId: zoneOf('RAT00587/B') },
-      { partNo: 'RAJ00538/B', invoiceQty: 10800, countedQty: 10750, damagedQty: 0, zoneId: zoneOf('RAJ00538/B') },
-      { partNo: 'RAJ00550/B', invoiceQty: 21600, countedQty: 21600, damagedQty: 0, zoneId: zoneOf('RAJ00550/B') },
-      { partNo: 'RAJ00301/D', invoiceQty: 300, countedQty: 300, damagedQty: 0, zoneId: zoneOf('RAJ00301/D') },
+      { partNo: 'RAJ00537', invoiceQty: 300, countedQty: 300, damagedQty: 3, zoneId: zoneOf('RAJ00537') },
+      { partNo: 'RAT00587', invoiceQty: 300, countedQty: 300, damagedQty: 0, zoneId: zoneOf('RAT00587') },
+      { partNo: 'RAJ00538', invoiceQty: 10800, countedQty: 10750, damagedQty: 0, zoneId: zoneOf('RAJ00538') },
+      { partNo: 'RAJ00550', invoiceQty: 21600, countedQty: 21600, damagedQty: 0, zoneId: zoneOf('RAJ00550') },
+      { partNo: 'RAJ00301', invoiceQty: 300, countedQty: 300, damagedQty: 0, zoneId: zoneOf('RAJ00301') },
     ],
   )
   s = receiveInvoice(
@@ -54,7 +54,7 @@ export function buildDemoState(today: string, now: string = `${today}T09:00:00.0
       receivedBy: 'ทีมรับเข้า',
       receivedAt: t(yesterday, '03:10'),
     },
-    [{ partNo: '150324/A', invoiceQty: 800, countedQty: 800, damagedQty: 0, zoneId: zoneOf('150324/A') }],
+    [{ partNo: '150324', invoiceQty: 800, countedQty: 800, damagedQty: 0, zoneId: zoneOf('150324') }],
   )
   const MRA = 'MRA ไลน์ประกอบ'
   const QC = 'MI3 คัดงาน'
@@ -71,11 +71,11 @@ export function buildDemoState(today: string, now: string = `${today}T09:00:00.0
     s,
     { invoiceNo: 'RE-INV-2610-0150', invoiceDate: today, supplier: 'Royal Enfield (ตัวอย่าง)', customerId: 'RE', model: 'J1A', provider: 'mock', receivedBy: 'ทีมรับเข้า', receivedAt: ago(240) },
     [
-      { partNo: 'RAJ00296/A', invoiceQty: 150, countedQty: 150, damagedQty: 0, zoneId: zoneOf('RAJ00296/A') },
-      { partNo: 'RAT00328/A', invoiceQty: 150, countedQty: 148, damagedQty: 0, zoneId: zoneOf('RAT00328/A') },
-      { partNo: 'RAJ00575/A', invoiceQty: 5400, countedQty: 5400, damagedQty: 0, zoneId: zoneOf('RAJ00575/A') },
-      { partNo: 'RAJ00298/A', invoiceQty: 10800, countedQty: 10800, damagedQty: 0, zoneId: zoneOf('RAJ00298/A') },
-      { partNo: '1120064/A', invoiceQty: 300, countedQty: 300, damagedQty: 0, zoneId: zoneOf('1120064/A') },
+      { partNo: 'RAJ00296', invoiceQty: 150, countedQty: 150, damagedQty: 0, zoneId: zoneOf('RAJ00296') },
+      { partNo: 'RAT00328', invoiceQty: 150, countedQty: 148, damagedQty: 0, zoneId: zoneOf('RAT00328') },
+      { partNo: 'RAJ00575', invoiceQty: 5400, countedQty: 5400, damagedQty: 0, zoneId: zoneOf('RAJ00575') },
+      { partNo: 'RAJ00298', invoiceQty: 10800, countedQty: 10800, damagedQty: 0, zoneId: zoneOf('RAJ00298') },
+      { partNo: '1120064', invoiceQty: 300, countedQty: 300, damagedQty: 0, zoneId: zoneOf('1120064') },
     ],
   )
   s = moveLot(s, { lotId: 'RE-INV-2610-0150#1', kind: 'to_mi3', qty: 150, at: ago(200), by: QC })
@@ -86,10 +86,10 @@ export function buildDemoState(today: string, now: string = `${today}T09:00:00.0
     s,
     { invoiceNo: 'RE-INV-2610-0152', invoiceDate: today, supplier: 'Royal Enfield (ตัวอย่าง)', customerId: 'RE', model: 'TWIN', provider: 'mock', receivedBy: 'ทีมรับเข้า', receivedAt: ago(120) },
     [
-      { partNo: 'RAJ00669/A', invoiceQty: 120, countedQty: 120, damagedQty: 0, zoneId: zoneOf('RAJ00669/A') },
-      { partNo: 'RAT00728/A', invoiceQty: 120, countedQty: 120, damagedQty: 0, zoneId: zoneOf('RAT00728/A') },
-      { partNo: '148543/A', invoiceQty: 120, countedQty: 120, damagedQty: 2, zoneId: zoneOf('148543/A') },
-      { partNo: '150324/A', invoiceQty: 240, countedQty: 240, damagedQty: 0, zoneId: zoneOf('150324/A') },
+      { partNo: 'RAJ00669', invoiceQty: 120, countedQty: 120, damagedQty: 0, zoneId: zoneOf('RAJ00669') },
+      { partNo: 'RAT00728', invoiceQty: 120, countedQty: 120, damagedQty: 0, zoneId: zoneOf('RAT00728') },
+      { partNo: '148543', invoiceQty: 120, countedQty: 120, damagedQty: 2, zoneId: zoneOf('148543') },
+      { partNo: '150324', invoiceQty: 240, countedQty: 240, damagedQty: 0, zoneId: zoneOf('150324') },
     ],
   )
   s = moveLot(s, { lotId: 'RE-INV-2610-0152#4', kind: 'to_mi3', qty: 240, at: ago(60), by: QC })

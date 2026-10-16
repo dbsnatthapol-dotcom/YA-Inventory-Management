@@ -3,11 +3,14 @@ import { errorText } from '../../wms/api'
 import { buildLedger, monthRange, type LedgerSheet } from '../../wms/ledger'
 import { fmt } from '../../wms/logic'
 import { partsOfModel } from '../../wms/partCodes'
-import type { LedgerRow } from '../../wms/types'
+import type { LedgerRow, StockClosing } from '../../wms/types'
 import { useWms } from '../../wms/useWms'
-import { Alert, BigButton, Card, Field, inputCls, tdCls, thCls } from './ui'
+import { thisMonth } from '../../wms/closing'
+import { ClosingPanel, MonthOverview } from './ClosingPanel'
+import { PrintDialog } from './Print'
+import { LedgerPage } from './ReportPages'
+import { Alert, BigButton, Card, Field, inputCls, Pill, tdCls, thCls } from './ui'
 
-const thisMonth = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Bangkok' }).slice(0, 7)
 const shortDate = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(2, 4)}`
 const num = (n: number) => (n ? fmt(n) : '')
 
@@ -24,6 +27,9 @@ export function LedgerTab() {
   const [picked, setPicked] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [showAll, setShowAll] = useState(false)
+  const [closings, setClosings] = useState<StockClosing[]>([])
+  const [ver, setVer] = useState(0)
+  const [printing, setPrinting] = useState(false)
   const parts = useMemo(() => (model ? partsOfModel(master, model) : []), [master, model])
 
   useEffect(() => {
@@ -43,7 +49,19 @@ export function LedgerTab() {
     return () => {
       alive = false
     }
-  }, [api, parts, month])
+  }, [api, parts, month, ver])
+
+  useEffect(() => {
+    let alive = true
+    api
+      .listClosings()
+      .then((c) => alive && setClosings(c))
+      .catch(() => alive && setClosings([]))
+    return () => {
+      alive = false
+    }
+  }, [api, ver])
+  const closing = closings.find((c) => c.modelCode === model && c.month === month) ?? null
 
   const all = useMemo(() => (rows ? buildLedger(rows, parts, month) : []), [rows, parts, month])
   // ค่าเริ่มต้น: เฉพาะ part ที่มีความเคลื่อนไหวหรือมีของ (Model หนึ่งมีหลายรุ่นย่อย/สี ที่ไม่ได้ใช้ทุกเดือน)
@@ -54,7 +72,7 @@ export function LedgerTab() {
     setBusy(true)
     try {
       const { exportLedger } = await import('../../wms/ledgerExcel')
-      await exportLedger(model, month, sheets)
+      await exportLedger(model, month, sheets, closing)
     } catch (e) {
       setError(errorText(e))
     } finally {
@@ -65,12 +83,17 @@ export function LedgerTab() {
   return (
     <div className="flex flex-col gap-4">
       <Card
-        title="บัญชีคุมสินค้า FM-P-537"
+        title={
+          <span className="flex items-center gap-2">
+            บัญชีคุมสินค้า FM-P-537
+            {closing?.status === 'closed' && <Pill tone="ok">ปิดยอดแล้ว</Pill>}
+          </span>
+        }
         eyebrow="สร้างจากรายการรับเข้า / เบิก / NG / QC ในระบบ · 1 ไฟล์ต่อ Model, 1 sheet ต่อ Part"
         action={
           <div className="flex gap-2">
-            <BigButton tone="secondary" disabled={!sheet} onClick={() => window.print()}>
-              พิมพ์หน้านี้
+            <BigButton tone="secondary" disabled={!sheets.length} onClick={() => setPrinting(true)}>
+              พิมพ์ ({sheets.length} part)
             </BigButton>
             <BigButton disabled={busy || !sheets.length} onClick={() => void exportXlsx()}>
               {busy ? 'กำลังสร้างไฟล์…' : `Export Excel (${sheets.length} part)`}
@@ -100,6 +123,29 @@ export function LedgerTab() {
         {!parts.length && <Alert tone="warn">Model นี้ยังไม่มี part ใน Master · ตั้งในหน้าหลังบ้าน → ข้อมูลหลัก → Part</Alert>}
         {error && <Alert tone="bad">{error}</Alert>}
       </Card>
+
+      {model && rows && (
+        <ClosingPanel
+          model={model}
+          month={month}
+          sheets={all}
+          closing={closing}
+          onChanged={() => setVer((v) => v + 1)}
+        />
+      )}
+      <PrintDialog
+        open={printing}
+        onClose={() => setPrinting(false)}
+        format="a4"
+        title="ตัวอย่างก่อนพิมพ์ · บัญชีคุม FM-P-537"
+        subtitle={`${model} · ${month} · ${sheets.length} part (1 หน้าต่อ part)`}
+        printLabel={`พิมพ์ ${sheets.length} หน้า`}
+      >
+        {sheets.map((s) => (
+          <LedgerPage key={s.partNo} sheet={s} model={model} month={month} closing={closing} />
+        ))}
+      </PrintDialog>
+      <MonthOverview month={month} models={master.models.map((m) => m.code)} closings={closings} current={model} onPick={setModel} />
 
       {sheets.length > 0 && (
         <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">

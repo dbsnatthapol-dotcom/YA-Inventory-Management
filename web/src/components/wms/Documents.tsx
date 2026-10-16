@@ -1,14 +1,17 @@
-import { BRAND } from '../../data/brand'
 import { fmt, lpnUrl } from '../../wms/logic'
 import { zoneHeadOf, type LabelContext } from '../../wms/labels'
 import type { Lpn } from '../../wms/types'
+import { BrandMark } from './BrandMark'
 import { QrCode } from './QrCode'
 
 const dateTime = (iso: string) =>
   new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', calendar: 'gregory' })
 
-/** ป้ายกล่อง 100×150 มม. (แบบใบปะหน้าพัสดุ) — หน่วย mm เพื่อให้พิมพ์ได้ขนาดจริง */
-export function LabelCard({ lpn, ctx, heightMm = 150 }: { lpn: Lpn; ctx: LabelContext; heightMm?: number }) {
+/**
+ * ป้ายชี้บ่งกล่อง (UAM Tag) 100×150 มม. (แบบใบปะหน้าพัสดุ) — หน่วย mm เพื่อให้พิมพ์ได้ขนาดจริง
+ * mono = เครื่องพิมพ์ฉลากความร้อน (โลโก้ดำ) · A4 4 ป้ายต่อแผ่นใช้โลโก้สี
+ */
+export function LabelCard({ lpn, ctx, heightMm = 150, mono = false }: { lpn: Lpn; ctx: LabelContext; heightMm?: number; mono?: boolean }) {
   const line = (id: string) => ctx.lines.find((l) => l.id === id)
   const single = lpn.items.length === 1 ? lpn.items[0] : null
   const total = lpn.items.reduce((s, i) => s + i.qty, 0)
@@ -17,16 +20,16 @@ export function LabelCard({ lpn, ctx, heightMm = 150 }: { lpn: Lpn; ctx: LabelCo
   const desc = single ? (line(single.grnLineId)?.description ?? ctx.master.parts.find((p) => p.partNo === single.partNo)?.name ?? '') : ''
   return (
     <div className="print-page flex flex-col gap-[2mm] border border-black p-[4mm] font-sans" style={{ width: '100mm', height: `${heightMm}mm`, boxSizing: 'border-box' }}>
-      <div className="flex items-start justify-between gap-[2mm] border-b-2 border-black pb-[1.5mm]">
-        <div className="text-[9pt] font-bold leading-tight">
-          UAM · RECEIVING
-          <div className="font-normal">
+      <div className="border-b-2 border-black pb-[1.2mm]">
+        <div className="flex items-center justify-between gap-[2mm] whitespace-nowrap">
+          <BrandMark mono={mono} logo="8.5mm" name="7.8pt" subSize="6.8pt" subtitle={<b>UAM TAG · ป้ายชี้บ่งสินค้า</b>} />
+          {ctx.trial && <div className="border border-black px-[1.5mm] text-[7pt] font-bold">ทดลอง</div>}
+        </div>
+        <div className="mt-[1mm] flex items-end justify-between gap-[2mm]">
+          <div className="truncate text-[8pt]">
             {ctx.grn?.customerId === 'RE' ? 'Royal Enfield' : (ctx.grn?.customerId ?? '')} · {ctx.grn?.modelCode ?? '-'}
           </div>
-        </div>
-        <div className="text-right">
-          <div className="font-mono text-[13pt] font-bold leading-none tracking-tight">{lpn.lpnNo}</div>
-          {ctx.trial && <div className="mt-[1mm] inline-block border border-black px-[1.5mm] text-[7pt] font-bold">ทดลอง</div>}
+          <div className="shrink-0 font-mono text-[13pt] font-bold leading-none tracking-tight">{lpn.lpnNo}</div>
         </div>
       </div>
 
@@ -112,10 +115,8 @@ export function GrnSheet({ ctx }: { ctx: LabelContext }) {
     <div className="print-page flex flex-col gap-[4mm] p-[12mm] text-[9pt]" style={{ width: '210mm', minHeight: '297mm', boxSizing: 'border-box' }}>
       <div className="flex items-start justify-between gap-[6mm] border-b-2 border-black pb-[3mm]">
         <div>
-          <div className="text-[12pt] font-bold" style={{ color: BRAND.primary }}>
-            UNION AUTOPARTS MANUFACTURING CO., LTD.
-          </div>
-          <div className="text-[11pt] font-semibold">ใบรับสินค้า / GOODS RECEIPT NOTE {ctx.trial && <span className="ml-2 border border-black px-1 text-[8pt]">ทดลอง</span>}</div>
+          <BrandMark logo="14mm" name="13pt" />
+          <div className="mt-[2mm] text-[11pt] font-semibold">ใบรับสินค้า / GOODS RECEIPT NOTE {ctx.trial && <span className="ml-2 border border-black px-1 text-[8pt]">ทดลอง</span>}</div>
           <div className="mt-[2mm] font-mono text-[15pt] font-bold">{g.grnNo}</div>
         </div>
         <QrCode text={`${typeof window !== 'undefined' ? window.location.origin : ''}/g/${g.grnNo}`} size="26mm" title={g.grnNo} />

@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { WmsApi } from './api'
-import type { FgItem, Grn, GrnLine, Invoice, InvoiceLine, LedgerRow, Lpn, LpnItem, Requisition, StorageLoc, Tx, TxKind } from './types'
+import type { ClosingTotal, FgItem, Grn, GrnLine, Invoice, InvoiceLine, LedgerRow, Lpn, LpnItem, Requisition, StockClosing, StockCount, StorageLoc, Tx, TxKind } from './types'
 
 type Row = Record<string, unknown>
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v))
@@ -155,7 +155,7 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
 
     async master() {
       const [parts, models, rules, locs, heads, fgs] = await Promise.all([
-        run(sb.from('parts').select('part_no, name, part_type, customer_id, uam_code, part_models(model_code)').order('part_no').limit(5000)),
+        run(sb.from('parts').select('part_no, name, part_type, customer_id, uam_code, revision, part_models(model_code)').order('part_no').limit(5000)),
         run(sb.from('product_models').select('code, customer_id, requires_inspection').order('code')),
         run(sb.from('zone_rules').select('customer_id, part_type, zone_id')),
         run(sb.from('locations').select('code, zone_id, kind, active').order('code').limit(5000)),
@@ -170,6 +170,7 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
           customerId: str(p.customer_id),
           models: ((p.part_models as Row[] | null) ?? []).map((m) => String(m.model_code)),
           uamCode: str(p.uam_code),
+          revision: str(p.revision),
         })),
         models: (models as Row[]).map((m) => ({ code: String(m.code), customerId: String(m.customer_id), requiresInspection: Boolean(m.requires_inspection) })),
         rules: (rules as Row[]).map((r) => ({ customerId: String(r.customer_id), partType: str(r.part_type), zoneId: String(r.zone_id) })),
@@ -361,6 +362,67 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
           note: str(r.note),
         }),
       )
+    },
+    async listClosings() {
+      const rows = (await run(sb.from('stock_closings').select('*').order('month', { ascending: false }).limit(500))) as Row[]
+      return rows.map(
+        (r): StockClosing => ({
+          id: String(r.id),
+          modelCode: String(r.model_code),
+          month: String(r.month),
+          status: r.status === 'closed' ? 'closed' : 'reopened',
+          totals: Array.isArray(r.totals) ? (r.totals as ClosingTotal[]) : [],
+          closedBy: str(r.closed_by),
+          closedAt: str(r.closed_at),
+          planningBy: str(r.planning_by),
+          planningAt: str(r.planning_at),
+          accountBy: str(r.account_by),
+          accountAt: str(r.account_at),
+          note: str(r.note),
+        }),
+      )
+    },
+    closeMonth: async (model, month, note) => {
+      await rpc('stock_close', { p_model: model, p_month: month, p_note: note ?? null })
+    },
+    reopenMonth: async (id, reason) => {
+      await rpc('stock_reopen', { p_id: id, p_reason: reason })
+    },
+    ackClosing: async (id, side) => {
+      await rpc('stock_close_ack', { p_id: id, p_side: side })
+    },
+    submitStockCount: (p) => rpc<{ id: string; countNo: string }>('stock_count_submit', { p }),
+    async listStockCounts() {
+      const rows = (await run(sb.from('stock_counts').select('*, stock_count_lines(*)').order('created_at', { ascending: false }).limit(100))) as Row[]
+      return rows.map(
+        (r): StockCount => ({
+          id: String(r.id),
+          countNo: String(r.count_no),
+          status: r.status as StockCount['status'],
+          note: str(r.note),
+          createdCode: str(r.created_code),
+          createdAt: String(r.created_at),
+          decidedCode: str(r.decided_code),
+          decidedAt: str(r.decided_at),
+          decisionNote: str(r.decision_note),
+          grnId: str(r.grn_id),
+          lines: ((r.stock_count_lines as Row[] | null) ?? [])
+            .map((l) => ({
+              lineNo: Number(l.line_no),
+              loc: String(l.loc),
+              zoneId: str(l.zone_id),
+              partNo: String(l.part_no),
+              systemQty: Number(l.system_qty),
+              countedQty: Number(l.counted_qty),
+              appliedQty: num(l.applied_qty),
+            }))
+            .sort((a, b) => a.lineNo - b.lineNo),
+        }),
+      )
+    },
+    decideStockCount: async (id, approve, note) => {
+      const r = await rpc<{ changed: number; newBoxes: number; grnId?: string | null }>('stock_count_decide', { p_id: id, p_approve: approve, p_note: note ?? null })
+      return { changed: r.changed, newBoxes: r.newBoxes, grnId: r.grnId ?? null }
     },
   }
   return api

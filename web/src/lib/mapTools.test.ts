@@ -9,10 +9,11 @@ import { searchMap } from './search'
 const state = buildDemoState('2026-10-14')
 
 describe('map search', () => {
-  it('finds a part regardless of slash, case and spaces, on-shelf lots first', () => {
-    const hits = searchMap('raj00537b', sampleLayout, state)
+  it('finds a part regardless of revision, case and spaces, on-shelf lots first', () => {
+    expect(searchMap('raj 00537', sampleLayout, state).length).toBeGreaterThan(0)
+    const hits = searchMap('raj00537/b', sampleLayout, state)
     expect(hits.length).toBeGreaterThan(0)
-    expect(hits.every((h) => h.kind === 'lot' && h.lot.partNo === 'RAJ00537/B')).toBe(true)
+    expect(hits.every((h) => h.kind === 'lot' && h.lot.partNo === 'RAJ00537')).toBe(true)
     const first = hits[0]
     expect(first.kind === 'lot' && first.boi).toBeGreaterThan(0)
   })

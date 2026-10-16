@@ -8,9 +8,11 @@ import { PERMS, type FgItem, type PermRow, type StaffBrief, type StorageLoc } fr
 import { resolvePart } from '../../wms/partCodes'
 import { useWms } from '../../wms/useWms'
 import { Alert, BigButton, Card, Field, inputCls, Pill, Segmented, tdCls, thCls } from '../wms/ui'
+import { StockImport } from '../wms/StockImport'
+import { MasterImport } from './MasterImport'
 import { UsersPage } from './UsersPage'
 
-type Tab = 'users' | 'perms' | 'heads' | 'master' | 'system'
+type Tab = 'users' | 'perms' | 'heads' | 'master' | 'import' | 'system'
 
 const EDIT_ROLES: Role[] = ['warehouse', 'mi3', 'production', 'planner', 'engineer', 'manager']
 
@@ -23,6 +25,7 @@ export function BackofficePage({ zones }: { zones: Zone[] }) {
     ...(enabled ? ([['users', 'ผู้ใช้งาน & ประวัติเข้าใช้']] as [Tab, string][]) : []),
     ...(isAdmin ? ([['perms', 'สิทธิ์ตามบทบาท'], ['heads', 'หัวหน้าโซน']] as [Tab, string][]) : []),
     ...(isAdmin || can('master.edit') ? ([['master', 'ข้อมูลหลัก']] as [Tab, string][]) : []),
+    ...(isAdmin || can('master.edit') || can('scan.count') || can('scan.adjust.approve') ? ([['import', 'นำเข้าข้อมูล (Excel)']] as [Tab, string][]) : []),
     ...(isAdmin ? ([['system', 'โหมดระบบ']] as [Tab, string][]) : []),
   ]
   const [tab, setTab] = useState<Tab>(tabs[0]?.[0] ?? 'master')
@@ -51,6 +54,7 @@ export function BackofficePage({ zones }: { zones: Zone[] }) {
             {tab === 'perms' && <PermissionsTab />}
             {tab === 'heads' && <ZoneHeadsTab zones={zones} />}
             {tab === 'master' && <MasterTab zones={zones} />}
+            {tab === 'import' && <ImportTab zones={zones} />}
             {tab === 'system' && <SystemTab />}
           </div>
         )}
@@ -150,6 +154,25 @@ function ZoneHeadsTab({ zones }: { zones: Zone[] }) {
     }
   }, [api])
 
+  const [bulk, setBulk] = useState('')
+  const [busy, setBusy] = useState(false)
+  const headZones = zones.filter((z) => HEAD_KINDS.has(z.kind))
+  // ตั้งคนเดียวดูแลทุกโซน (ช่วงแรก) แล้วค่อยแยกรายโซนตามสายงาน
+  const saveAll = async () => {
+    const who = staff.find((s) => s.id === bulk)
+    if (!who || !window.confirm(`ตั้ง ${who.fullName} เป็นหัวหน้าทั้ง ${headZones.length} โซน?`)) return
+    setBusy(true)
+    try {
+      for (const z of headZones) await api.setZoneHead(z.id, who.id)
+      await reload()
+      setMsg({ tone: 'ok', text: `ตั้ง ${who.fullName} เป็นหัวหน้าทุกโซน (${headZones.length}) แล้ว · แยกรายโซนได้ด้านล่าง` })
+    } catch (e) {
+      setMsg({ tone: 'bad', text: errorText(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const save = async (zone: Zone, staffId: string) => {
     try {
       await api.setZoneHead(zone.id, staffId || null)
@@ -163,9 +186,24 @@ function ZoneHeadsTab({ zones }: { zones: Zone[] }) {
   return (
     <Card title="หัวหน้าโซน" eyebrow="ชื่อจะขึ้นบนป้ายกล่องและหน้าสแกน · เลือกจากพนักงานที่ลงทะเบียนแล้ว">
       {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
+      <div className="flex flex-wrap items-end gap-2 rounded-lg bg-slate-50 p-3">
+        <Field label="ใช้คนเดียวทุกโซน">
+          <select id="head-all" className={inputCls} value={bulk} onChange={(e) => setBulk(e.target.value)}>
+            <option value="">— เลือกพนักงาน —</option>
+            {staff.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.fullName} ({s.employeeCode})
+              </option>
+            ))}
+          </select>
+        </Field>
+        <BigButton disabled={!bulk || busy} onClick={() => void saveAll()}>
+          {busy ? 'กำลังบันทึก…' : `ตั้งทั้ง ${headZones.length} โซน`}
+        </BigButton>
+        <p className="w-full text-xs text-slate-500">ไม่มีชื่อในรายการ? เพิ่มบัญชีพนักงานที่แท็บ “ผู้ใช้งาน & ประวัติเข้าใช้” ก่อน</p>
+      </div>
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-        {zones
-          .filter((z) => HEAD_KINDS.has(z.kind))
+        {headZones
           .map((z) => {
             const head = master.zoneHeads.find((h) => h.zoneId === z.id)
             return (
@@ -187,6 +225,30 @@ function ZoneHeadsTab({ zones }: { zones: Zone[] }) {
           })}
       </div>
     </Card>
+  )
+}
+
+/**
+ * ศูนย์นำเข้าข้อมูลจาก Excel (แบบฟอร์มของระบบ): Part / รหัส UAM, BOM ชุดวงล้อ, ยอดคงเหลือจากการตรวจนับ
+ * ทุกแบบ: ดาวน์โหลดแบบฟอร์ม (มีข้อมูลปัจจุบัน) → กรอก → อัปโหลด → ตรวจทีละแถว → บันทึก/ส่งอนุมัติ
+ */
+function ImportTab({ zones }: { zones: Zone[] }) {
+  const { can } = useWms()
+  const { profile, enabled } = useAuth()
+  const master = !enabled || profile?.role === 'admin' || can('master.edit')
+  const [sub, setSub] = useState<'parts' | 'bom' | 'stock'>(master ? 'parts' : 'stock')
+  return (
+    <>
+      <Segmented
+        label="นำเข้าข้อมูล"
+        value={sub}
+        onChange={setSub}
+        options={[...(master ? ([['parts', 'Part / รหัส UAM'], ['bom', 'BOM ชุดวงล้อ']] as ['parts' | 'bom', string][]) : []), ['stock', 'ยอดคงเหลือ (ตรวจนับ)']]}
+      />
+      {sub === 'parts' && <MasterImport kind="parts" />}
+      {sub === 'bom' && <MasterImport kind="bom" />}
+      {sub === 'stock' && <StockImport zones={zones} />}
+    </>
   )
 }
 
@@ -255,7 +317,10 @@ function PartsEditor() {
             <tbody>
               {shown.map((p) => (
                 <tr key={p.partNo}>
-                  <td className={`${tdCls} font-mono font-semibold`}>{p.partNo}</td>
+                  <td className={`${tdCls} font-mono font-semibold`}>
+                    {p.partNo}
+                    {p.revision && <span className="ml-1 text-xs font-normal text-slate-400">rev {p.revision}</span>}
+                  </td>
                   <td className={`${tdCls} font-mono text-slate-600`}>{p.uamCode ?? '–'}</td>
                   <td className={tdCls}>{p.name}</td>
                   <td className={tdCls}>{p.type && <Pill tone={settings.qiPartTypes.includes(p.type) ? 'mi3' : 'muted'}>{p.type}</Pill>}</td>
@@ -273,7 +338,7 @@ function PartsEditor() {
       </Card>
       <Card title={master.parts.some((p) => p.partNo === form.partNo) ? `แก้ไข ${form.partNo}` : 'เพิ่ม Part ใหม่'}>
         {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
-        <Field label="Part No.">
+        <Field label="Part No." hint="ใช้เลขฐาน เช่น RAT00586 · พิมพ์ /B มาก็ได้ ระบบเก็บเป็นเลขฐานและจำ revision ไว้">
           <input id="pf-no" className={`${inputCls} font-mono`} value={form.partNo} onChange={(e) => setForm({ ...form, partNo: e.target.value })} />
         </Field>
         <Field label="รหัสภายใน UAM" hint="รหัสในใบเบิกย่อยของ MRA เช่น 2011409 · ค้นหา/สแกนด้วยรหัสนี้ได้">
