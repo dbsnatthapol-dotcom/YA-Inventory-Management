@@ -95,9 +95,11 @@ export interface LpnItem {
   grnLineId: string
   partNo: string
   qty: number
+  /** ป้ายที่รายการนี้อยู่ก่อนถูกรวม (มีค่า = กล่องนี้เกิดจากการรวม ยกเลิกการรวมได้) */
+  prevLpnId?: string | null
 }
 
-export type LpnStatus = 'active' | 'empty' | 'merged'
+export type LpnStatus = 'active' | 'empty' | 'merged' | 'void'
 
 export interface Lpn {
   id: string
@@ -110,7 +112,7 @@ export interface Lpn {
   items: LpnItem[]
 }
 
-export type TxKind = 'RECEIVE' | 'PUT' | 'MOVE' | 'ISSUE' | 'ADJ' | 'COUNT' | 'QI' | 'MERGE'
+export type TxKind = 'RECEIVE' | 'PUT' | 'MOVE' | 'ISSUE' | 'ADJ' | 'COUNT' | 'QI' | 'MERGE' | 'UNMERGE' | 'SPLIT'
 
 export interface Tx {
   id: string

@@ -29,7 +29,7 @@ const loadMode = (): Mode => {
   }
 }
 
-const TX_TONE: Record<Tx['kind'], Tone> = { RECEIVE: 'info', PUT: 'ok', MOVE: 'ok', ISSUE: 'info', ADJ: 'warn', COUNT: 'muted', QI: 'mi3', MERGE: 'muted' }
+const TX_TONE: Record<Tx['kind'], Tone> = { RECEIVE: 'info', PUT: 'ok', MOVE: 'ok', ISSUE: 'info', ADJ: 'warn', COUNT: 'muted', QI: 'mi3', MERGE: 'muted', UNMERGE: 'muted', SPLIT: 'muted' }
 const time = (iso: string) => new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 
 interface Current {
@@ -252,7 +252,7 @@ export function ScanTab({ initialCode }: { initialCode: string | null }) {
               <dt className="text-slate-500">หัวหน้าโซน</dt>
               <dd>{zoneHeadOf(master, lpn.locationCode)}</dd>
               <dt className="text-slate-500">สถานะ</dt>
-              <dd>{lpn.status === 'merged' ? <Pill tone="muted">ถูกรวมเข้ากล่องอื่นแล้ว</Pill> : lpn.status === 'empty' ? <Pill tone="muted">ใช้หมดแล้ว</Pill> : lpn.hold ? <Pill tone="mi3">รอตรวจ MI3 · ห้ามเบิก</Pill> : <Pill tone="ok">พร้อมใช้</Pill>}</dd>
+              <dd>{lpn.status === 'merged' ? <Pill tone="muted">ถูกรวมเข้ากล่องอื่นแล้ว</Pill> : lpn.status === 'void' ? <Pill tone="muted">ยกเลิกแล้ว (ใช้ป้ายเดิมก่อนรวม)</Pill> : lpn.status === 'empty' ? <Pill tone="muted">ใช้หมดแล้ว</Pill> : lpn.hold ? <Pill tone="mi3">รอตรวจ MI3 · ห้ามเบิก</Pill> : <Pill tone="ok">พร้อมใช้</Pill>}</dd>
               <dt className="text-slate-500">ที่มา</dt>
               <dd className="font-mono text-xs">
                 {cur?.grn ? `${cur.grn.grnNo} · PL ${cur.grn.plRef}${cur.grn.invoiceNo ? ` · INV ${cur.grn.invoiceNo}` : ''}` : '–'}

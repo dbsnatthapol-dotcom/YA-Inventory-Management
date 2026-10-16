@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import { errorText } from '../../wms/api'
 import { fmt } from '../../wms/logic'
-import type { Grn, GrnDetail } from '../../wms/types'
+import type { Grn, GrnDetail, Lpn, LpnItem } from '../../wms/types'
 import { useWms } from '../../wms/useWms'
 import { FORMAT_NAME, type LabelContext, type PrintFormat } from '../../wms/labels'
 import { GrnSheet, LabelCard, LabelSheet } from './Documents'
 import { PrintDialog } from './Print'
-import { Alert, BigButton, Card, Pill, Segmented } from './ui'
+import { Alert, BigButton, Card, inputCls, Pill, Segmented, tdCls, thCls } from './ui'
 
 const dateTime = (iso: string) => new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 
@@ -19,6 +19,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
   const [printOpen, setPrintOpen] = useState(false)
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad' | 'info'; text: string } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [splitting, setSplitting] = useState<Lpn | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -65,7 +66,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
     try {
       const r = await api.mergeLpns(chosen.map((l) => l.id))
       const d = await api.grnDetail(detail.grn.id)
-      setMsg({ tone: 'ok', text: `รวม ${chosen.length} ป้ายเป็นกล่องเดียวแล้ว · ป้ายใหม่ ${r.lpnNo} (ป้ายเดิมใช้ไม่ได้แล้ว พิมพ์ป้ายใหม่ไปแปะแทน)` })
+      setMsg({ tone: 'ok', text: `รวม ${chosen.length} ป้ายเป็นกล่องเดียวแล้ว · ป้ายใหม่ ${r.lpnNo} (ป้ายเดิมใช้ไม่ได้แล้ว พิมพ์ป้ายใหม่ไปแปะแทน · ถ้ารวมผิด กด "ยกเลิกการรวม" ที่กล่องนี้)` })
       setDetail(d)
       setSelected(new Set(d?.lpns.filter((l) => l.lpnNo === r.lpnNo).map((l) => l.id) ?? []))
     } catch (e) {
@@ -74,6 +75,48 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
       setBusy(false)
     }
   }
+
+  const unmerge = async (l: Lpn) => {
+    if (!detail) return
+    if (!window.confirm(`ยกเลิกการรวมกล่อง ${l.lpnNo}?\n\nป้ายเดิมก่อนรวมจะกลับมาใช้ได้ (ป้ายที่แปะไว้ใช้ต่อได้)\nป้าย ${l.lpnNo} จะใช้ไม่ได้ ให้แกะออก`)) return
+    setBusy(true)
+    setMsg(null)
+    try {
+      const r = await api.unmergeLpn(l.id)
+      const nos = r.lpnNos.split(', ')
+      const d = await api.grnDetail(detail.grn.id)
+      setDetail(d)
+      setSelected(new Set(d?.lpns.filter((x) => nos.includes(x.lpnNo)).map((x) => x.id) ?? []))
+      setMsg({
+        tone: 'ok',
+        text: `ยกเลิกการรวมแล้ว · ป้ายเดิม ${nos.length} ใบกลับมาใช้ได้ (${nos.slice(0, 3).join(', ')}${nos.length > 3 ? ' …' : ''}) · แกะป้าย ${l.lpnNo} ออก · ถ้าป้ายเดิมหาย พิมพ์ใหม่ได้เลย (เลือกไว้ให้แล้ว)`,
+      })
+    } catch (e) {
+      setMsg({ tone: 'bad', text: errorText(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const split = async (l: Lpn, items: { itemId: string; qty: number }[]) => {
+    if (!detail) return
+    setBusy(true)
+    setMsg(null)
+    try {
+      const r = await api.splitLpn(l.id, items)
+      const d = await api.grnDetail(detail.grn.id)
+      setDetail(d)
+      setSelected(new Set(d?.lpns.filter((x) => x.id === l.id || x.id === r.lpnId).map((x) => x.id) ?? []))
+      setSplitting(null)
+      setMsg({ tone: 'ok', text: `แยกกล่องแล้ว · กล่องใหม่ ${r.lpnNo} · ยอดในกล่อง ${l.lpnNo} เปลี่ยน ให้พิมพ์ป้ายใหม่ทั้ง 2 กล่อง (เลือกไว้ให้แล้ว)` })
+    } catch (e) {
+      setMsg({ tone: 'bad', text: errorText(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const describe = (i: LpnItem) => detail?.lines.find((x) => x.id === i.grnLineId)?.description ?? ''
 
   return (
     <div className="grid gap-4 pb-28 lg:grid-cols-[300px_1fr]">
@@ -133,11 +176,8 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
                   const single = l.items.length === 1 ? l.items[0] : null
                   const qty = l.items.reduce((s, i) => s + i.qty, 0)
                   return (
-                    <label
-                      key={l.id}
-                      htmlFor={`lpn-${l.id}`}
-                      className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm transition ${selected.has(l.id) ? 'border-sky-600 bg-sky-50' : 'border-slate-200 hover:bg-slate-50'} ${l.status !== 'active' ? 'opacity-50' : ''}`}
-                    >
+                    <div key={l.id} className={`flex flex-col rounded-lg border text-sm transition ${selected.has(l.id) ? 'border-sky-600 bg-sky-50' : 'border-slate-200 hover:bg-slate-50'} ${l.status !== 'active' ? 'opacity-50' : ''}`}>
+                    <label htmlFor={`lpn-${l.id}`} className="flex cursor-pointer items-start gap-3 p-3">
                       <input id={`lpn-${l.id}`} type="checkbox" className="mt-1 h-5 w-5" checked={selected.has(l.id)} onChange={() => toggle(l.id)} />
                       <span className="min-w-0 flex-1">
                         <span className="block font-mono font-semibold">{single ? single.partNo : `กล่องรวม ${l.items.length} part`}</span>
@@ -149,6 +189,19 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
                       </span>
                       <span className="font-mono font-semibold">{fmt(qty)}</span>
                     </label>
+                    {can('label.print') && l.status === 'active' && (
+                      <div className="flex flex-wrap gap-2 border-t border-slate-200 px-3 py-2">
+                        <button type="button" className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium hover:bg-slate-100 disabled:opacity-40" disabled={busy || qty < 2} onClick={() => setSplitting(l)}>
+                          แยกกล่อง
+                        </button>
+                        {l.items.some((i) => i.prevLpnId) && (
+                          <button type="button" className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium hover:bg-slate-100 disabled:opacity-40" disabled={busy} onClick={() => unmerge(l)}>
+                            ยกเลิกการรวม
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    </div>
                   )
                 })}
               </div>
@@ -192,6 +245,8 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
         </div>
       )}
 
+      {splitting && <SplitDialog key={splitting.id} lpn={splitting} describe={describe} busy={busy} onClose={() => setSplitting(null)} onConfirm={(items) => split(splitting, items)} />}
+
       {detail && (
         <PrintDialog
           open={printOpen}
@@ -206,6 +261,102 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
           {format === 'sheet' && Array.from({ length: sheets }, (_, i) => <LabelSheet key={i} lpns={chosen.slice(i * 4, i * 4 + 4)} ctx={ctx} />)}
         </PrintDialog>
       )}
+    </div>
+  )
+}
+
+/** เลือก part/จำนวนที่จะย้ายออกไปกล่องใหม่ */
+function SplitDialog({
+  lpn,
+  describe,
+  busy,
+  onClose,
+  onConfirm,
+}: {
+  lpn: Lpn
+  describe: (i: LpnItem) => string
+  busy: boolean
+  onClose: () => void
+  onConfirm: (items: { itemId: string; qty: number }[]) => void
+}) {
+  const [qty, setQty] = useState<Record<string, string>>({})
+  const n = (i: LpnItem) => Number(qty[i.id] || 0)
+  const bad = (i: LpnItem) => !Number.isInteger(n(i)) || n(i) < 0 || n(i) > i.qty
+  const picks = lpn.items.filter((i) => n(i) > 0).map((i) => ({ itemId: i.id, qty: n(i) }))
+  const total = picks.reduce((s, p) => s + p.qty, 0)
+  const invalid = lpn.items.some(bad)
+  const leaves = lpn.items.some((i) => i.qty - n(i) > 0)
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 p-3" role="dialog" aria-modal="true" aria-labelledby="split-title" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <h2 id="split-title" className="text-lg font-semibold">
+            แยกกล่อง <span className="font-mono">{lpn.lpnNo}</span>
+          </h2>
+          <p className="text-sm text-slate-500">ใส่จำนวนที่จะย้ายออกไปกล่องใหม่ ระบบจะออกเลขป้ายใหม่ให้ แล้วพิมพ์ป้ายใหม่ทั้ง 2 กล่อง (กล่องเดิมยอดเปลี่ยน)</p>
+        </div>
+        <div className="overflow-y-auto px-5 py-3">
+          <table className="w-full text-sm">
+            <thead>
+              <tr>
+                <th className={thCls}>Part No.</th>
+                <th className={`${thCls} text-right`}>ในกล่อง</th>
+                <th className={`${thCls} text-right`}>ย้ายออก</th>
+                <th className={`${thCls} text-right`}>เหลือ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lpn.items.map((i) => (
+                <tr key={i.id}>
+                  <td className={tdCls}>
+                    <div className="font-mono font-semibold">{i.partNo}</div>
+                    <div className="text-xs text-slate-500">{describe(i)}</div>
+                  </td>
+                  <td className={`${tdCls} text-right font-mono`}>{fmt(i.qty)}</td>
+                  <td className={tdCls}>
+                    <div className="flex items-center justify-end gap-1">
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        max={i.qty}
+                        value={qty[i.id] ?? ''}
+                        placeholder="0"
+                        aria-label={`จำนวนย้ายออก ${i.partNo}`}
+                        onChange={(e) => setQty((q) => ({ ...q, [i.id]: e.target.value }))}
+                        className={`${inputCls} !w-24 text-right ${bad(i) ? '!border-rose-500' : ''}`}
+                      />
+                      <button type="button" className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-100" onClick={() => setQty((q) => ({ ...q, [i.id]: String(i.qty) }))}>
+                        ทั้งหมด
+                      </button>
+                    </div>
+                  </td>
+                  <td className={`${tdCls} text-right font-mono`}>{bad(i) ? '–' : fmt(i.qty - n(i))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-5 py-3">
+          <span className={`text-sm ${invalid || (picks.length && !leaves) ? 'text-rose-600' : 'text-slate-600'}`}>
+            {invalid
+              ? 'จำนวนไม่ถูกต้อง (ต้องเป็นจำนวนเต็ม ไม่เกินที่มีในกล่อง)'
+              : !picks.length
+                ? 'ยังไม่ได้ใส่จำนวน'
+                : !leaves
+                  ? 'ต้องเหลือของในกล่องเดิม · ถ้าจะย้ายทั้งกล่องใช้ "ย้ายที่" ในแท็บสแกน'
+                  : `ย้ายออก ${picks.length} รายการ · ${fmt(total)} ชิ้น`}
+          </span>
+          <div className="flex gap-2">
+            <BigButton tone="secondary" onClick={onClose}>
+              ยกเลิก
+            </BigButton>
+            <BigButton disabled={busy || !picks.length || invalid || !leaves} onClick={() => onConfirm(picks)}>
+              แยกเป็นกล่องใหม่
+            </BigButton>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

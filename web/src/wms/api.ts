@@ -30,6 +30,10 @@ export interface WmsApi {
   grnDetail(grnId: string): Promise<GrnDetail | null>
   findGrnId(grnNo: string): Promise<string | null>
   mergeLpns(lpnIds: string[], location?: string): Promise<{ lpnId: string; lpnNo: string }>
+  /** คืนป้ายเดิมก่อนรวม · ได้เฉพาะเมื่อกล่องรวมยังไม่มีการเคลื่อนไหว */
+  unmergeLpn(lpnId: string): Promise<{ lpnNos: string }>
+  /** ย้าย part/จำนวนที่เลือกออกไปกล่องใหม่ (เลข LPN ใหม่) */
+  splitLpn(lpnId: string, items: { itemId: string; qty: number }[]): Promise<{ lpnId: string; lpnNo: string }>
 
   findLpn(lpnNo: string): Promise<{ lpn: Lpn; grn: Grn | null; homeLocation: string | null } | null>
   scanMove(lpnId: string, to: string, kind: 'PUT' | 'MOVE'): Promise<void>
