@@ -1,7 +1,7 @@
 import { sampleLayout } from '../data/factoryLayout'
 import { MODELS, PARTS, ZONE_RULES } from '../inventory/masterData'
 import type { WmsApi } from './api'
-import { layoutLocations } from './locations'
+import { layoutLocations, zoneCodeOf } from './locations'
 import type {
   Grn,
   GrnLine,
@@ -59,8 +59,8 @@ function seed(): DemoDb {
       [
         ['warehouse', ['receive.create', 'label.print', 'scan.put', 'scan.move', 'scan.issue', 'scan.adjust', 'scan.count', 'invoice.report']],
         ['mi3', ['scan.qi', 'scan.move', 'label.print']],
-        ['engineer', ['scan.adjust.approve', 'invoice.close', 'invoice.report']],
-        ['manager', ['scan.adjust.approve', 'invoice.close', 'invoice.report', 'accesslog.view', 'master.edit']],
+        ['engineer', ['scan.adjust.approve', 'invoice.close', 'invoice.report', 'layout.edit']],
+        ['manager', ['scan.adjust.approve', 'invoice.close', 'invoice.report', 'accesslog.view', 'master.edit', 'layout.edit']],
       ] as [string, string[]][]
     ).flatMap(([role, perms]) => perms.map((perm) => ({ role, perm, allowed: true }))),
     staff: [{ id: 'demo', employeeCode: ME, fullName: 'ผู้ใช้สาธิต', role: 'admin' }],
@@ -199,8 +199,10 @@ export function demoWms(): WmsApi {
           const type = part?.type ?? null
           const needs = !!type && (model?.requiresInspection ?? true) && db.settings.qiPartTypes.includes(type)
           const rule = db.master.rules.find((r) => r.customerId === customer && r.partType === type) ?? db.master.rules.find((r) => r.customerId === customer && r.partType === null)
+          const zoneId = line.zoneId || rule?.zoneId
           const home =
-            db.master.locations.find((l) => l.zoneId === rule?.zoneId && l.active && (l.kind === 'bin' || l.kind === 'floor') && !used.has(l.code))?.code ?? 'RCV-01'
+            db.master.locations.find((l) => l.zoneId === zoneId && l.active && (l.kind === 'bin' || l.kind === 'floor') && !used.has(l.code))?.code ??
+            (line.zoneId ? zoneCodeOf(db.master.locations.find((l) => l.zoneId === line.zoneId)?.code ?? line.zoneId) : 'RCV-01')
           used.add(home)
           const gl: GrnLine = {
             id: uid(),
@@ -481,6 +483,27 @@ export function demoWms(): WmsApi {
         const i = db.master.rules.findIndex((x) => x.customerId === r.customerId && x.partType === type)
         if (i >= 0) db.master.rules[i] = { ...r, partType: type }
         else db.master.rules.push({ ...r, partType: type })
+      }),
+    // สาธิต: ผังเก็บในเครื่อง (useLayoutEdits) — ที่นี่ปรับเฉพาะช่องเก็บให้ตรงกับผัง (กติกาเดียวกับ layout_save)
+    saveLayout: (p) =>
+      commit(() => {
+        const busy = (codes: (code: string) => boolean) => db.lpns.filter((l) => l.status === 'active' && codes(l.locationCode)).map((l) => l.lpnNo)
+        for (const id of p.removed) {
+          const codes = new Set(db.master.locations.filter((l) => l.zoneId === id).map((l) => l.code))
+          const lpns = busy((c) => codes.has(c))
+          if (lpns.length) fail(`โซน ${id} ยังมีของ (${lpns.slice(0, 5).join(', ')}) — ย้ายของออกก่อนลบ`)
+          db.master.locations = db.master.locations.filter((l) => l.zoneId !== id)
+        }
+        for (const z of p.locations) {
+          const want = new Set(z.codes)
+          const dropped = db.master.locations.filter((l) => l.zoneId === z.zoneId && l.active && !want.has(l.code)).map((l) => l.code)
+          const lpns = busy((c) => dropped.includes(c))
+          if (lpns.length) fail(`ช่องที่จะปิดยังมีของ (${lpns.slice(0, 5).join(', ')}) — ย้ายของออกก่อน`)
+          db.master.locations = db.master.locations
+            .map((l) => (l.zoneId === z.zoneId && !want.has(l.code) ? { ...l, active: false } : l))
+            .filter((l) => !want.has(l.code))
+            .concat(z.codes.map((code) => ({ code, zoneId: z.zoneId, kind: z.kind, active: true })))
+        }
       }),
   }
 }

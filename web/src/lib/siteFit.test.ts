@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { sampleLayout } from '../data/factoryLayout'
-import { rackSpec } from '../data/warehouse'
+import { storagePlan } from '../data/warehouse'
 import { toSite, zoneClearance } from './geometry'
 import { findRoute } from './pathfinding'
 
@@ -43,11 +43,14 @@ describe('site fit', () => {
   it('keeps racks below the floor above them (low shelving on the mezzanine)', () => {
     for (const zone of zones.filter((z) => z.kind === 'storage' && floors.find((f) => f.id === z.floorId)?.area === 'building')) {
       const clearance = zoneClearance(floors, zone)
-      expect(rackSpec(clearance).height, zone.id).toBeLessThan(clearance)
+      expect(storagePlan(zone, clearance).height, zone.id).toBeLessThan(clearance)
     }
     const mezz = zones.find((z) => z.id === 'FBM-RK-G')!
     expect(zoneClearance(floors, mezz)).toBeCloseTo(2.25)
-    expect(rackSpec(2.25).levels).toEqual([0, 0.95])
+    expect(mezz.storage).toBe('rack')
+    expect(storagePlan(mezz, 2.25).levels).toEqual([0, 0.95])
+    // พาเลทวางพื้นซ้อนได้แค่ชั้นเดียวใต้ชั้นลอย
+    expect(storagePlan({ ...mezz, storage: 'floor', levels: 3 }, 2.25).levels).toEqual([0])
   })
 
   it('reaches building F floors and the mezzanine from building A', () => {

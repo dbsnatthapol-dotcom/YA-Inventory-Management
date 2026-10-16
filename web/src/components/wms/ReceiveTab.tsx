@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { errorText } from '../../wms/api'
 import { aiReaderAvailable, readInvoicePhoto, readPackingListPhoto } from '../../wms/docReader'
+import { zoneCodeOf } from '../../wms/locations'
 import { fmt, needsQi, suggestedZone } from '../../wms/logic'
 import { SAMPLE_INVOICE, SAMPLE_MODEL, SAMPLE_PACKING_LIST } from '../../wms/sampleDocs'
 import { useWms } from '../../wms/useWms'
@@ -14,6 +15,8 @@ interface Row {
   counted: number
   invQty: number | null
   invLine: number | null
+  /** โซนเก็บที่เลือกเอง (null = ตามที่ระบบแนะนำ) */
+  zoneId: string | null
 }
 
 let seq = 0
@@ -49,6 +52,13 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
   const tableRef = useRef<HTMLDivElement>(null)
 
   const customerId = master.models.find((m) => m.code === modelCode)?.customerId
+  // โซนที่มีช่องเก็บ (พาเลท/rack/เต็นท์) ให้เลือกเก็บเอง
+  const storageZones = useMemo(() => {
+    const byZone = new Map<string, string>()
+    for (const l of master.locations) if (l.active && (l.kind === 'bin' || l.kind === 'floor') && !byZone.has(l.zoneId)) byZone.set(l.zoneId, zoneCodeOf(l.code))
+    return [...byZone].map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label))
+  }, [master.locations])
+  const zoneLabel = useMemo(() => new Map(storageZones.map((z) => [z.id, z.label])), [storageZones])
   const allowed = can('receive.create')
 
   const checkInvoice = async (no: string) => {
@@ -72,7 +82,7 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
     setRows(
       SAMPLE_PACKING_LIST.lines.map((l) => {
         const il = SAMPLE_INVOICE.lines.find((x) => x.partNo === l.partNo)
-        return { key: newKey(), partNo: l.partNo, description: l.description, plQty: l.qty, counted: l.qty, invQty: il?.qty ?? null, invLine: il?.lineNo ?? null }
+        return { key: newKey(), partNo: l.partNo, description: l.description, plQty: l.qty, counted: l.qty, invQty: il?.qty ?? null, invLine: il?.lineNo ?? null, zoneId: null }
       }),
     )
     setMsg({ tone: 'info', text: 'ใส่เอกสารตัวอย่าง RE TWIN แล้ว (Packing List 55035596 + Invoice 4957930126) · ยอดนับจริงตั้งต้นเท่ากับ Packing List แก้ได้ทุกช่อง' })
@@ -87,7 +97,7 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
     try {
       const d = await readPackingListPhoto(file)
       setPl({ refDoc: d.refDoc, soNo: d.soNo, packages: d.packages })
-      setRows(d.lines.map((l) => ({ key: newKey(), partNo: l.partNo, description: l.description, plQty: l.qty, counted: l.qty, invQty: null, invLine: l.invoiceLineNo })))
+      setRows(d.lines.map((l) => ({ key: newKey(), partNo: l.partNo, description: l.description, plQty: l.qty, counted: l.qty, invQty: null, invLine: l.invoiceLineNo, zoneId: null })))
       setMsg({ tone: 'ok', text: `AI อ่าน Packing List ได้ ${d.lines.length} รายการ · ตรวจทานกับเอกสารก่อนยืนยัน` })
     } catch (e) {
       setMsg({ tone: 'warn', text: `อ่านภาพอัตโนมัติไม่ได้ (${errorText(e)}) · กรอกเอง หรือถ่ายใหม่ให้ตรงและชัดขึ้น` })
@@ -110,7 +120,7 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
           return il ? { ...r, invQty: il.qty, invLine: il.lineNo } : r
         })
         // part ที่มีใน invoice แต่ไม่มีใน packing list → เพิ่มเป็นแถว (รับจริง 0)
-        for (const l of d.lines) if (!next.some((r) => r.partNo === l.partNo)) next.push({ key: newKey(), partNo: l.partNo, description: l.description, plQty: 0, counted: 0, invQty: l.qty, invLine: l.lineNo })
+        for (const l of d.lines) if (!next.some((r) => r.partNo === l.partNo)) next.push({ key: newKey(), partNo: l.partNo, description: l.description, plQty: 0, counted: 0, invQty: l.qty, invLine: l.lineNo, zoneId: null })
         return next
       })
       setMsg({ tone: 'ok', text: `AI อ่าน Invoice ${d.invoiceNo} ได้ ${d.lines.length} รายการ` })
@@ -157,7 +167,7 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
               lines: rows.filter((r) => r.invQty !== null).map((r, i) => ({ lineNo: r.invLine ?? i + 1, partNo: r.partNo, description: r.description, qty: r.invQty ?? 0 })),
             }
           : undefined,
-        lines: rows.map((r) => ({ partNo: r.partNo.trim(), description: r.description, plQty: r.plQty, countedQty: r.counted })),
+        lines: rows.map((r) => ({ partNo: r.partNo.trim(), description: r.description, plQty: r.plQty, countedQty: r.counted, ...(r.zoneId ? { zoneId: r.zoneId } : {}) })),
       })
       // ภาพเอกสารเป็นหลักฐาน: อัปโหลดหลังบันทึก GRN แล้ว (ถ้าเน็ตช้า/ล้ม การรับของยังสำเร็จ)
       const [plPath, invPath] = await Promise.all([plFile ? api.uploadDoc(plFile, 'pl') : null, invFile ? api.uploadDoc(invFile, 'invoice') : null])
@@ -240,7 +250,7 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
       <Card
         title="นับจริงเทียบ Packing List และ Invoice"
         action={
-          <BigButton tone="secondary" onClick={() => setRows((rs) => [...rs, { key: newKey(), partNo: '', description: '', plQty: 0, counted: 0, invQty: null, invLine: null }])}>
+          <BigButton tone="secondary" onClick={() => setRows((rs) => [...rs, { key: newKey(), partNo: '', description: '', plQty: 0, counted: 0, invQty: null, invLine: null, zoneId: null }])}>
             + เพิ่มรายการ
           </BigButton>
         }
@@ -302,7 +312,23 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
                       )}
                       {r.invLine !== null && <div className="text-[10px] text-slate-400">บรรทัด {r.invLine}</div>}
                     </td>
-                    <td className={`${tdCls} font-mono text-xs`}>{qi ? 'MI3-QC' : (master.locations.find((l) => l.zoneId === zone)?.code.split('-').slice(0, 2).join('-') ?? '–')}</td>
+                    <td className={tdCls}>
+                      <select
+                        className={`w-32 rounded-md border px-1.5 py-1.5 font-mono text-xs ${r.zoneId ? 'border-sky-400 bg-sky-50' : 'border-slate-300'}`}
+                        value={r.zoneId ?? ''}
+                        onChange={(e) => patch(r.key, { zoneId: e.target.value || null })}
+                        aria-label="โซนเก็บ"
+                        title={qi ? 'ตรวจ MI3 ก่อน แล้วจึงเก็บเข้าโซนนี้' : undefined}
+                      >
+                        <option value="">{zone ? `${zoneLabel.get(zone) ?? zone} (แนะนำ)` : 'ระบบเลือก (–)'}</option>
+                        {storageZones.map((z) => (
+                          <option key={z.id} value={z.id}>
+                            {z.label}
+                          </option>
+                        ))}
+                      </select>
+                      {qi && <div className="text-[10px] text-slate-400">ผ่าน MI3-QC ก่อน</div>}
+                    </td>
                     <td className={`${tdCls} space-x-1 space-y-1`}>
                       {r.counted === r.plQty ? <Pill tone="ok">ตรง PL</Pill> : r.counted < r.plQty ? <Pill tone="bad">ขาด {fmt(r.plQty - r.counted)}</Pill> : <Pill tone="warn">เกิน {fmt(r.counted - r.plQty)}</Pill>}
                       {r.invQty !== null && r.counted !== r.invQty && <Pill tone="bad">ไม่ตรง Invoice</Pill>}

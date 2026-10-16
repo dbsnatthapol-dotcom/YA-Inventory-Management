@@ -3,7 +3,20 @@ import { BRAND } from '../../data/brand'
 import { ZONE_STYLE } from '../../data/zoneStyle'
 import type { ZoneContents } from '../../inventory/reports'
 import { floorPaint } from '../../lib/floorPlan'
-import { applyLayoutEdits, clampToFloor, editCount, emptyEdits, isEditable, newZone, rotated, zoneIssues, type NewZoneKind } from '../../lib/layoutEdit'
+import { errorText } from '../../wms/api'
+import {
+  applyLayoutEdits,
+  clampToFloor,
+  CORE_KINDS,
+  editCount,
+  emptyEdits,
+  isEditable,
+  newZone,
+  rotated,
+  withCopiesOnFloors,
+  zoneIssues,
+  type NewZoneKind,
+} from '../../lib/layoutEdit'
 import { findRoute, type RouteResult } from '../../lib/pathfinding'
 import type { LayoutEditsApi } from '../../lib/useLayoutEdits'
 import type { FactoryLayout, Zone } from '../../types/layout'
@@ -17,21 +30,27 @@ interface Props {
   baseLayout: FactoryLayout
   api: LayoutEditsApi
   stock: Map<string, ZoneContents>
+  /** มีสิทธิ์แก้ผัง (layout.edit) — ไม่มี = ดูอย่างเดียว */
+  canEdit: boolean
+  /** ต่อ Supabase: บันทึกลงฐานข้อมูลกลาง · ไม่มี = โหมดสาธิต เก็บในเครื่อง */
+  onSave?: () => Promise<void>
   onOpen3D: (zoneId: string | null) => void
 }
 
 const ADDABLE: { kind: NewZoneKind; label: string; size: string }[] = [
-  { kind: 'storage', label: 'Rack (ชั้นวางพาเลท)', size: '13.5 × 6.1 ม.' },
+  { kind: 'storage', label: 'โซนเก็บ (พาเลท / Rack)', size: '13.5 × 6.1 ม.' },
   { kind: 'assembly', label: 'ไลน์ประกอบ', size: '24 × 8 ม.' },
   { kind: 'inspection', label: 'พื้นที่ตรวจ/คัด MI3', size: '9 × 7 ม.' },
   { kind: 'ng', label: 'พื้นที่กัก NG', size: '8 × 6 ม.' },
   { kind: 'utility', label: 'ที่ชาร์จรถยก / พาเลทเปล่า', size: '9 × 6 ม.' },
+  { kind: 'stairs', label: 'บันได', size: '4 × 10 ม.' },
+  { kind: 'lift', label: 'ลิฟต์ขนของ', size: '4 × 8 ม.' },
 ]
 
 const typing = (t: EventTarget | null) => t instanceof HTMLInputElement || t instanceof HTMLSelectElement || t instanceof HTMLTextAreaElement
 
 /** หน้าปรับผังโรงงาน (แยกจากผัง 3D): ผังมุมบนรายชั้นที่ลาก-วาง-ปรับขนาดได้ พร้อมผลต่อระยะเดินส่ง Part */
-export function LayoutEditorPage({ layout, baseLayout, api, stock, onOpen3D }: Props) {
+export function LayoutEditorPage({ layout, baseLayout, api, stock, canEdit, onSave, onOpen3D }: Props) {
   const buildingFloors = layout.floors.filter((f) => f.area === 'building')
   const [floorId, setFloorId] = useState(buildingFloors[0]?.id ?? '')
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -45,11 +64,32 @@ export function LayoutEditorPage({ layout, baseLayout, api, stock, onOpen3D }: P
   const paint = floorPaint(layout, floor)
   const zones = layout.zones.filter((z) => z.floorId === floor.id)
   const nodes = layout.nodes.filter((n) => n.floorId === floor.id)
-  const editable = (z: Zone) => isEditable(z, floor)
-  const issues = new Map(zones.filter(editable).map((z) => [z.id, zoneIssues(layout, z)]))
+  const viewable = (z: Zone) => isEditable(z, floor)
+  const editable = (z: Zone) => canEdit && viewable(z)
+  const issues = new Map(zones.filter(viewable).map((z) => [z.id, zoneIssues(layout, z)]))
+  const [saving, setSaving] = useState(false)
+  const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const pending = editCount(api.edits)
+
+  const save = async () => {
+    if (!onSave) return
+    const errors = layout.zones.filter((z) => zoneIssues(layout, z).some((i) => i.level === 'error') && isEditable(z, layout.floors.find((f) => f.id === z.floorId)))
+    if (errors.length && !confirm(`มี ${errors.length} โซนที่ยังมีปัญหา (${errors.map((z) => z.code).slice(0, 5).join(', ')}) — บันทึกต่อหรือไม่?`)) return
+    setSaving(true)
+    setSaveMsg(null)
+    try {
+      await onSave()
+      setSaveMsg({ ok: true, text: 'บันทึกผังแล้ว — ทุกคนเห็นผังนี้' })
+    } catch (e) {
+      setSaveMsg({ ok: false, text: errorText(e) })
+    } finally {
+      setSaving(false)
+    }
+  }
   const baseline = useMemo(() => applyLayoutEdits(baseLayout, emptyEdits()), [baseLayout])
 
   const add = (kind: NewZoneKind) => {
+    if (!canEdit) return
     const zone = newZone(kind, floor, layout.zones)
     api.add(zone)
     setSelectedId(zone.id)
@@ -99,7 +139,7 @@ export function LayoutEditorPage({ layout, baseLayout, api, stock, onOpen3D }: P
     <div className="flex h-full flex-col gap-3 overflow-y-auto bg-slate-100 p-3 lg:flex-row lg:overflow-hidden">
       {/* ซ้าย: เพิ่มอุปกรณ์ + วิธีใช้ */}
       <aside className="flex shrink-0 flex-col gap-3 lg:w-60">
-        <section className="rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
+        <section className={`rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200 ${canEdit ? '' : 'hidden'}`}>
           <h2 className="mb-2 text-sm font-bold" style={{ color: BRAND.primary }}>
             เพิ่มลงใน {floor.name.replace('อาคาร ', '')}
           </h2>
@@ -125,6 +165,8 @@ export function LayoutEditorPage({ layout, baseLayout, api, stock, onOpen3D }: P
               คีย์ลัด: <b>← ↑ → ↓</b> ขยับ · <b>R</b> หมุน · <b>Del</b> ลบ · <b>Ctrl+Z</b> ย้อน
             </li>
             <li>จุดสีเขียว = จุดหยิบของบนทางเดิน ระบบหาให้ใหม่ทุกครั้งที่ย้าย</li>
+            <li>บันได/ลิฟต์: วางให้ตรงกันทุกชั้นจึงจะขึ้น-ลงได้ (มีปุ่มช่วยในแผงด้านขวา)</li>
+            {onSave && <li>แก้เสร็จแล้วกด <b>บันทึกผัง</b> เพื่อให้ทุกคนเห็น · ช่องเก็บ (QR) สร้างตามผังที่บันทึก</li>}
           </ul>
         </section>
       </aside>
@@ -159,23 +201,36 @@ export function LayoutEditorPage({ layout, baseLayout, api, stock, onOpen3D }: P
             <input type="checkbox" checked={showAisles} onChange={(e) => setShowAisles(e.target.checked)} />
             แสดงทางเดิน
           </label>
-          <span className="text-xs text-slate-500">แก้ไขแล้ว {editCount(api.edits)} รายการ · บันทึกอัตโนมัติ</span>
+          <span className="text-xs text-slate-500">
+            {onSave ? (pending ? `แก้ไขแล้ว ${pending} รายการ · ยังไม่บันทึก` : 'ผังตรงกับระบบ') : `แก้ไขแล้ว ${pending} รายการ · เก็บในเครื่องนี้ (โหมดสาธิต)`}
+          </span>
+          {saveMsg && <span className={`text-xs ${saveMsg.ok ? 'text-emerald-700' : 'text-red-600'}`}>{saveMsg.text}</span>}
           <span className="ml-auto flex gap-2">
             <button className="rounded-lg bg-white px-3 py-1 text-sm text-slate-600 shadow-sm ring-1 ring-slate-200 hover:bg-slate-50" onClick={() => onOpen3D(selectedId)}>
               ดูใน 3D
             </button>
             <button
               className="rounded-lg bg-white px-3 py-1 text-sm text-red-600 shadow-sm ring-1 ring-slate-200 hover:bg-red-50 disabled:opacity-40"
-              disabled={!editCount(api.edits)}
+              disabled={!pending || saving}
               onClick={() => {
-                if (confirm('คืนค่าผังเริ่มต้น? ตำแหน่งที่แก้ไว้และโซนที่เพิ่มจะหายทั้งหมด (กดย้อนกลับได้)')) {
+                if (confirm(`${onSave ? 'ยกเลิกการแก้ไขที่ยังไม่บันทึก?' : 'คืนค่าผังเริ่มต้น?'} ตำแหน่งที่แก้ไว้และโซนที่เพิ่มจะหายทั้งหมด (กดย้อนกลับได้)`)) {
                   api.reset()
                   setSelectedId(null)
                 }
               }}
             >
-              คืนค่าเริ่มต้น
+              {onSave ? 'ยกเลิกการแก้ไข' : 'คืนค่าเริ่มต้น'}
             </button>
+            {onSave && canEdit && (
+              <button
+                className="rounded-lg px-3 py-1 text-sm font-semibold text-white shadow-sm disabled:opacity-40"
+                style={{ background: BRAND.primary }}
+                disabled={!pending || saving}
+                onClick={save}
+              >
+                {saving ? 'กำลังบันทึก…' : 'บันทึกผัง'}
+              </button>
+            )}
           </span>
         </div>
         <div className="min-h-0 flex-1">
@@ -200,27 +255,32 @@ export function LayoutEditorPage({ layout, baseLayout, api, stock, onOpen3D }: P
       <aside className="flex min-h-0 shrink-0 flex-col gap-3 overflow-y-auto lg:w-80">
         {selected ? (
           <>
-            {editable(selected) ? (
+            {viewable(selected) ? (
               <ZoneForm
                 key={selected.id}
                 zone={selected}
                 layout={layout}
                 stock={stock.get(selected.id)}
-                onUpdate={(patch) => api.update(selected.id, patch)}
+                locked={!canEdit}
+                onUpdate={(patch) => canEdit && api.update(selected.id, patch)}
                 onRemove={() => {
+                  if (!canEdit) return
                   api.remove(selected.id)
                   setSelectedId(null)
                 }}
+                onCopyToFloors={
+                  CORE_KINDS.includes(selected.kind) && !floor.mezzanine ? () => api.transform((e) => withCopiesOnFloors(e, layout, selected.id)) : undefined
+                }
               />
             ) : (
               <section className="rounded-xl bg-white p-3 text-sm text-slate-600 shadow-sm ring-1 ring-slate-200">
-                <b className="text-slate-800">{selected.name}</b> เป็นโครงสร้างอาคาร (บันได/ลิฟต์) ย้ายในหน้านี้ไม่ได้
+                <b className="text-slate-800">{selected.name}</b> แก้ในหน้านี้ไม่ได้
               </section>
             )}
-            <RouteImpact zone={selected} layout={layout} baseline={baseline} />
+            {!CORE_KINDS.includes(selected.kind) && <RouteImpact zone={selected} layout={layout} baseline={baseline} />}
           </>
         ) : (
-          <FloorSummary zones={zones.filter(editable)} issues={issues} stock={stock} onSelect={setSelectedId} />
+          <FloorSummary zones={zones.filter(viewable)} issues={issues} stock={stock} onSelect={setSelectedId} />
         )}
       </aside>
     </div>

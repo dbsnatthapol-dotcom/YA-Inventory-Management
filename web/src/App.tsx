@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AuthProvider } from './auth/AuthProvider'
 import { ChangePasswordScreen, LoadingScreen, LoginScreen } from './auth/AuthScreens'
-import { can, ROLE_LABEL } from './auth/staff'
+import { ROLE_LABEL } from './auth/staff'
 import { useAuth } from './auth/useAuth'
 import { BackofficePage } from './components/admin/BackofficePage'
 import { WarehousePage, type WmsDeepLink } from './components/wms/WarehousePage'
 import { WmsProvider } from './wms/WmsProvider'
+import { useWms } from './wms/useWms'
+import { layoutSavePayload } from './lib/layoutSave'
 import { FactoryScene, type CameraCommand, type MapPinSpec, type ViewMode } from './components/FactoryScene'
 import { CameraButtons } from './components/map/CameraButtons'
 import { IconClose, IconPanel } from './components/map/icons'
@@ -74,6 +76,9 @@ function FactoryApp() {
   const staffName = auth.profile ? `${auth.profile.full_name} (${auth.profile.employee_code})` : undefined
   const [loaded, setLoaded] = useState<LoadedLayout>({ layout: sampleLayout, source: 'sample' })
   const layoutEdits = useLayoutEdits()
+  const wms = useWms()
+  // สิทธิ์แก้ผังกำหนดในตารางสิทธิ์ (layout.edit) · โหมดสาธิตเปิดให้ทดลอง
+  const canEditLayout = role === null || wms.can('layout.edit')
   // ผังที่ใช้งานจริง = ผังหลัก + ตำแหน่งที่ผู้ใช้ปรับ (ทางเดินที่ถูกขวางถูกปิด, จุดเข้า-ออกคำนวณใหม่)
   const layout = useMemo(() => applyLayoutEdits(loaded.layout, layoutEdits.edits), [loaded.layout, layoutEdits.edits])
   const [sourceId, setSourceId] = useState('TENT-C')
@@ -98,6 +103,15 @@ function FactoryApp() {
   useEffect(() => {
     loadLayout().then(setLoaded)
   }, [])
+
+  /** บันทึกผังที่แก้ลงฐานข้อมูลกลาง แล้วโหลดผัง + ช่องเก็บใหม่ */
+  const saveLayout = async () => {
+    await wms.api.saveLayout(layoutSavePayload(loaded.layout, layoutEdits.edits))
+    const fresh = await loadLayout()
+    setLoaded(fresh)
+    layoutEdits.saved()
+    await wms.reload()
+  }
 
   // ถ้าโซนที่เลือกไว้ถูกลบในหน้าปรับผัง ใช้ค่าเริ่มต้นแทน
   const source = layout.zones.find((z) => z.id === sourceId) ?? layout.zones.find((z) => z.id === 'TENT-C')
@@ -223,7 +237,7 @@ function FactoryApp() {
               ['map', 'ผังโรงงาน 3D'],
               ['wms', 'งานคลัง'],
               ['inventory', 'สต็อก (ตัวอย่างเดิม)'],
-              ...(can(role, 'editLayout') ? ([['layout', 'ปรับผัง']] as const) : []),
+              ...(canEditLayout ? ([['layout', 'ปรับผัง']] as const) : []),
               ...(canAdmin ? ([['admin', 'หลังบ้าน']] as const) : []),
             ] as const
           ).map(([value, label]) => (
@@ -275,7 +289,15 @@ function FactoryApp() {
       )}
       {page === 'layout' && (
         <main className="min-h-0 flex-1">
-          <LayoutEditorPage layout={layout} baseLayout={loaded.layout} api={layoutEdits} stock={zoneStock} onOpen3D={open3D} />
+          <LayoutEditorPage
+            layout={layout}
+            baseLayout={loaded.layout}
+            api={layoutEdits}
+            stock={zoneStock}
+            canEdit={canEditLayout}
+            onSave={loaded.source === 'supabase' ? saveLayout : undefined}
+            onOpen3D={open3D}
+          />
         </main>
       )}
       {page === 'wms' && (

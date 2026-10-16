@@ -283,6 +283,9 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
     upsertPart: (p) => rpc('master_upsert_part', { p_part_no: p.partNo, p_name: p.name, p_type: p.type ?? '', p_customer: p.customerId, p_models: p.models }),
     upsertLocation: (l) => rpc('master_upsert_location', { p_code: l.code, p_zone: l.zoneId, p_kind: l.kind, p_active: l.active }),
     setZoneRule: (r) => rpc('master_set_zone_rule', { p_customer: r.customerId, p_type: r.partType ?? '', p_zone: r.zoneId }),
+    saveLayout: async (p) => {
+      await rpc('layout_save', { p })
+    },
   }
   return api
 }

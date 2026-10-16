@@ -14,6 +14,7 @@ export type Perm =
   | 'invoice.report'
   | 'master.edit'
   | 'accesslog.view'
+  | 'layout.edit'
 
 export const PERMS: { key: Perm; label: string; group: string }[] = [
   { key: 'receive.create', label: 'รับของ / ออก GRN', group: 'รับของ' },
@@ -29,6 +30,7 @@ export const PERMS: { key: Perm; label: string; group: string }[] = [
   { key: 'invoice.close', label: 'ยืนยัน Invoice รับครบ', group: 'Invoice' },
   { key: 'master.edit', label: 'แก้ข้อมูลหลัก (part, ช่องเก็บ)', group: 'หลังบ้าน' },
   { key: 'accesslog.view', label: 'ดูประวัติการเข้าใช้', group: 'หลังบ้าน' },
+  { key: 'layout.edit', label: 'แก้ผังคลัง (โซน ชั้นวาง บันได ลิฟต์)', group: 'หลังบ้าน' },
 ]
 
 export interface Settings {
@@ -199,7 +201,8 @@ export interface ReceivePayload {
   packingList: { refDoc: string; soNo?: string; packages?: string; imagePaths?: string[] }
   modelCode: string
   note?: string
-  lines: { partNo: string; description: string; plQty: number; countedQty: number }[]
+  /** zoneId = โซนเก็บที่ผู้รับเลือกเอง (ไม่ระบุ = ระบบแนะนำตามกฎลูกค้า + กลุ่ม part) */
+  lines: { partNo: string; description: string; plQty: number; countedQty: number; zoneId?: string }[]
 }
 
 export interface GrnDetail {

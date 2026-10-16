@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject
 import { type Group, type PerspectiveCamera, Plane, Raycaster, Shape, Vector2, Vector3 } from 'three'
 import { BRAND, MATERIAL } from '../data/brand'
 import { GATES_WITH_SHRINE, MAIN_BUILDING_FLOOR_ID, TENT_STYLE, TREE_POINTS, TRUCK_YARD } from '../data/siteAppearance'
-import { palletsFor, planRack, rackSpec } from '../data/warehouse'
+import { palletsFor, storagePlan } from '../data/warehouse'
 import { ZONE_STYLE } from '../data/zoneStyle'
 import { buildingOf, toLocal, toRadians, toSite, zoneClearance } from '../lib/geometry'
 import { floorPaint, type FloorPaint } from '../lib/floorPlan'
@@ -599,7 +599,7 @@ export function FactoryScene(props: Props) {
             : exterior
               ? storeysOf(buildingOf(floor)) * storeyHeight(layout.floors, floor) + 1.5 - floor.elevation
               : zone.kind === 'storage'
-                ? rackSpec(zoneClearance(layout.floors, zone)).height + 1.2
+                ? storagePlan(zone, zoneClearance(layout.floors, zone)).height + 1.2
                 : 2.5
         return <MapPin key={`${pin.tone}-${pin.zoneId}`} position={base.clone().setY(base.y + lift)} tone={pin.tone} />
       })}
@@ -829,17 +829,18 @@ const ZoneModel = memo(function ZoneModel({
   onPalletClick?: (index: number) => void
 }) {
   const { width, depth } = zone
-  const rack = useMemo(() => rackSpec(clearance), [clearance])
-  const height = zone.kind === 'storage' ? rack.height : zone.kind === 'assembly' ? 2 : zone.kind === 'lift' ? 3.2 : zone.kind === 'stairs' ? rise : 1.2
+  const { storage, levels, slotsPerLevel } = zone
+  const plan = useMemo(() => storagePlan({ width, depth, storage, levels, slotsPerLevel }, clearance), [width, depth, storage, levels, slotsPerLevel, clearance])
+  const height = zone.kind === 'storage' ? plan.height : zone.kind === 'assembly' ? 2 : zone.kind === 'lift' ? 3.2 : zone.kind === 'stairs' ? rise : 1.2
   const outline = overlapping ? '#e34948' : editing ? '#2563eb' : selected ? '#f97316' : OUTLINE[zone.kind]
   const showLabel = zone.kind !== 'stairs' && zone.kind !== 'lift'
   const pieces = stock?.totalQty ?? 0
   // ความจุ rack ที่ใช้อยู่ (%)
   const usage = useMemo(() => {
     if (zone.kind !== 'storage') return null
-    const slots = planRack(width, depth, rack.levels).slots.length
+    const slots = plan.slots.length
     return slots ? Math.round((Math.min(palletsFor(stock).length, slots) / slots) * 100) : 0
-  }, [zone.kind, width, depth, stock, rack])
+  }, [zone.kind, stock, plan])
 
   return (
     <group position={[zone.x, 0, zone.z]}>
@@ -852,8 +853,7 @@ const ZoneModel = memo(function ZoneModel({
           stock={stock}
           highlightLot={highlightLot}
           selectedIndex={selectedPallet}
-          levels={rack.levels}
-          height={rack.height}
+          plan={plan}
         />
       )}
       {zone.kind === 'assembly' && <AssemblyLine width={width} depth={depth} title={`${zone.code} · ${zone.name}`} />}
