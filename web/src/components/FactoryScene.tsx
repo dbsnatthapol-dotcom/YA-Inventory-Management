@@ -4,15 +4,17 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject
 import { type Group, type PerspectiveCamera, Plane, Raycaster, Shape, Vector2, Vector3 } from 'three'
 import { BRAND, MATERIAL } from '../data/brand'
 import { GATES_WITH_SHRINE, MAIN_BUILDING_FLOOR_ID, TENT_STYLE, TREE_POINTS, TRUCK_YARD } from '../data/siteAppearance'
-import { palletsFor, planRack, rackSpec } from '../data/warehouse'
+import { palletsFor, storagePlan } from '../data/warehouse'
 import { ZONE_STYLE } from '../data/zoneStyle'
 import { buildingOf, toLocal, toRadians, toSite, zoneClearance } from '../lib/geometry'
 import { floorPaint, type FloorPaint } from '../lib/floorPlan'
 import { clampToFloor, isEditable, pointInRect, rectsOverlap, snap, type ZonePatch } from '../lib/layoutEdit'
-import type { RouteResult } from '../lib/pathfinding'
+import { findRoute, type RouteResult } from '../lib/pathfinding'
+import { guidePath } from '../lib/guidePaths'
 import type { ZoneContents } from '../inventory/reports'
 import type { FactoryLayout, Floor, Landmark, Zone } from '../types/layout'
 import { BuildingA } from './models/BuildingA'
+import { FlowToken, WalkingGuide, type GuideInfo } from './models/Guide'
 import {
   AssemblyLine,
   Columns,
@@ -71,6 +73,23 @@ interface Props {
   cameraCommand?: CameraCommand | null
   /** แผงลอยบังด้านขวาของจอกี่พิกเซล — เลื่อนจุดที่บินไปให้อยู่กลางพื้นที่ที่มองเห็น */
   focusShiftPx?: number
+  /** ไกด์พนักงานประจำจุด (zoneId → ข้อมูลที่สรุปเมื่อคลิก) */
+  guides?: Map<string, GuideInfo>
+  openGuide?: string | null
+  onGuideToggle?: (zoneId: string) => void
+  /** ระบายสีโซนตามความเต็ม / สถานะ */
+  heatmap?: boolean
+  /** การเคลื่อนไหวของของจริง (Live flow) */
+  flows?: FlowSpec[]
+}
+
+/** 1 การเคลื่อนไหวที่จะวิ่งบนผัง: จากโซน → โซน */
+export interface FlowSpec {
+  id: string
+  from: string
+  to: string
+  label: string
+  color: string
 }
 
 export type CameraCommand = { n: number } & (
@@ -308,6 +327,11 @@ export function FactoryScene(props: Props) {
     pins = NO_PINS,
     cameraCommand = null,
     focusShiftPx = 0,
+    guides,
+    openGuide = null,
+    onGuideToggle,
+    heatmap = false,
+    flows = NO_FLOWS,
   } = props
   const exterior = mode === 'exterior'
   const floorsById = new Map(layout.floors.map((f) => [f.id, f]))
@@ -381,6 +405,37 @@ export function FactoryScene(props: Props) {
     const ground = layout.floors.find((f) => f.id === MAIN_BUILDING_FLOOR_ID)
     return ground && dockPosition(layout, ground)
   }, [layout])
+  /** เส้นเดินตรวจของไกด์ (พิกัดภายในชั้น) */
+  const guidePaths = useMemo(() => {
+    const map = new Map<string, [number, number][]>()
+    if (!guides) return map
+    for (const zone of layout.zones) {
+      if (!guides.has(zone.id)) continue
+      const path = guidePath(layout, zone)
+      if (path) map.set(zone.id, path)
+    }
+    return map
+  }, [layout, guides])
+  /** เส้นทางของ Live flow ในพิกัดฉาก (เหนือพื้นชั้นตามระยะแยกชั้น) */
+  const flowPaths = useMemo(
+    () =>
+      flows.flatMap((f) => {
+        const a = layout.zones.find((z) => z.id === f.from)
+        const b = layout.zones.find((z) => z.id === f.to)
+        if (!a || !b || a.id === b.id) return []
+        const r = findRoute(layout, a.accessNodeId, b.accessNodeId)
+        if (!r || r.nodes.length < 2) return []
+        const floors = new Map(layout.floors.map((fl) => [fl.id, fl]))
+        const points = r.nodes.map((n) => {
+          const fl = floors.get(n.floorId)!
+          const [x, z] = toSite(fl, n.x, n.z)
+          const y = fl.area === 'building' ? fl.elevation * (exterior ? 1 : explode) + FLOOR_LIFT + 0.15 : 0.15
+          return [x, y, z] as [number, number, number]
+        })
+        return [{ ...f, points }]
+      }),
+    [flows, layout, exterior, explode],
+  )
 
   return (
     <Canvas camera={{ position: CAMERA.exterior, fov: 42, far: 2000 }} shadows="soft" frameloop={active ? 'always' : 'never'}>
@@ -535,9 +590,18 @@ export function FactoryScene(props: Props) {
                         highlightLot={highlightLot}
                         selectedPallet={selectedPallet?.zoneId === zone.id ? selectedPallet.index : null}
                         onPalletClick={onPalletClick && ((i) => onPalletClick(zone.id, i))}
+                        heatmap={heatmap}
                       />
                     )
                   })}
+                  {guides &&
+                    floorZones.map((zone, i) => {
+                      const path = guidePaths.get(zone.id)
+                      const info = guides.get(zone.id)
+                      return path && info ? (
+                        <WalkingGuide key={`g-${zone.id}`} path={path} info={info} open={openGuide === zone.id} onToggle={() => onGuideToggle?.(zone.id)} phase={i} />
+                      ) : null
+                    })}
                 </group>
               )
             })}
@@ -560,6 +624,7 @@ export function FactoryScene(props: Props) {
                 <ZoneBox zone={zone} onClick={() => onZoneClick(zone)} />
               )}
               {selectedZoneIds.includes(zone.id) && <SelectionRing width={zone.width} depth={zone.depth} />}
+              {heatmap && <HeatPlane width={zone.width} depth={zone.depth} heat={tentHeat(zone, stock)} height={8.5} />}
               <Label
                 position={[zone.width / 2, 10, zone.depth / 2]}
                 title={zone.name}
@@ -568,6 +633,28 @@ export function FactoryScene(props: Props) {
             </group>
           )
         })}
+        {/* ไกด์ประจำเต็นท์ลานนอก (พิกัด site) */}
+        {guides &&
+          yardZones.map((zone, i) => {
+            const path = guidePaths.get(zone.id)
+            const info = guides.get(zone.id)
+            const floor = floorsById.get(zone.floorId)
+            if (!path || !info || !floor) return null
+            return (
+              <WalkingGuide
+                key={`g-${zone.id}`}
+                path={path.map(([x, z]) => toSite(floor, x, z))}
+                info={info}
+                open={openGuide === zone.id}
+                onToggle={() => onGuideToggle?.(zone.id)}
+                phase={i + 3}
+              />
+            )
+          })}
+        {flowPaths.map((f, i) => (
+          <FlowToken key={f.id} points={f.points} delay={i * 1.7} color={f.color} label={f.label} />
+        ))}
+
         {/* รถยกหน้าเต็นท์ C */}
         {yardZones.some((z) => z.id === 'TENT-C') && <Forklift position={[59.5, 0, 60]} rotation={Math.PI * 0.55} />}
 
@@ -599,7 +686,7 @@ export function FactoryScene(props: Props) {
             : exterior
               ? storeysOf(buildingOf(floor)) * storeyHeight(layout.floors, floor) + 1.5 - floor.elevation
               : zone.kind === 'storage'
-                ? rackSpec(zoneClearance(layout.floors, zone)).height + 1.2
+                ? storagePlan(zone, zoneClearance(layout.floors, zone)).height + 1.2
                 : 2.5
         return <MapPin key={`${pin.tone}-${pin.zoneId}`} position={base.clone().setY(base.y + lift)} tone={pin.tone} />
       })}
@@ -611,6 +698,7 @@ export function FactoryScene(props: Props) {
 
 const NO_ZONES: Zone[] = []
 const NO_PINS: MapPinSpec[] = []
+const NO_FLOWS: FlowSpec[] = []
 const NO_GAPS: [number, number][] = []
 const NO_FLOORS: Floor[] = []
 const DEFAULT_STOREY = 4.5
@@ -812,6 +900,7 @@ const ZoneModel = memo(function ZoneModel({
   highlightLot,
   selectedPallet,
   onPalletClick,
+  heatmap = false,
 }: {
   zone: Zone
   rise: number
@@ -827,19 +916,22 @@ const ZoneModel = memo(function ZoneModel({
   highlightLot?: string | null
   selectedPallet: number | null
   onPalletClick?: (index: number) => void
+  heatmap?: boolean
 }) {
   const { width, depth } = zone
-  const rack = useMemo(() => rackSpec(clearance), [clearance])
-  const height = zone.kind === 'storage' ? rack.height : zone.kind === 'assembly' ? 2 : zone.kind === 'lift' ? 3.2 : zone.kind === 'stairs' ? rise : 1.2
+  const { storage, levels, slotsPerLevel } = zone
+  const plan = useMemo(() => storagePlan({ width, depth, storage, levels, slotsPerLevel }, clearance), [width, depth, storage, levels, slotsPerLevel, clearance])
+  const height = zone.kind === 'storage' ? plan.height : zone.kind === 'assembly' ? 2 : zone.kind === 'lift' ? 3.2 : zone.kind === 'stairs' ? rise : 1.2
   const outline = overlapping ? '#e34948' : editing ? '#2563eb' : selected ? '#f97316' : OUTLINE[zone.kind]
   const showLabel = zone.kind !== 'stairs' && zone.kind !== 'lift'
   const pieces = stock?.totalQty ?? 0
   // ความจุ rack ที่ใช้อยู่ (%)
   const usage = useMemo(() => {
     if (zone.kind !== 'storage') return null
-    const slots = planRack(width, depth, rack.levels).slots.length
+    const slots = plan.slots.length
     return slots ? Math.round((Math.min(palletsFor(stock).length, slots) / slots) * 100) : 0
-  }, [zone.kind, width, depth, stock, rack])
+  }, [zone.kind, stock, plan])
+  const heat = heatmap ? zoneHeat(zone, stock, usage) : null
 
   return (
     <group position={[zone.x, 0, zone.z]}>
@@ -852,8 +944,7 @@ const ZoneModel = memo(function ZoneModel({
           stock={stock}
           highlightLot={highlightLot}
           selectedIndex={selectedPallet}
-          levels={rack.levels}
-          height={rack.height}
+          plan={plan}
         />
       )}
       {zone.kind === 'assembly' && <AssemblyLine width={width} depth={depth} title={`${zone.code} · ${zone.name}`} />}
@@ -864,6 +955,7 @@ const ZoneModel = memo(function ZoneModel({
       {zone.kind === 'ng' && <NgArea width={width} depth={depth} />}
       {zone.kind === 'utility' && <UtilityArea width={width} depth={depth} />}
       <ZoneOutline width={width} depth={depth} color={outline} thickness={selected || editing || overlapping ? 0.25 : 0.12} />
+      {heat && <HeatPlane width={width} depth={depth} heat={heat} height={height} />}
       {(selected || editing) && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[width / 2, 0.025, depth / 2]}>
           <planeGeometry args={[width, depth]} />
@@ -901,11 +993,13 @@ const ZoneModel = memo(function ZoneModel({
         <Html position={[width / 2, height + 1, depth / 2]} center className="pointer-events-none" zIndexRange={[10, 0]}>
           <div
             className={`flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] shadow-sm ring-1 ${
-              editing ? 'bg-blue-600 text-white ring-blue-700' : 'bg-white/95 text-slate-600 ring-slate-200'
+              editing ? 'bg-blue-600 text-white ring-blue-700' : heat ? 'text-white ring-white/60' : 'bg-white/95 text-slate-600 ring-slate-200'
             }`}
+            style={heat && !editing ? { background: heat.color } : undefined}
           >
             <i className="h-1.5 w-1.5 rounded-full" style={{ background: OUTLINE[zone.kind] === '#ffffff' ? BRAND.primary : OUTLINE[zone.kind] }} />
-            <b className={editing ? '' : 'text-slate-800'}>{zone.code}</b>
+            <b className={editing || heat ? '' : 'text-slate-800'}>{zone.code}</b>
+            {heat && !editing && zone.kind !== 'storage' && <span>· {heat.label}</span>}
             {editing ? (
               <span>
                 · {width} × {depth} ม.
@@ -915,7 +1009,7 @@ const ZoneModel = memo(function ZoneModel({
             ) : (
               zone.stores && <span className="text-slate-400">· ว่าง</span>
             )}
-            {usage !== null && !editing && <span className={usage >= 90 ? 'font-semibold text-red-600' : 'text-slate-400'}>· {usage}%</span>}
+            {usage !== null && !editing && <span className={heat ? 'font-semibold' : usage >= 90 ? 'font-semibold text-red-600' : 'text-slate-400'}>· {usage}%</span>}
             {editable && !editing && <span className="text-blue-600">✥</span>}
           </div>
         </Html>
@@ -1009,5 +1103,50 @@ function ZoneBox({ zone, onClick }: { zone: Zone; onClick: () => void }) {
       <boxGeometry args={[zone.width, style.height, zone.depth]} />
       <meshStandardMaterial color={style.color} transparent opacity={0.85} />
     </mesh>
+  )
+}
+
+/* ------------------------------------------------------------------ Heatmap */
+
+interface Heat {
+  color: string
+  label: string
+}
+
+/** สีตามความเต็ม: ว่าง = เทา, < 50% = เขียว, 50–85% = เหลือง, > 85% = แดง */
+const usageColor = (pct: number) => (pct <= 0 ? '#94a3b8' : pct < 50 ? '#22c55e' : pct <= 85 ? '#f59e0b' : '#ef4444')
+
+/** สถานะของโซนสำหรับ heatmap: โซนเก็บ = % ที่ใช้, MI3/NG/จุดรับ = มีของค้างหรือไม่ */
+function zoneHeat(zone: Zone, stock: ZoneContents | undefined, usage: number | null): Heat | null {
+  const qty = stock?.totalQty ?? 0
+  if (zone.kind === 'storage' && usage !== null) return { color: usageColor(usage), label: `${usage}%` }
+  if (zone.kind === 'inspection') return qty || stock?.pendingQcQty ? { color: '#f97316', label: 'รอคัด' } : { color: '#22c55e', label: 'ว่าง' }
+  if (zone.kind === 'ng') return qty ? { color: '#ef4444', label: 'NG ค้าง' } : { color: '#22c55e', label: 'ว่าง' }
+  if (zone.kind === 'receiving') return qty ? { color: '#f59e0b', label: 'รอจัดเก็บ' } : { color: '#22c55e', label: 'ว่าง' }
+  return null
+}
+
+/** เต็นท์: ประมาณความจุจากพื้นที่ (พาเลท 1.2 ม.² ใช้พื้น 60% ซ้อน 2 ชั้น) */
+function tentHeat(zone: Zone, stock: ZoneContents | undefined): Heat | null {
+  if (zone.kind !== 'tent') return null
+  const capacity = Math.max(1, Math.floor((zone.width * zone.depth * 0.6) / 1.2) * 2)
+  const pct = Math.round((Math.min(palletsFor(stock).length, capacity) / capacity) * 100)
+  return { color: usageColor(pct), label: `~${pct}%` }
+}
+
+/** พื้นสี + กล่องโปร่งแสงครอบโซน (เห็นสีชัดเมื่อมองจากด้านบน) */
+function HeatPlane({ width, depth, heat, height = 1.2 }: { width: number; depth: number; heat: Heat | null; height?: number }) {
+  if (!heat) return null
+  return (
+    <group>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[width / 2, 0.04, depth / 2]} renderOrder={2}>
+        <planeGeometry args={[width, depth]} />
+        <meshBasicMaterial color={heat.color} transparent opacity={0.5} depthWrite={false} />
+      </mesh>
+      <mesh position={[width / 2, height / 2 + 0.05, depth / 2]} renderOrder={3}>
+        <boxGeometry args={[width + 0.2, height + 0.1, depth + 0.2]} />
+        <meshBasicMaterial color={heat.color} transparent opacity={0.2} depthWrite={false} />
+      </mesh>
+    </group>
   )
 }

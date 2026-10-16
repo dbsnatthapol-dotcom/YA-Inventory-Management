@@ -1,11 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AuthProvider } from './auth/AuthProvider'
 import { ChangePasswordScreen, LoadingScreen, LoginScreen } from './auth/AuthScreens'
-import { can, ROLE_LABEL } from './auth/staff'
+import { ROLE_LABEL } from './auth/staff'
 import { useAuth } from './auth/useAuth'
 import { BackofficePage } from './components/admin/BackofficePage'
 import { WarehousePage, type WmsDeepLink } from './components/wms/WarehousePage'
 import { WmsProvider } from './wms/WmsProvider'
+import { useWms } from './wms/useWms'
+import { layoutSavePayload } from './lib/layoutSave'
+import { useViewModeState, ViewModeContext } from './lib/viewMode'
+import { MobileShell } from './components/mobile/MobileShell'
+import { ExecTour } from './components/map/ExecTour'
+import { buildGuides, buildTourSteps, flowsFromTx, sampleFlows } from './lib/mapShowcase'
+import type { FlowSpec } from './components/FactoryScene'
+import type { Tx } from './wms/types'
 import { FactoryScene, type CameraCommand, type MapPinSpec, type ViewMode } from './components/FactoryScene'
 import { CameraButtons } from './components/map/CameraButtons'
 import { IconClose, IconPanel } from './components/map/icons'
@@ -74,6 +82,10 @@ function FactoryApp() {
   const staffName = auth.profile ? `${auth.profile.full_name} (${auth.profile.employee_code})` : undefined
   const [loaded, setLoaded] = useState<LoadedLayout>({ layout: sampleLayout, source: 'sample' })
   const layoutEdits = useLayoutEdits()
+  const wms = useWms()
+  const view = useViewModeState()
+  // สิทธิ์แก้ผังกำหนดในตารางสิทธิ์ (layout.edit) · โหมดสาธิตเปิดให้ทดลอง
+  const canEditLayout = role === null || wms.can('layout.edit')
   // ผังที่ใช้งานจริง = ผังหลัก + ตำแหน่งที่ผู้ใช้ปรับ (ทางเดินที่ถูกขวางถูกปิด, จุดเข้า-ออกคำนวณใหม่)
   const layout = useMemo(() => applyLayoutEdits(loaded.layout, layoutEdits.edits), [loaded.layout, layoutEdits.edits])
   const [sourceId, setSourceId] = useState('TENT-C')
@@ -98,6 +110,15 @@ function FactoryApp() {
   useEffect(() => {
     loadLayout().then(setLoaded)
   }, [])
+
+  /** บันทึกผังที่แก้ลงฐานข้อมูลกลาง แล้วโหลดผัง + ช่องเก็บใหม่ */
+  const saveLayout = async () => {
+    await wms.api.saveLayout(layoutSavePayload(loaded.layout, layoutEdits.edits))
+    const fresh = await loadLayout()
+    setLoaded(fresh)
+    layoutEdits.saved()
+    await wms.reload()
+  }
 
   // ถ้าโซนที่เลือกไว้ถูกลบในหน้าปรับผัง ใช้ค่าเริ่มต้นแทน
   const source = layout.zones.find((z) => z.id === sourceId) ?? layout.zones.find((z) => z.id === 'TENT-C')
@@ -151,6 +172,37 @@ function FactoryApp() {
   const camera = (cmd: DistributiveOmit<CameraCommand, 'n'>) => setCameraCommand((prev) => ({ ...cmd, n: (prev?.n ?? 0) + 1 }) as CameraCommand)
 
   const stats = useMemo(() => mapStats(layout, inventory.state, zoneStock, bangkokDate()), [layout, inventory.state, zoneStock])
+
+  // ---- ไกด์ประจำจุด, heatmap, live flow, โหมดนำเสนอ
+  const [guidesOn, setGuidesOn] = useState(true)
+  const [openGuide, setOpenGuide] = useState<string | null>(null)
+  const [heatmap, setHeatmap] = useState(false)
+  const [liveFlow, setLiveFlow] = useState(false)
+  const [flowTx, setFlowTx] = useState<Tx[]>([])
+  const [tourIndex, setTourIndex] = useState<number | null>(null)
+  const guides = useMemo(() => (guidesOn ? buildGuides(layout, zoneStock, wms.master.zoneHeads, stats) : undefined), [guidesOn, layout, zoneStock, wms.master.zoneHeads, stats])
+  // ดึงความเคลื่อนไหวล่าสุดจากระบบทุก 20 วินาทีระหว่างเปิด Live flow
+  useEffect(() => {
+    if (!liveFlow || page !== 'map') return
+    let alive = true
+    const pull = () =>
+      wms.api
+        .recentTx(40)
+        .then((t) => alive && setFlowTx(t))
+        .catch(() => undefined)
+    void pull()
+    const timer = setInterval(pull, 20000)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [liveFlow, page, wms.api])
+  const flows = useMemo<FlowSpec[]>(() => {
+    if (!liveFlow) return []
+    const real = flowsFromTx(flowTx, wms.master.locations, layout)
+    return real.length || wms.api.kind !== 'demo' ? real : sampleFlows(layout)
+  }, [liveFlow, flowTx, wms.master.locations, wms.api.kind, layout])
+  const tourSteps = useMemo(() => buildTourSteps(layout, stats, zoneStock), [layout, stats, zoneStock])
   const pins = useMemo<MapPinSpec[]>(() => {
     const list: MapPinSpec[] = searchZoneId ? [{ zoneId: searchZoneId, tone: 'search' }] : []
     if (qcPins)
@@ -198,11 +250,48 @@ function FactoryApp() {
     setSideTab('zone')
     camera({ kind: 'focus', zoneId: zone.id })
   }
+  /** ไปจุดที่ i ของทัวร์นำเสนอ: ตั้งมุมมอง ชั้นที่แสดง heatmap/live flow ไกด์ แล้วบินกล้องไปหา */
+  const goTour = (i: number | null) => {
+    setTourIndex(i)
+    if (i === null) {
+      setOpenGuide(null)
+      return
+    }
+    const step = tourSteps[i]
+    if (!step) return
+    setPage('map')
+    setPanelOpen(false)
+    setTopView(false)
+    setMode(step.mode)
+    setHeatmap(!!step.heatmap)
+    setLiveFlow(!!step.flow)
+    setGuidesOn(true)
+    setOpenGuide(step.guide ? step.zoneId : null)
+    const zone = step.zoneId ? layout.zones.find((z) => z.id === step.zoneId) : undefined
+    const floor = zone && layout.floors.find((f) => f.id === zone.floorId)
+    setHiddenFloors(floor && floor.area === 'building' && step.mode === 'interior' ? new Set(buildingFloors.filter((f) => f.elevation > floor.elevation).map((f) => f.id)) : new Set())
+    camera(zone ? { kind: 'focus', zoneId: zone.id } : { kind: 'home' })
+  }
+
   const clearSearch = () => {
     setSearchZoneId(null)
     setHighlightLot(null)
     setSelectedPallet(null)
   }
+
+  // มือถือ: หน้าจอหน้างาน (ไม่โหลดผัง 3D)
+  if (view.mode === 'mobile')
+    return (
+      <ViewModeContext.Provider value="mobile">
+        <MobileShell
+          layout={layout}
+          deepLink={deepLink}
+          user={auth.profile ? { name: auth.profile.full_name, code: auth.profile.employee_code, role: ROLE_LABEL[auth.profile.role] } : null}
+          onSignOut={auth.profile ? () => void auth.signOut() : undefined}
+          onDesktop={() => view.setPref('desktop')}
+        />
+      </ViewModeContext.Provider>
+    )
 
   return (
     <div className="flex h-full flex-col bg-slate-100">
@@ -223,7 +312,7 @@ function FactoryApp() {
               ['map', 'ผังโรงงาน 3D'],
               ['wms', 'งานคลัง'],
               ['inventory', 'สต็อก (ตัวอย่างเดิม)'],
-              ...(can(role, 'editLayout') ? ([['layout', 'ปรับผัง']] as const) : []),
+              ...(canEditLayout ? ([['layout', 'ปรับผัง']] as const) : []),
               ...(canAdmin ? ([['admin', 'หลังบ้าน']] as const) : []),
             ] as const
           ).map(([value, label]) => (
@@ -243,6 +332,13 @@ function FactoryApp() {
         </div>
 
         <div className="ml-auto flex items-center gap-3">
+          <button
+            className="rounded-full px-2.5 py-1 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+            onClick={() => view.setPref('mobile')}
+            title="หน้าจอสำหรับหน้างาน: สแกน รับของ ค้นหา ผัง 2D (เครื่องนี้จะจำไว้)"
+          >
+            📱 โหมดมือถือ
+          </button>
           <span className="hidden items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200 lg:flex" title="แหล่งข้อมูลผัง">
             <i className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
             {loaded.source === 'supabase' ? 'Supabase' : 'ผังตัวอย่าง'}
@@ -275,7 +371,15 @@ function FactoryApp() {
       )}
       {page === 'layout' && (
         <main className="min-h-0 flex-1">
-          <LayoutEditorPage layout={layout} baseLayout={loaded.layout} api={layoutEdits} stock={zoneStock} onOpen3D={open3D} />
+          <LayoutEditorPage
+            layout={layout}
+            baseLayout={loaded.layout}
+            api={layoutEdits}
+            stock={zoneStock}
+            canEdit={canEditLayout}
+            onSave={loaded.source === 'supabase' ? saveLayout : undefined}
+            onOpen3D={open3D}
+          />
         </main>
       )}
       {page === 'wms' && (
@@ -315,7 +419,14 @@ function FactoryApp() {
             pins={pins}
             cameraCommand={cameraCommand}
             focusShiftPx={panelOpen && window.innerWidth >= 768 ? 200 : 0}
+            guides={guides}
+            openGuide={openGuide}
+            onGuideToggle={(id) => setOpenGuide((cur) => (cur === id ? null : id))}
+            heatmap={heatmap}
+            flows={flows}
           />
+
+          {tourIndex !== null && <ExecTour steps={tourSteps} index={tourIndex} onIndex={goTour} onExit={() => goTour(null)} />}
 
           {/* มุมซ้ายบน: ตัวเลขสรุป + แถบมุมมอง */}
           <div className={`pointer-events-none absolute left-3 right-16 top-3 z-20 flex flex-col items-start gap-2 ${panelOpen ? 'md:right-[26.5rem]' : 'md:right-16'}`}>
@@ -337,6 +448,32 @@ function FactoryApp() {
                 onSurroundings={setShowSurroundings}
               />
             </div>
+            <div className="pointer-events-auto flex max-w-full flex-wrap items-center gap-2 rounded-xl bg-white/95 px-2 py-1.5 shadow-[0_6px_24px_-12px_rgba(15,40,80,0.35)] ring-1 ring-slate-200/80 backdrop-blur">
+              {(
+                [
+                  ['👷 ไกด์ประจำจุด', guidesOn, () => setGuidesOn((v) => !v), 'พนักงานประจำแต่ละจุด คลิกเพื่อดูสรุป'],
+                  ['🌡️ Heatmap', heatmap, () => setHeatmap((v) => !v), 'ระบายสีโซนตามความเต็ม (ดูในโหมดภายในอาคาร)'],
+                  ['⚡ Live flow', liveFlow, () => setLiveFlow((v) => !v), 'การเคลื่อนไหวล่าสุดในระบบ วิ่งตามเส้นทางจริง'],
+                ] as const
+              ).map(([label, on, toggle, title]) => (
+                <button
+                  key={label}
+                  onClick={toggle}
+                  title={title}
+                  className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs transition ${on ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                >
+                  {label}
+                </button>
+              ))}
+              <button
+                onClick={() => goTour(0)}
+                className="whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold text-white shadow-sm"
+                style={{ background: BRAND.primary }}
+                title="ทัวร์อัตโนมัติสำหรับนำเสนอผู้บริหาร"
+              >
+                ▶ โหมดนำเสนอ
+              </button>
+            </div>
           </div>
 
           {/* ขวาบน: ปุ่มกล้อง (ชิดซ้ายของแผงข้อมูล) */}
@@ -356,8 +493,47 @@ function FactoryApp() {
           </div>
 
           <div className={`pointer-events-none absolute bottom-3 left-3 right-3 z-20 hidden md:block ${panelOpen ? 'md:right-[23.5rem]' : ''}`}>
-            <div className="pointer-events-auto inline-block max-w-full">
+            <div className="pointer-events-auto flex max-w-full flex-wrap items-end gap-2">
               <MapLegend mode={mode} editMode={false} />
+              {heatmap && (
+                <div className="rounded-xl bg-white/95 px-3 py-2 text-xs text-slate-600 shadow ring-1 ring-slate-200">
+                  <div className="mb-1 font-semibold text-slate-800">Heatmap ความเต็ม</div>
+                  <div className="flex gap-3">
+                    {(
+                      [
+                        ['#94a3b8', 'ว่าง'],
+                        ['#22c55e', '< 50%'],
+                        ['#f59e0b', '50–85%'],
+                        ['#ef4444', '> 85%'],
+                      ] as const
+                    ).map(([c, t]) => (
+                      <span key={t} className="flex items-center gap-1">
+                        <i className="h-2.5 w-2.5 rounded-sm" style={{ background: c }} />
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {liveFlow && tourIndex === null && (
+                <div className="max-w-xs rounded-xl bg-white/95 px-3 py-2 text-xs text-slate-600 shadow ring-1 ring-slate-200">
+                  <div className="mb-1 font-semibold text-slate-800">⚡ ความเคลื่อนไหวล่าสุด</div>
+                  {flows.length === 0 ? (
+                    <div className="text-slate-400">ยังไม่มีรายการ (อัปเดตทุก 20 วินาที)</div>
+                  ) : (
+                    <ul className="space-y-0.5">
+                      {flows.slice(0, 6).map((f) => (
+                        <li key={f.id} className="flex items-center gap-1.5 truncate">
+                          <i className="h-2 w-2 shrink-0 rounded-full" style={{ background: f.color }} />
+                          <span className="truncate">
+                            {f.label} · {layout.zones.find((z) => z.id === f.from)?.code} → {layout.zones.find((z) => z.id === f.to)?.code}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

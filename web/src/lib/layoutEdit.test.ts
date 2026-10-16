@@ -1,9 +1,22 @@
 import { describe, expect, it } from 'vitest'
 import { sampleLayout } from '../data/factoryLayout'
-import { palletsFor, planRack } from '../data/warehouse'
+import { palletsFor, planRack, storagePlan } from '../data/warehouse'
 import { buildDemoState } from '../inventory/demoSeed'
 import { zoneContents } from '../inventory/reports'
-import { applyLayoutEdits, clampToFloor, emptyEdits, newZone, rotated, segmentHitsRect, withPatch, withRemoved, zoneIssues } from './layoutEdit'
+import { layoutLocations } from '../wms/locations'
+import {
+  applyLayoutEdits,
+  clampToFloor,
+  emptyEdits,
+  layoutChanges,
+  newZone,
+  rotated,
+  segmentHitsRect,
+  withCopiesOnFloors,
+  withPatch,
+  withRemoved,
+  zoneIssues,
+} from './layoutEdit'
 import { findRoute } from './pathfinding'
 
 const zoneIn = (layout: typeof sampleLayout, id: string) => layout.zones.find((z) => z.id === id)!
@@ -70,6 +83,88 @@ describe('layout edits', () => {
     expect(segmentHitsRect(5, -5, 5, 15, r)).toBe(true)
     expect(segmentHitsRect(0, -5, 0, 15, r)).toBe(false)
     expect(segmentHitsRect(-5, -5, -1, 15, r)).toBe(false)
+  })
+})
+
+describe('stairs and lifts', () => {
+  const links = (layout: typeof sampleLayout, mode: 'stairs' | 'lift') => layout.edges.filter((e) => e.mode === mode)
+  const floorOf = (layout: typeof sampleLayout, id: string) => layout.nodes.find((n) => n.id === id)?.floorId
+
+  it('keeps the base floor connections when nothing moved', () => {
+    const layout = applyLayoutEdits(sampleLayout, emptyEdits())
+    expect(links(layout, 'stairs')).toEqual(links(sampleLayout, 'stairs'))
+    expect(layoutChanges(sampleLayout, emptyEdits())).toEqual({ zones: [], removed: [], nodes: [], addEdges: [], dropEdges: [] })
+  })
+
+  it('unlinks a moved staircase until the floors above and below line up again', () => {
+    const moved = withPatch(emptyEdits(), 'F1-STAIRS', { x: 40, z: 87 })
+    const alone = applyLayoutEdits(sampleLayout, moved)
+    const stairs = zoneIn(alone, 'F1-STAIRS')
+    expect(stairs.accessNodeId).toBe('F1-STAIRS-AC')
+    expect(links(alone, 'stairs').some((e) => e.from === 'F1-ST' || e.to === 'F1-ST')).toBe(false)
+    expect(zoneIssues(alone, stairs).map((i) => i.text).join()).toContain('ไม่เชื่อมกับชั้นอื่น')
+    // ยังขึ้นชั้น 2 ได้ทางลิฟต์ แต่ห้ามลิฟต์แล้วไปไม่ได้
+    expect(findRoute(alone, 'F1-r5c2', 'F2-r5c2')).not.toBeNull()
+    expect(findRoute(alone, 'F1-r5c2', 'F2-r5c2', { avoid: ['lift'] })).toBeNull()
+
+    // วางให้ตรงกันทุกชั้น ⇒ บันไดชั้น 2, 3 ย้ายตาม และต่อกันใหม่
+    const aligned = applyLayoutEdits(sampleLayout, withCopiesOnFloors(moved, alone, 'F1-STAIRS'))
+    expect(zoneIn(aligned, 'F3-STAIRS')).toMatchObject({ x: 40, z: 87 })
+    const st = links(aligned, 'stairs').filter((e) => floorOf(aligned, e.from)?.startsWith('F'))
+    expect(st.map((e) => [e.from, e.to])).toEqual(
+      expect.arrayContaining([
+        ['F1-STAIRS-AC', 'F2-STAIRS-AC'],
+        ['F2-STAIRS-AC', 'F3-STAIRS-AC'],
+      ]),
+    )
+    expect(zoneIssues(aligned, zoneIn(aligned, 'F1-STAIRS')).some((i) => i.text.includes('ไม่เชื่อม'))).toBe(false)
+    expect(findRoute(aligned, 'F1-r5c2', 'F3-r5c2', { avoid: ['lift'] })).not.toBeNull()
+  })
+
+  it('adds a lift to every full floor of building F but not the mezzanine', () => {
+    const fb1 = sampleLayout.floors.find((f) => f.id === 'FB1')!
+    const lift = { ...newZone('lift', fb1, sampleLayout.zones), x: 70, z: 7 }
+    const once = { ...emptyEdits(), added: [lift] }
+    const edits = withCopiesOnFloors(once, applyLayoutEdits(sampleLayout, once), lift.id)
+    expect(edits.added.map((z) => z.floorId)).toEqual(['FB1', 'FB2'])
+    const layout = applyLayoutEdits(sampleLayout, edits)
+    expect(links(layout, 'lift')).toContainEqual({ from: `${lift.id}-AC`, to: `FB2-LF-U1-AC`, mode: 'lift' })
+    expect(findRoute(layout, 'FB1-r0c6', 'FB2-r0c6', { avoid: ['stairs'] })).not.toBeNull()
+    const save = layoutChanges(sampleLayout, edits)
+    expect(save.zones.map((z) => z.id)).toEqual(['FB1-LF-U1', 'FB2-LF-U1'])
+    expect(save.nodes.map((n) => n.id)).toEqual(['FB1-LF-U1-AC', 'FB2-LF-U1-AC'])
+  })
+
+  it('drops the shafts of a removed lift and re-links the mezzanine stairs after a move', () => {
+    const save = layoutChanges(sampleLayout, withRemoved(emptyEdits(), 'F2-LIFT'))
+    expect(save.removed).toEqual(['F2-LIFT'])
+    expect(save.dropEdges.filter((e) => e.mode === 'lift')).toHaveLength(2)
+
+    const layout = applyLayoutEdits(sampleLayout, withPatch(emptyEdits(), 'FB1-STAIRS', { x: 46 }))
+    expect(links(layout, 'stairs').some((e) => e.from === 'FB1-STAIRS-AC' && floorOf(layout, e.to) === 'FBM')).toBe(true)
+    expect(findRoute(layout, 'F1-r5c2', 'FBM-r0c2')).not.toBeNull()
+  })
+})
+
+describe('storage settings', () => {
+  it('defaults to floor pallets stacked 2 high and follows the per-zone settings', () => {
+    const rackA = zoneIn(sampleLayout, 'F1-RK-A')
+    const plan = storagePlan(rackA)
+    expect(plan).toMatchObject({ type: 'floor', levels: [0, 1.15] })
+    expect(plan.slots).toHaveLength(plan.maxPerLevel * 2)
+    expect(storagePlan({ ...rackA, storage: 'rack' }).levels).toEqual([0, 1.45, 2.9])
+    expect(storagePlan({ ...rackA, levels: 3, slotsPerLevel: 10 }).slots).toHaveLength(30)
+    // ที่วางต่อชั้นเกินพื้นที่ไม่ได้
+    expect(storagePlan({ ...rackA, slotsPerLevel: 9999 }).perLevel).toBe(plan.maxPerLevel)
+  })
+
+  it('creates one location per pallet spot and level', () => {
+    const layout = applyLayoutEdits(sampleLayout, withPatch(emptyEdits(), 'F1-RK-A', { storage: 'rack', levels: 2, slotsPerLevel: 3 }))
+    const codes = layoutLocations(layout).filter((l) => l.zoneId === 'F1-RK-A')
+    expect(codes.map((l) => l.code)).toEqual(['RK-A-01-1', 'RK-A-01-2', 'RK-A-02-1', 'RK-A-02-2', 'RK-A-03-1', 'RK-A-03-2'])
+    expect(new Set(codes.map((l) => l.kind))).toEqual(new Set(['bin']))
+    const floorCodes = layoutLocations(sampleLayout).filter((l) => l.zoneId === 'F1-RK-B')
+    expect(floorCodes.every((l) => l.kind === 'floor')).toBe(true)
   })
 })
 

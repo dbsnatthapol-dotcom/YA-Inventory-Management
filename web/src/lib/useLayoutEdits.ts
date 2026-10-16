@@ -22,7 +22,7 @@ interface History {
   future: LayoutEdits[]
 }
 
-/** ผังที่ผู้ใช้แก้ไข เก็บในเครื่อง (demo) พร้อมย้อนกลับ/ทำซ้ำ — ระบบจริงบันทึกลงตาราง zones ใน Supabase */
+/** ผังที่ผู้ใช้แก้ไข (ยังไม่บันทึก) เก็บในเครื่อง พร้อมย้อนกลับ/ทำซ้ำ — ระบบจริงกด "บันทึกผัง" ลงตาราง zones ใน Supabase */
 export function useLayoutEdits() {
   const [history, setHistory] = useState<History>(() => ({ past: [], present: load(), future: [] }))
   const edits = history.present
@@ -62,6 +62,10 @@ export function useLayoutEdits() {
     add: useCallback((zone: Zone) => apply((e) => ({ ...e, added: [...e.added, zone] })), [apply]),
     remove: useCallback((id: string) => apply((e) => withRemoved(e, id)), [apply]),
     reset: useCallback(() => apply(() => emptyEdits()), [apply]),
+    /** แก้หลายโซนพร้อมกันเป็นขั้นเดียว (ย้อนกลับได้ทีเดียว) */
+    transform: apply,
+    /** บันทึกลงระบบกลางแล้ว: ล้างการแก้ไขและประวัติ */
+    saved: useCallback(() => setHistory({ past: [], present: emptyEdits(), future: [] }), []),
     undo: useCallback(
       () =>
         setHistory((h) => (h.past.length ? { past: h.past.slice(0, -1), present: h.past[h.past.length - 1], future: [h.present, ...h.future] } : h)),

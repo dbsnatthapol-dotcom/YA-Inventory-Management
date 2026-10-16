@@ -2,7 +2,7 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } fro
 import { Color, DoubleSide, type InstancedMesh, Object3D, type Texture } from 'three'
 import { BRAND } from '../../data/brand'
 import { modelColor } from '../../data/modelColors'
-import { palletsFor, planRack, RACK } from '../../data/warehouse'
+import { palletsFor, RACK, type StoragePlan } from '../../data/warehouse'
 import type { ZoneContents } from '../../inventory/reports'
 import { floorMarkings, hazardStripes, textLabel } from './textures'
 import type { FloorPaint } from '../../lib/floorPlan'
@@ -258,30 +258,31 @@ export const PalletRack = memo(function PalletRack({
   stock,
   highlightLot,
   selectedIndex,
-  levels = RACK.levels,
-  height = RACK.height,
+  plan,
 }: {
   zoneId: string
   width: number
   depth: number
   code: string
-  /** ระดับชั้นวาง/ความสูง rack (ใต้หรือบนชั้นลอยเตี้ยกว่าปกติ) */
-  levels?: readonly number[]
-  height?: number
+  /** แผนวางพาเลท: พาเลทวางพื้น (ไม่มีโครง) หรือ rack, จำนวนชั้น, ที่วางต่อชั้น */
+  plan: StoragePlan
   stock?: ZoneContents
   /** lot ที่ค้นหาเจอ — ไฮไลต์ทุกพาเลทของ lot นี้ */
   highlightLot?: string | null
   /** พาเลทที่กำลังดูรายละเอียด (ลำดับใน palletsFor) */
   selectedIndex?: number | null
 }) {
-  const plan = useMemo(() => planRack(width, depth, levels), [width, depth, levels])
+  const { height, levels } = plan
+  const rack = plan.type === 'rack'
   const pallets = useMemo(() => palletsFor(stock), [stock])
-  const { frame, beams, guards, bases, loads } = useMemo(() => {
+  const { frame, beams, guards, spots, bases, loads } = useMemo(() => {
     const frame: Box[] = []
     const beams: Box[] = []
     const guards: Box[] = []
+    // พาเลทวางพื้น: ตีกรอบตำแหน่งวางบนพื้นแทนโครง rack
+    const spots: Box[] = rack ? [] : plan.slots.filter((s) => s.y === 0).map((s) => ({ p: [s.u, 0.012, s.v], s: [1.2, 0.012, 1.08] }))
     const bays = plan.bays
-    for (const row of plan.rows) {
+    for (const row of rack ? plan.rows : []) {
       const rowDepth = row.units * RACK.singleDepth
       const faces = [row.offset + 0.05, row.offset + rowDepth - 0.05]
       for (let b = 0; b <= bays; b++) {
@@ -319,8 +320,8 @@ export const PalletRack = memo(function PalletRack({
         loads.push({ p: [u, 0.65, v], s: [1.02, 1.0, 0.92], c: color })
       }
     })
-    return { frame, beams, guards, bases, loads }
-  }, [plan, pallets, height, levels])
+    return { frame, beams, guards, spots, bases, loads }
+  }, [plan, pallets, height, levels, rack])
 
   const marks = useMemo(() => {
     const lot: Box[] = []
@@ -342,19 +343,21 @@ export const PalletRack = memo(function PalletRack({
           <InstancedBoxes boxes={frame} color={UPRIGHT} metalness={0.3} roughness={0.5} />
           <InstancedBoxes boxes={beams} color={BEAM} metalness={0.2} roughness={0.5} />
           <InstancedBoxes boxes={guards} color="#f2c200" castShadow={false} />
+          <InstancedBoxes boxes={spots} color="#e9eef3" castShadow={false} />
           <InstancedBoxes boxes={bases} color={WOOD} roughness={0.95} />
           <InstancedBoxes boxes={loads} roughness={0.7} pickable userData={{ palletZone: zoneId }} />
           <InstancedBoxes boxes={marks.lot} color={HIGHLIGHT.lot} opacity={0.45} castShadow={false} />
           <InstancedBoxes boxes={marks.selected} color={HIGHLIGHT.selected} opacity={0.55} castShadow={false} />
-          {plan.rows.map((row, i) => (
-            <SignBoard
-              key={i}
-              text={`${code}-${i + 1}`}
-              width={1.6}
-              position={[plan.start - 0.05, height < RACK.height ? height - 0.3 : height + 0.35, row.offset + (row.units * RACK.singleDepth) / 2]}
-              background={UPRIGHT}
-            />
-          ))}
+          {rack &&
+            plan.rows.map((row, i) => (
+              <SignBoard
+                key={i}
+                text={`${code}-${i + 1}`}
+                width={1.6}
+                position={[plan.start - 0.05, height < RACK.height ? height - 0.3 : height + 0.35, row.offset + (row.units * RACK.singleDepth) / 2]}
+                background={UPRIGHT}
+              />
+            ))}
           {/* ชื่อโซนพ่นบนทางเดินในโซน */}
           {plan.rows.length > 1 && (
             <FloorText text={code} width={Math.min(4, length / 3)} position={[length / 2, 0.03, plan.rows[0].offset + RACK.singleDepth + RACK.aisle / 2]} />

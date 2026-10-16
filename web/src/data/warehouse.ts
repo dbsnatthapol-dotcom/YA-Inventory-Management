@@ -1,4 +1,5 @@
 import type { ZoneContents } from '../inventory/reports'
+import type { StorageType, Zone } from '../types/layout'
 
 /**
  * ขนาดอุปกรณ์คลังสินค้าที่ใช้วาดโมเดล 3D และคำนวณจำนวนพาเลท
@@ -18,14 +19,6 @@ export const RACK = {
   height: 4.2,
   palletLoadHeight: 1.0,
 } as const
-
-/** ระดับชั้นวางและความสูง rack ตามระยะถึงเพดาน — ใต้/บนชั้นลอยใช้ชั้นวางเตี้ยห่างกันชั้นละ 0.95 ม. */
-export function rackSpec(clearance = Infinity): { levels: number[]; height: number } {
-  if (clearance >= RACK.height + 0.2) return { levels: [...RACK.levels], height: RACK.height }
-  const levels: number[] = []
-  for (let y = 0; y + RACK.palletLoadHeight + 0.15 <= clearance - 0.15 + 1e-9; y += 0.95) levels.push(Math.round(y * 100) / 100)
-  return { levels: levels.length ? levels : [0], height: Math.max(1.2, Math.min(RACK.height, clearance - 0.15)) }
-}
 
 /** จำนวนชิ้นต่อพาเลท (สมมติ) — ใช้แปลงยอดคงคลังเป็นจำนวนพาเลทบนชั้นวาง */
 export const PIECES_PER_PALLET: Record<string, number> = {
@@ -117,6 +110,62 @@ export function planRack(width: number, depth: number, levels: readonly number[]
               y,
             })
   return { length, span, bays, start, rows, slots }
+}
+
+/** ค่าเริ่มต้นของโซนเก็บของ: พาเลทวางพื้นซ้อน 2 ชั้น (ใกล้กับหน้างานจริง) */
+export const DEFAULT_STORAGE: StorageType = 'floor'
+export const DEFAULT_FLOOR_STACK = 2
+/** ความสูงพาเลท 1 ชั้นเมื่อวางซ้อน (ฐานพาเลท + ของ) */
+export const STACK_STEP = RACK.palletLoadHeight + 0.15
+/** จำนวนชั้นสูงสุดเมื่อไม่มีเพดานจำกัด (ชั้นบนสุดของอาคาร) */
+const MAX_LEVELS: Record<StorageType, number> = { floor: 4, rack: 6 }
+const MIN_RACK_SPACING = 0.9
+
+export const STORAGE_LABEL: Record<StorageType, string> = { floor: 'พาเลทวางพื้น', rack: 'Rack (ชั้นวาง)' }
+
+export interface StoragePlan extends RackPlan {
+  type: StorageType
+  /** ระดับพื้นวางพาเลทแต่ละชั้น (ม.) */
+  levels: number[]
+  /** ความสูงโครง rack / กองพาเลท */
+  height: number
+  /** ที่วางพาเลทต่อชั้นที่ใช้จริง และที่วางได้สูงสุดตามขนาดโซน */
+  perLevel: number
+  maxPerLevel: number
+  /** จำนวนชั้นสูงสุดที่ตั้งได้ตามระยะถึงเพดาน */
+  maxLevels: number
+}
+
+/**
+ * แผนการวางพาเลทของโซน: แถว/ทางเดินแบบเดียวกับ rack (ให้รถยกเข้าถึงทุกพาเลท)
+ * พาเลทวางพื้นซ้อนทีละ 1.15 ม., rack ระดับห่าง 1.45 ม. (บีบลงเมื่อเพดานเตี้ย เช่น ชั้นลอย)
+ * จำนวนที่วางต่อชั้นลดได้ แต่เพิ่มได้ไม่เกินพื้นที่โซน (ขยายโซนเพื่อเพิ่ม)
+ */
+export function storagePlan(zone: Pick<Zone, 'width' | 'depth' | 'storage' | 'levels' | 'slotsPerLevel'>, clearance = Infinity): StoragePlan {
+  const type = zone.storage ?? DEFAULT_STORAGE
+  const avail = Number.isFinite(clearance) ? clearance - 0.15 : Infinity
+  // rack ระดับห่างได้น้อยสุด 0.9 ม. (ของเตี้ย เช่น กล่อง component) · พาเลทวางพื้นต้องเว้นเต็มความสูงพาเลท
+  const step = type === 'rack' ? MIN_RACK_SPACING : STACK_STEP
+  const fit = Number.isFinite(avail) ? Math.max(1, 1 + Math.floor((avail - STACK_STEP + 1e-9) / step)) : Infinity
+  const maxLevels = Math.min(fit, MAX_LEVELS[type])
+  const wanted = zone.levels ?? (type === 'rack' ? RACK.levels.length : DEFAULT_FLOOR_STACK)
+  const n = Math.max(1, Math.min(Math.round(wanted), maxLevels))
+  let levels: number[]
+  let height: number
+  if (type === 'rack') {
+    const spacing = n > 1 ? Math.min(1.45, (avail - STACK_STEP) / (n - 1)) : 1.45
+    levels = Array.from({ length: n }, (_, i) => Math.round(i * spacing * 100) / 100)
+    height = Math.max(1.2, Math.min(avail, levels[n - 1] + 1.3))
+  } else {
+    levels = Array.from({ length: n }, (_, i) => Math.round(i * STACK_STEP * 100) / 100)
+    height = n * STACK_STEP
+  }
+  const base = planRack(zone.width, zone.depth, [0])
+  const maxPerLevel = base.slots.length
+  const perLevel = Math.max(0, Math.min(maxPerLevel, Math.round(zone.slotsPerLevel ?? maxPerLevel)))
+  const spots = base.slots.slice(0, perLevel)
+  const slots = levels.flatMap((y) => spots.map((s) => ({ ...s, y })))
+  return { ...base, slots, type, levels, height, perLevel, maxPerLevel, maxLevels }
 }
 
 export interface PalletLoad {

@@ -10,10 +10,16 @@ import type {
   ReceivePayload,
   Settings,
   StaffBrief,
+  FgItem,
+  LedgerRow,
+  ReconcilePayload,
+  Requisition,
+  RequisitionPayload,
   StorageLoc,
   Tx,
   ZoneRuleRow,
 } from './types'
+import type { LayoutSavePayload } from '../lib/layoutSave'
 
 /** ช่องทางเดียวที่หน้าจองานคลังใช้ — มีสองแบบ: Supabase (ใช้งานจริง) และ demo (เก็บในเบราว์เซอร์) */
 export interface WmsApi {
@@ -60,6 +66,21 @@ export interface WmsApi {
   upsertPart(p: PartMaster): Promise<void>
   upsertLocation(l: StorageLoc): Promise<void>
   setZoneRule(r: ZoneRuleRow): Promise<void>
+  /** ชุดวงล้อ (FG) + BOM */
+  saveFg(fg: FgItem): Promise<void>
+  // ใบเบิกเข้าไลน์ + บัญชีคุม
+  /** บันทึกใบเบิก แล้วตัดสต็อกจากกล่องที่รับเข้าก่อน (FIFO) */
+  postRequisition(p: RequisitionPayload): Promise<{ id: string; reqNo: string }>
+  /** FM-P-005: กระทบกับใบย่อยของวัน/Model เดียวกัน ส่วนต่างตัดเพิ่มหรือคืนเข้าสต็อก */
+  reconcileFm005(p: ReconcilePayload): Promise<{ id: string; reqNo: string; subs: number }>
+  voidRequisition(id: string, reason: string): Promise<void>
+  /** ใบเบิกตามช่วงวันที่ (YYYY-MM-DD) */
+  listRequisitions(from: string, to: string): Promise<Requisition[]>
+  /** รายการเคลื่อนไหวของ part ก่อนเวลา to (ISO) สำหรับบัญชีคุม */
+  ledgerRows(parts: string[], to: string): Promise<LedgerRow[]>
+
+  /** บันทึกผังที่แก้ลงฐานข้อมูลกลาง (สิทธิ์ layout.edit) */
+  saveLayout(p: LayoutSavePayload): Promise<void>
 }
 
 /** ข้อความ error ที่อ่านรู้เรื่อง (ข้อความจากฐานข้อมูลเป็นภาษาไทยอยู่แล้ว) */

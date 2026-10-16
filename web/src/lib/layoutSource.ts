@@ -18,7 +18,9 @@ export async function loadLayout(): Promise<LoadedLayout> {
 
   const [floors, zones, nodes, edges, sites, landmarks] = await Promise.all([
     supabase.from('floors').select('id, name, level, elevation, area, x, z, rotation, width, depth, building, mezzanine').order('level'),
-    supabase.from('zones').select('id, code, name, floorId:floor_id, kind, x, z, width, depth, accessNodeId:access_node_id, stores'),
+    supabase
+      .from('zones')
+      .select('id, code, name, floorId:floor_id, kind, x, z, width, depth, accessNodeId:access_node_id, stores, storage, levels, slotsPerLevel:slots_per_level'),
     supabase.from('nav_nodes').select('id, floorId:floor_id, x, z'),
     supabase.from('nav_edges').select('from:from_node_id, to:to_node_id, mode'),
     supabase.from('sites').select('id, name, boundary').limit(1),

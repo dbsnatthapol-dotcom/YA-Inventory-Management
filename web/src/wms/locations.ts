@@ -1,4 +1,4 @@
-import { planRack, RACK, rackSpec } from '../data/warehouse'
+import { storagePlan, type StoragePlan } from '../data/warehouse'
 import { zoneClearance } from '../lib/geometry'
 import type { FactoryLayout, Zone } from '../types/layout'
 
@@ -13,20 +13,18 @@ export interface StorageLocation {
 const pad = (n: number) => String(n).padStart(2, '0')
 
 /**
- * ช่องเก็บตั้งต้นจากผัง: Rack = โซน-ช่อง-ชั้น (RK-A-01-1), เต็นท์ = โซน-บล็อก (TENT-T-01)
- * levelsOf: ระดับชั้นวางของแต่ละโซน (rack บนชั้นลอยเตี้ยกว่า ⇒ มีชั้นน้อยกว่า)
- * จุดรับเข้า / MI3 / NG เป็นช่องเดียวตามรหัสโซน
+ * ช่องเก็บตั้งต้นจากผัง: โซนเก็บของ = โซน-ที่วาง-ชั้น (RK-A-01-1 = ที่วางที่ 1 ชั้นล่าง) 1 ช่องต่อ 1 พาเลท
+ * เต็นท์ = โซน-บล็อก (TENT-T-01) · จุดรับเข้า / MI3 / NG เป็นช่องเดียวตามรหัสโซน
+ * planOf: แผนวางพาเลทของโซน (ประเภท จำนวนชั้น ที่วางต่อชั้น)
  */
-export function defaultLocations(zones: Zone[], levelsOf: (zone: Zone) => readonly number[] = () => RACK.levels): StorageLocation[] {
+export function defaultLocations(zones: Zone[], planOf: (zone: Zone) => StoragePlan = (z) => storagePlan(z)): StorageLocation[] {
   const out: StorageLocation[] = []
   for (const z of zones) {
     if (z.kind === 'storage') {
-      const levels = levelsOf(z)
-      const plan = planRack(z.width, z.depth, levels)
-      const faces = plan.rows.reduce((s, r) => s + r.units, 0)
-      const bays = Math.max(1, plan.bays * faces)
-      for (let b = 1; b <= bays; b++)
-        for (let l = 1; l <= levels.length; l++) out.push({ code: `${z.code}-${pad(b)}-${l}`, zoneId: z.id, kind: 'bin' })
+      const plan = planOf(z)
+      const kind: LocationKind = plan.type === 'rack' ? 'bin' : 'floor'
+      for (let p = 1; p <= plan.perLevel; p++)
+        for (let l = 1; l <= plan.levels.length; l++) out.push({ code: `${z.code}-${pad(p)}-${l}`, zoneId: z.id, kind })
     } else if (z.kind === 'tent') {
       const blocks = Math.max(4, Math.min(30, Math.floor(Math.max(z.width, z.depth) / 2.4)))
       for (let b = 1; b <= blocks; b++) out.push({ code: `${z.code}-${pad(b)}`, zoneId: z.id, kind: 'floor' })
@@ -37,9 +35,11 @@ export function defaultLocations(zones: Zone[], levelsOf: (zone: Zone) => readon
   return out
 }
 
-/** ช่องเก็บของทั้งผัง (จำนวนชั้นวางตามระยะถึงเพดานของแต่ละโซน) */
-export const layoutLocations = (layout: Pick<FactoryLayout, 'zones' | 'floors'>) =>
-  defaultLocations(layout.zones, (z) => rackSpec(zoneClearance(layout.floors, z)).levels)
+/** แผนวางพาเลทของโซนในผัง (ระยะถึงเพดานจำกัดจำนวนชั้น เช่น บนชั้นลอย) */
+export const zonePlan = (layout: Pick<FactoryLayout, 'floors'>, zone: Zone) => storagePlan(zone, zoneClearance(layout.floors, zone))
+
+/** ช่องเก็บของทั้งผัง */
+export const layoutLocations = (layout: Pick<FactoryLayout, 'zones' | 'floors'>, zones: Zone[] = layout.zones) => defaultLocations(zones, (z) => zonePlan(layout, z))
 
 /** รหัสโซนจากรหัสช่อง: RK-C-01-1 → RK-C, TENT-T-03 → TENT-T */
 export const zoneCodeOf = (loc: string) => {

@@ -15,6 +15,7 @@ const master: MasterData = {
   rules: [],
   locations: [],
   zoneHeads: [],
+  fgItems: [],
 }
 
 describe('งานคลัง', () => {

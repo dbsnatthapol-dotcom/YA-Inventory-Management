@@ -4,7 +4,8 @@ import { useAuth } from '../../auth/useAuth'
 import { BRAND } from '../../data/brand'
 import type { Zone } from '../../types/layout'
 import { errorText } from '../../wms/api'
-import { PERMS, type PermRow, type StaffBrief, type StorageLoc } from '../../wms/types'
+import { PERMS, type FgItem, type PermRow, type StaffBrief, type StorageLoc } from '../../wms/types'
+import { resolvePart } from '../../wms/partCodes'
 import { useWms } from '../../wms/useWms'
 import { Alert, BigButton, Card, Field, inputCls, Pill, Segmented, tdCls, thCls } from '../wms/ui'
 import { UsersPage } from './UsersPage'
@@ -190,7 +191,7 @@ function ZoneHeadsTab({ zones }: { zones: Zone[] }) {
 }
 
 function MasterTab({ zones }: { zones: Zone[] }) {
-  const [sub, setSub] = useState<'parts' | 'rules' | 'locs'>('parts')
+  const [sub, setSub] = useState<'parts' | 'fg' | 'rules' | 'locs'>('parts')
   return (
     <>
       <Segmented
@@ -199,18 +200,20 @@ function MasterTab({ zones }: { zones: Zone[] }) {
         onChange={setSub}
         options={[
           ['parts', 'Part'],
+          ['fg', 'ชุดวงล้อ (BOM)'],
           ['rules', 'กฎโซนจัดเก็บ'],
           ['locs', 'ช่องเก็บ'],
         ]}
       />
       {sub === 'parts' && <PartsEditor />}
+      {sub === 'fg' && <FgEditor />}
       {sub === 'rules' && <RulesEditor zones={zones} />}
       {sub === 'locs' && <LocationsEditor zones={zones} />}
     </>
   )
 }
 
-const EMPTY_PART = { partNo: '', name: '', type: '', customerId: 'RE', models: [] as string[] }
+const EMPTY_PART = { partNo: '', name: '', type: '', customerId: 'RE', models: [] as string[], uamCode: '' }
 
 function PartsEditor() {
   const { api, master, settings, reload } = useWms()
@@ -218,11 +221,13 @@ function PartsEditor() {
   const [form, setForm] = useState(EMPTY_PART)
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
   const types = useMemo(() => [...new Set(master.parts.map((p) => p.type).filter(Boolean))].sort() as string[], [master.parts])
-  const shown = master.parts.filter((p) => !q || `${p.partNo} ${p.name} ${p.type} ${p.models.join(' ')}`.toLowerCase().includes(q.toLowerCase())).slice(0, 200)
+  const shown = master.parts
+    .filter((p) => !q || `${p.partNo} ${p.uamCode ?? ''} ${p.name} ${p.type} ${p.models.join(' ')}`.toLowerCase().includes(q.toLowerCase()))
+    .slice(0, 200)
 
   const save = async () => {
     try {
-      await api.upsertPart({ ...form, type: form.type || null })
+      await api.upsertPart({ ...form, type: form.type || null, uamCode: form.uamCode.trim() || null })
       await reload()
       setMsg({ tone: 'ok', text: `บันทึก ${form.partNo} แล้ว` })
       setForm(EMPTY_PART)
@@ -234,12 +239,13 @@ function PartsEditor() {
   return (
     <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
       <Card title={`Part ทั้งหมด (${master.parts.length})`}>
-        <input id="part-search" className={inputCls} placeholder="ค้นหา Part No. / ชื่อ / กลุ่ม / Model" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input id="part-search" className={inputCls} placeholder="ค้นหา Part No. / รหัส UAM / ชื่อ / กลุ่ม / Model" value={q} onChange={(e) => setQ(e.target.value)} />
         <div className="max-h-[60vh] overflow-auto rounded-lg ring-1 ring-slate-200">
           <table className="w-full min-w-[640px] text-sm">
             <thead className="sticky top-0">
               <tr>
                 <th className={thCls}>Part No.</th>
+                <th className={thCls}>รหัส UAM</th>
                 <th className={thCls}>ชื่อ</th>
                 <th className={thCls}>กลุ่ม</th>
                 <th className={thCls}>Model</th>
@@ -250,11 +256,12 @@ function PartsEditor() {
               {shown.map((p) => (
                 <tr key={p.partNo}>
                   <td className={`${tdCls} font-mono font-semibold`}>{p.partNo}</td>
+                  <td className={`${tdCls} font-mono text-slate-600`}>{p.uamCode ?? '–'}</td>
                   <td className={tdCls}>{p.name}</td>
                   <td className={tdCls}>{p.type && <Pill tone={settings.qiPartTypes.includes(p.type) ? 'mi3' : 'muted'}>{p.type}</Pill>}</td>
                   <td className={`${tdCls} text-xs text-slate-500`}>{p.models.join(', ')}</td>
                   <td className={tdCls}>
-                    <button className="text-sm text-sky-700 hover:underline" onClick={() => setForm({ partNo: p.partNo, name: p.name, type: p.type ?? '', customerId: p.customerId ?? 'RE', models: p.models })}>
+                    <button className="text-sm text-sky-700 hover:underline" onClick={() => setForm({ partNo: p.partNo, name: p.name, type: p.type ?? '', customerId: p.customerId ?? 'RE', models: p.models, uamCode: p.uamCode ?? '' })}>
                       แก้ไข
                     </button>
                   </td>
@@ -268,6 +275,9 @@ function PartsEditor() {
         {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
         <Field label="Part No.">
           <input id="pf-no" className={`${inputCls} font-mono`} value={form.partNo} onChange={(e) => setForm({ ...form, partNo: e.target.value })} />
+        </Field>
+        <Field label="รหัสภายใน UAM" hint="รหัสในใบเบิกย่อยของ MRA เช่น 2011409 · ค้นหา/สแกนด้วยรหัสนี้ได้">
+          <input id="pf-uam" className={`${inputCls} font-mono`} value={form.uamCode} onChange={(e) => setForm({ ...form, uamCode: e.target.value })} />
         </Field>
         <Field label="ชื่อ / รายการ">
           <input id="pf-name" className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
@@ -305,6 +315,150 @@ function PartsEditor() {
             บันทึก
           </BigButton>
           <BigButton tone="ghost" onClick={() => setForm(EMPTY_PART)}>
+            ล้างฟอร์ม
+          </BigButton>
+        </div>
+      </Card>
+    </div>
+  )
+}
+
+const EMPTY_FG: FgItem = { code: '', name: '', modelCode: null, active: true, lines: [] }
+
+/** ชุดวงล้อ (FG) + BOM: part ที่ใช้ต่อ 1 วง · ใบเบิกใส่จำนวนวงแล้วระบบคำนวณทุก part ให้ */
+function FgEditor() {
+  const { api, master, reload } = useWms()
+  const [form, setForm] = useState<FgItem>(EMPTY_FG)
+  const [code, setCode] = useState('')
+  const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
+  const partOf = (no: string) => master.parts.find((p) => p.partNo === no)
+
+  const addLine = () => {
+    const p = resolvePart(master.parts, code)
+    if (!p) return setMsg({ tone: 'bad', text: `ไม่พบ "${code}" ใน Master (ใช้รหัสลูกค้า หรือรหัส UAM)` })
+    if (!form.lines.some((l) => l.partNo === p.partNo)) setForm({ ...form, lines: [...form.lines, { partNo: p.partNo, qtyPer: 1 }] })
+    setCode('')
+    setMsg(null)
+  }
+  const save = async () => {
+    try {
+      await api.saveFg(form)
+      await reload()
+      setMsg({ tone: 'ok', text: `บันทึกชุด ${form.code} แล้ว` })
+      setForm(EMPTY_FG)
+    } catch (e) {
+      setMsg({ tone: 'bad', text: errorText(e) })
+    }
+  }
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-[1fr_440px]">
+      <Card title={`ชุดวงล้อ (${master.fgItems.length})`} eyebrow="1 Model มีได้หลายชุด เช่น ล้อหน้า/หลัง แต่ละสี">
+        <ul className="flex flex-col gap-1.5">
+          {master.fgItems.length === 0 && <p className="text-sm text-slate-500">ยังไม่มีชุดวงล้อ · เพิ่มทางขวา</p>}
+          {master.fgItems.map((f) => (
+            <li key={f.code}>
+              <button
+                onClick={() => setForm(f)}
+                className={`flex w-full flex-wrap items-center gap-2 rounded-lg px-3 py-2 text-left text-sm ring-1 ${form.code === f.code ? 'bg-sky-50 ring-sky-600' : 'ring-slate-200 hover:bg-slate-50'} ${f.active ? '' : 'opacity-50'}`}
+              >
+                <b className="font-mono">{f.code}</b>
+                <span>{f.name}</span>
+                <span className="ml-auto text-xs text-slate-500">
+                  {f.modelCode ?? '-'} · {f.lines.length} part{f.active ? '' : ' · เลิกใช้'}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </Card>
+      <Card title={master.fgItems.some((f) => f.code === form.code) ? `แก้ไข ${form.code}` : 'เพิ่มชุดวงล้อ'}>
+        {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="รหัส FG" hint="เช่น รหัส UAM ของวงล้อ 2019333">
+            <input className={`${inputCls} font-mono uppercase`} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
+          </Field>
+          <Field label="Model">
+            <select className={inputCls} value={form.modelCode ?? ''} onChange={(e) => setForm({ ...form, modelCode: e.target.value || null })}>
+              <option value="">—</option>
+              {master.models.map((m) => (
+                <option key={m.code} value={m.code}>
+                  {m.code}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <Field label="ชื่อชุด">
+          <input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="เช่น K1G ล้อหลัง 17×3.50 TL BLACK" />
+        </Field>
+        <div className="rounded-lg ring-1 ring-slate-200">
+          <table className="w-full text-sm">
+            <thead>
+              <tr>
+                <th className={thCls}>Part</th>
+                <th className={`${thCls} text-right`}>ต่อ 1 วง</th>
+                <th className={thCls} />
+              </tr>
+            </thead>
+            <tbody>
+              {form.lines.map((l) => (
+                <tr key={l.partNo}>
+                  <td className={tdCls}>
+                    <div className="font-mono font-semibold">{l.partNo}</div>
+                    <div className="text-xs text-slate-500">{[partOf(l.partNo)?.uamCode, partOf(l.partNo)?.name].filter(Boolean).join(' · ')}</div>
+                  </td>
+                  <td className={`${tdCls} text-right`}>
+                    <input
+                      type="number"
+                      min={0}
+                      step="any"
+                      className="w-20 rounded-md border border-slate-300 px-2 py-1 text-right font-mono"
+                      value={l.qtyPer}
+                      onChange={(e) => setForm({ ...form, lines: form.lines.map((x) => (x.partNo === l.partNo ? { ...x, qtyPer: Math.max(0, Number(e.target.value) || 0) } : x)) })}
+                      aria-label={`ต่อวง ${l.partNo}`}
+                    />
+                  </td>
+                  <td className={tdCls}>
+                    <button className="text-slate-400 hover:text-rose-600" onClick={() => setForm({ ...form, lines: form.lines.filter((x) => x.partNo !== l.partNo) })} aria-label="เอาออก">
+                      ✕
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            addLine()
+          }}
+        >
+          <input list="fg-parts" className={`${inputCls} font-mono`} placeholder="+ part: รหัสลูกค้า / รหัส UAM" value={code} onChange={(e) => setCode(e.target.value)} />
+          <datalist id="fg-parts">
+            {master.parts
+              .filter((p) => !form.modelCode || p.models.includes(form.modelCode))
+              .map((p) => (
+                <option key={p.partNo} value={p.partNo}>
+                  {p.name}
+                </option>
+              ))}
+          </datalist>
+          <BigButton type="submit" tone="secondary" disabled={!code.trim()}>
+            เพิ่ม
+          </BigButton>
+        </form>
+        <label className="flex items-center gap-2 text-sm text-slate-600">
+          <input type="checkbox" className="h-5 w-5" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} />
+          ใช้งานอยู่ (เอาออกเพื่อเลิกใช้ชุดนี้)
+        </label>
+        <div className="flex gap-2">
+          <BigButton disabled={!form.code.trim() || !form.name.trim() || !form.lines.length} onClick={() => void save()}>
+            บันทึก
+          </BigButton>
+          <BigButton tone="ghost" onClick={() => setForm(EMPTY_FG)}>
             ล้างฟอร์ม
           </BigButton>
         </div>

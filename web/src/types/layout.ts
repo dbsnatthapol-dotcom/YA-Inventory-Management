@@ -56,7 +56,15 @@ export interface Zone {
   accessNodeId: string
   /** ประเภทของที่เก็บ เช่น FG, Component */
   stores?: string[]
+  /** โซนเก็บของ: วางพาเลทบนพื้น (ค่าเริ่มต้น) หรือ rack */
+  storage?: StorageType
+  /** จำนวนชั้น: พาเลทซ้อนกี่ชั้น / rack กี่ระดับ (ไม่ระบุ = ค่าเริ่มต้น) */
+  levels?: number
+  /** จำนวนที่วางพาเลทต่อชั้น (ไม่ระบุ = เต็มพื้นที่โซน) */
+  slotsPerLevel?: number
 }
+
+export type StorageType = 'floor' | 'rack'
 
 export interface NavNode {
   id: string

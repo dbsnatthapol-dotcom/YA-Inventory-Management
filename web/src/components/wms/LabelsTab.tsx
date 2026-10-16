@@ -119,7 +119,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
   const describe = (i: LpnItem) => detail?.lines.find((x) => x.id === i.grnLineId)?.description ?? ''
 
   return (
-    <div className="grid gap-4 pb-28 lg:grid-cols-[300px_1fr]">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-4 pb-28 lg:grid-cols-[300px_minmax(0,1fr)]">
       <Card title="ใบรับสินค้า (GRN) ล่าสุด">
         <div className="flex max-h-[60vh] flex-col gap-1.5 overflow-y-auto pr-1">
           {grns.length === 0 && <p className="text-sm text-slate-500">ยังไม่มีการรับของ · เริ่มที่แท็บ "รับสินค้า"</p>}
@@ -171,7 +171,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
                 </div>
               }
             >
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
                 {lpns.map((l) => {
                   const single = l.items.length === 1 ? l.items[0] : null
                   const qty = l.items.reduce((s, i) => s + i.qty, 0)

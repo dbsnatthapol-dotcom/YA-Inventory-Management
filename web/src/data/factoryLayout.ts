@@ -160,8 +160,8 @@ const zones: Zone[] = [
   // อาคาร F ชั้น 1 — บันไดขึ้นชั้นลอย (ใต้ขอบชั้นลอย)
   { id: 'FB1-STAIRS', code: 'FB1-STAIRS', name: 'บันไดขึ้นชั้นลอย', floorId: 'FB1', kind: 'stairs', x: 44, z: 7, width: 3.5, depth: 4, accessNodeId: 'FB1-ST' },
   // อาคาร F ชั้นลอย — ชั้นวาง part (ชั้นวางเตี้ยตามระยะถึงพื้นชั้น 2) · พิกัดชั้นลอย
-  { id: 'FBM-RK-G', code: 'RK-G', name: 'Rack G (ชั้นลอย F)', floorId: 'FBM', kind: 'storage', x: 1, z: 0.4, width: 41, depth: 3.4, accessNodeId: node('FBM', 0, 2), stores: ['Component'] },
-  { id: 'FBM-RK-H', code: 'RK-H', name: 'Rack H (ชั้นลอย F)', floorId: 'FBM', kind: 'storage', x: 4.5, z: 7.2, width: 38.5, depth: 3.4, accessNodeId: node('FBM', 0, 2), stores: ['Component'] },
+  { id: 'FBM-RK-G', code: 'RK-G', name: 'Rack G (ชั้นลอย F)', floorId: 'FBM', kind: 'storage', x: 1, z: 0.4, width: 41, depth: 3.4, accessNodeId: node('FBM', 0, 2), stores: ['Component'], storage: 'rack', levels: 2 },
+  { id: 'FBM-RK-H', code: 'RK-H', name: 'Rack H (ชั้นลอย F)', floorId: 'FBM', kind: 'storage', x: 4.5, z: 7.2, width: 38.5, depth: 3.4, accessNodeId: node('FBM', 0, 2), stores: ['Component'], storage: 'rack', levels: 2 },
   // อาคาร F ชั้น 2 — ชั้นวาง part
   { id: 'FB2-RK-J', code: 'RK-J', name: 'Rack J (อาคาร F ชั้น 2)', floorId: 'FB2', kind: 'storage', x: 2, z: 0.4, width: 40, depth: 3.4, accessNodeId: node('FB2', 0, 2), stores: ['Component'] },
   { id: 'FB2-RK-K', code: 'RK-K', name: 'Rack K (อาคาร F ชั้น 2)', floorId: 'FB2', kind: 'storage', x: 46, z: 0.4, width: 40, depth: 3.4, accessNodeId: node('FB2', 0, 5), stores: ['Component'] },

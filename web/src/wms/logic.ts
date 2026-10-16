@@ -81,6 +81,7 @@ export const TX_LABEL: Record<Tx['kind'], string> = {
   MERGE: 'รวมกล่อง',
   UNMERGE: 'ยกเลิกการรวม',
   SPLIT: 'แยกกล่อง',
+  RETURN: 'คืนเข้าสต็อก',
 }
 
 export function txSummary(t: Tx): string {
@@ -104,5 +105,7 @@ export function txSummary(t: Tx): string {
       return `คืนป้ายเดิม ${t.ref ?? ''}`
     case 'SPLIT':
       return `→ ${t.docNo ?? ''} · ${t.ref ?? ''}`
+    case 'RETURN':
+      return `${t.partNo} +${fmt(t.qty)}${t.ref ? ` · ${t.ref}` : ''}`
   }
 }

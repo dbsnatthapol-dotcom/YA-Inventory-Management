@@ -37,10 +37,9 @@ export const staffEmail = (employeeCode: string) => `${employeeCode.trim().toLow
 
 export const MIN_PASSWORD = 8
 
-export type Action = 'editLayout' | 'manageUsers' | 'viewAccessLog'
+export type Action = 'manageUsers' | 'viewAccessLog'
 
 const ALLOWED: Record<Action, Role[]> = {
-  editLayout: ['admin'],
   manageUsers: ['admin'],
   viewAccessLog: ['admin', 'manager'],
 }

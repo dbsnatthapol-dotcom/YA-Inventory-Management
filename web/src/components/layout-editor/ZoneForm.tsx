@@ -1,13 +1,15 @@
 import { BRAND } from '../../data/brand'
-import { palletsFor, planRack, rackSpec } from '../../data/warehouse'
-import { zoneClearance } from '../../lib/geometry'
+import { palletsFor, STORAGE_LABEL } from '../../data/warehouse'
+import { zonePlan } from '../../wms/locations'
 import type { ZoneContents } from '../../inventory/reports'
 import { clampToFloor, rotated, zoneIssues, type ZonePatch } from '../../lib/layoutEdit'
 import type { FactoryLayout, Zone } from '../../types/layout'
 import { inputCls } from '../inventory/format'
 
 const KIND_LABEL: Partial<Record<Zone['kind'], string>> = {
-  storage: 'Rack',
+  storage: 'โซนเก็บ',
+  stairs: 'บันได',
+  lift: 'ลิฟต์',
   assembly: 'ไลน์ประกอบ',
   receiving: 'จุดรับเข้า',
   inspection: 'พื้นที่ตรวจ MI3',
@@ -15,9 +17,26 @@ const KIND_LABEL: Partial<Record<Zone['kind'], string>> = {
   utility: 'ที่ชาร์จรถยก',
 }
 
-
 /** แก้ค่าโซนที่เลือก: รหัส ชื่อ ชั้น ตำแหน่ง ขนาด หมุน ลบ + ความจุ rack และข้อเตือน */
-export function ZoneForm({ zone, layout, stock, onUpdate, onRemove }: { zone: Zone; layout: FactoryLayout; stock?: ZoneContents; onUpdate: (patch: ZonePatch) => void; onRemove: () => void }) {
+export function ZoneForm({
+  zone,
+  layout,
+  stock,
+  locked,
+  onUpdate,
+  onRemove,
+  onCopyToFloors,
+}: {
+  zone: Zone
+  layout: FactoryLayout
+  stock?: ZoneContents
+  /** ไม่มีสิทธิ์แก้ผัง: ดูอย่างเดียว */
+  locked?: boolean
+  onUpdate: (patch: ZonePatch) => void
+  onRemove: () => void
+  /** บันได/ลิฟต์: สร้างให้ตรงตำแหน่งเดียวกันทุกชั้นของอาคาร */
+  onCopyToFloors?: () => void
+}) {
   const floor = layout.floors.find((f) => f.id === zone.floorId)!
   const issues = zoneIssues(layout, zone)
   const qty = stock?.totalQty ?? 0
@@ -46,8 +65,26 @@ export function ZoneForm({ zone, layout, stock, onUpdate, onRemove }: { zone: Zo
     </label>
   )
 
-  const plan = zone.kind === 'storage' ? planRack(zone.width, zone.depth, rackSpec(zoneClearance(layout.floors, zone)).levels) : null
+  const plan = zone.kind === 'storage' ? zonePlan(layout, zone) : null
   const pallets = plan ? palletsFor(stock).length : 0
+  const intIn = (label: string, value: number, min: number, max: number, onChange: (v: number) => void, hint?: string) => (
+    <label className="flex flex-col gap-0.5 text-xs text-slate-500">
+      {label}
+      <input
+        type="number"
+        step={1}
+        min={min}
+        max={max}
+        className={inputCls}
+        value={value}
+        onChange={(e) => {
+          const v = Math.round(Number(e.target.value))
+          if (Number.isFinite(v)) onChange(Math.min(max, Math.max(min, v)))
+        }}
+      />
+      {hint && <span className="text-[11px] text-slate-400">{hint}</span>}
+    </label>
+  )
 
   return (
     <section className="flex flex-col gap-3 rounded-lg border border-blue-200 p-3">
@@ -57,10 +94,18 @@ export function ZoneForm({ zone, layout, stock, onUpdate, onRemove }: { zone: Zo
         </h3>
         <span className="text-xs text-slate-500">{qty ? `${qty.toLocaleString('th-TH')} ชิ้น` : 'ว่าง'}</span>
       </div>
+      {locked && <p className="rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-700">ดูอย่างเดียว — ต้องมีสิทธิ์ "แก้ผังคลัง" จึงจะแก้ได้</p>}
+      <fieldset disabled={locked} className="contents">
       <div className="grid grid-cols-2 gap-2">
         <label className="flex flex-col gap-0.5 text-xs text-slate-500">
           รหัส
-          <input className={inputCls} value={zone.code} onChange={(e) => onUpdate({ code: e.target.value })} />
+          <input
+            className={inputCls}
+            value={zone.code}
+            disabled={zone.kind === 'receiving' || zone.code === 'MI3-QC'}
+            title={zone.kind === 'receiving' || zone.code === 'MI3-QC' ? 'รหัสนี้ใช้ในงานรับของ เปลี่ยนไม่ได้' : undefined}
+            onChange={(e) => onUpdate({ code: e.target.value.toUpperCase() })}
+          />
         </label>
         <label className="flex flex-col gap-0.5 text-xs text-slate-500">
           ชั้น
@@ -104,11 +149,38 @@ export function ZoneForm({ zone, layout, stock, onUpdate, onRemove }: { zone: Zo
         </button>
       </div>
       {plan && (
-        <p className="text-xs text-slate-600">
-          ความจุ {plan.slots.length} ช่องพาเลท ({plan.rows.length} แถว × {plan.bays} ช่อง × 3 ระดับ) · ใช้อยู่ {pallets} พาเลท
-          {pallets > plan.slots.length && <b className="text-red-600"> · เกินความจุ {pallets - plan.slots.length} พาเลท</b>}
-        </p>
+        <div className="flex flex-col gap-2 rounded-lg bg-slate-50 p-2">
+          <div className="flex rounded-md bg-white p-0.5 text-xs ring-1 ring-slate-200" role="radiogroup" aria-label="ประเภทการเก็บ">
+            {(['floor', 'rack'] as const).map((t) => (
+              <button
+                key={t}
+                role="radio"
+                aria-checked={plan.type === t}
+                onClick={() => onUpdate({ storage: t, levels: undefined })}
+                className={`flex-1 rounded px-2 py-1 transition ${plan.type === t ? 'font-semibold text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+                style={plan.type === t ? { background: BRAND.primary } : undefined}
+              >
+                {STORAGE_LABEL[t]}
+              </button>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {intIn(plan.type === 'rack' ? 'จำนวนระดับ rack' : 'ซ้อนพาเลทกี่ชั้น', plan.levels.length, 1, plan.maxLevels, (v) => onUpdate({ levels: v }), `สูงสุด ${plan.maxLevels} ชั้น`)}
+            {intIn('ที่วางพาเลทต่อชั้น', plan.perLevel, 0, plan.maxPerLevel, (v) => onUpdate({ slotsPerLevel: v }), `เต็มพื้นที่ ${plan.maxPerLevel} ที่`)}
+          </div>
+          <p className="text-xs text-slate-600">
+            ความจุ <b>{plan.slots.length}</b> พาเลท ({plan.perLevel} ที่ × {plan.levels.length} ชั้น) · ใช้อยู่ {pallets} พาเลท
+            {pallets > plan.slots.length && <b className="text-red-600"> · เกินความจุ {pallets - plan.slots.length} พาเลท</b>}
+          </p>
+          <p className="text-[11px] text-slate-400">อยากได้ที่วางมากกว่านี้ ให้ขยายขนาดโซน · ช่องเก็บ (QR) สร้างตามจำนวนนี้เมื่อกดบันทึกผัง</p>
+        </div>
       )}
+      {onCopyToFloors && (
+        <button className="rounded-md border border-slate-300 px-2 py-1 text-sm hover:bg-slate-50 disabled:opacity-40" onClick={onCopyToFloors}>
+          วางให้ตรงกันทุกชั้นของอาคาร
+        </button>
+      )}
+      </fieldset>
       <p className="text-xs text-slate-500">
         จุดเข้า-ออก: {access ? `ทางเดิน (${access.x}, ${access.z})` : '—'}
       </p>
