@@ -8,10 +8,12 @@ import type {
   Invoice,
   InvoiceLine,
   InvoiceStatus,
+  LedgerRow,
   Lpn,
   MasterData,
   PermRow,
   ReceivePayload,
+  Requisition,
   Settings,
   StaffBrief,
   Tx,
@@ -33,6 +35,7 @@ interface DemoDb {
   master: MasterData
   perms: PermRow[]
   staff: StaffBrief[]
+  requisitions: Requisition[]
 }
 
 const KEY = 'uam-wms-demo-v1'
@@ -42,6 +45,7 @@ function seed(): DemoDb {
   return {
     settings: { mode: 'trial', trialRound: 1, qiPartTypes: ['RIM', 'HUB'] },
     counters: {},
+    requisitions: [],
     invoices: [],
     grns: [],
     grnLines: [],
@@ -53,6 +57,24 @@ function seed(): DemoDb {
       rules: ZONE_RULES.map((r) => ({ customerId: r.customerId, partType: r.type, zoneId: r.zoneId })),
       locations: layoutLocations(sampleLayout).map((l) => ({ ...l, active: true })),
       zoneHeads: [],
+      // ตัวอย่างชุดวงล้อ (สาธิต) ตามสัดส่วนใน FM-P-005 290 วง: ลูกปืน 2 ตัว, ซี่ลวดแต่ละแบบ 9 ซี่ ต่อ 1 วง
+      fgItems: [
+        {
+          code: 'K1G-RR-BLK',
+          name: 'K1G ล้อหลัง 17×3.50 TL BLACK (ตัวอย่าง)',
+          modelCode: 'K1G',
+          active: true,
+          lines: [
+            { partNo: 'RAT00586/B', qtyPer: 1 },
+            { partNo: 'RAT1088/A', qtyPer: 1 },
+            { partNo: 'RAT00282/D', qtyPer: 1 },
+            { partNo: 'RAT00283/A', qtyPer: 1 },
+            { partNo: '150324/A', qtyPer: 2 },
+            { partNo: 'RAT00566/B', qtyPer: 9 },
+            { partNo: 'RAT00567/B', qtyPer: 9 },
+          ],
+        },
+      ],
     },
     // ค่าเริ่มต้นเดียวกับ supabase/migrations/0008_wms_receiving.sql
     perms: (
@@ -70,7 +92,12 @@ function seed(): DemoDb {
 function load(): DemoDb {
   try {
     const raw = localStorage.getItem(KEY)
-    if (raw) return { ...seed(), ...JSON.parse(raw) }
+    if (raw) {
+      // ข้อมูลเก่าในเครื่องอาจยังไม่มีช่องใหม่ (เช่น fgItems) ⇒ เติมจากค่าเริ่มต้น
+      const base = seed()
+      const saved = JSON.parse(raw) as Partial<DemoDb>
+      return { ...base, ...saved, master: { ...base.master, ...saved.master } }
+    }
   } catch {
     // ไม่มีที่เก็บ: เริ่มใหม่
   }
@@ -143,6 +170,48 @@ export function demoWms(): WmsApi {
   }
   const lpnOf = (lpn: Lpn) => clone(lpn)
 
+  // ===== ใบเบิก: กติกาเดียวกับ wms_issue_fifo / wms_return_lifo ใน 0014 =====
+  const onHand = (part: string) =>
+    db.lpns.filter((l) => l.status === 'active').reduce((s, l) => s + l.items.filter((i) => i.partNo === part).reduce((t, i) => t + i.qty, 0), 0)
+  const issueFifo = (reqId: string, doc: string, ref: string, part: string, qty: number) => {
+    if (!(qty > 0)) return
+    const boxes = db.lpns
+      .filter((l) => l.status === 'active' && !l.hold && l.items.some((i) => i.partNo === part && i.qty > 0))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.lpnNo.localeCompare(b.lpnNo))
+    const have = boxes.reduce((s, l) => s + l.items.filter((i) => i.partNo === part).reduce((t, i) => t + i.qty, 0), 0)
+    if (have < qty) fail(`สต็อก ${part} ไม่พอ · พร้อมเบิก ${have} ขอเบิก ${qty}`)
+    let left = qty
+    for (const l of boxes)
+      for (const item of l.items.filter((i) => i.partNo === part && i.qty > 0)) {
+        if (left <= 0) break
+        const take = Math.min(left, item.qty)
+        item.qty -= take
+        left -= take
+        log({ kind: 'ISSUE', docNo: doc, lpnId: l.id, lpnNo: l.lpnNo, lpnItemId: item.id, partNo: part, qty: take, fromLoc: l.locationCode, ref, requisitionId: reqId })
+        if (!l.items.some((i) => i.qty > 0)) l.status = 'empty'
+      }
+  }
+  const putBack = (t: Tx, qty: number, doc: string, ref: string | null, reqId: string, reason: string | null = null) => {
+    const l = db.lpns.find((x) => x.id === t.lpnId)
+    const item = l?.items.find((i) => i.id === t.lpnItemId)
+    if (!l || !item) return
+    item.qty += qty
+    if (l.status === 'empty') l.status = 'active'
+    log({ kind: 'RETURN', docNo: doc, lpnId: l.id, lpnNo: l.lpnNo, lpnItemId: item.id, partNo: t.partNo, qty, toLoc: l.locationCode, ref, reason, requisitionId: reqId })
+  }
+  const returnLifo = (reqId: string, from: string[], doc: string, ref: string, part: string, qty: number) => {
+    let left = qty
+    // db.tx เรียงใหม่ → เก่า อยู่แล้ว
+    for (const t of db.tx.filter((x) => x.kind === 'ISSUE' && from.includes(x.requisitionId ?? '') && x.partNo === part)) {
+      if (left <= 0) break
+      const take = Math.min(left, t.qty ?? 0)
+      putBack(t, take, doc, ref, reqId)
+      left -= take
+    }
+    if (left > 0) fail(`คืน ${part} ได้ไม่ครบ (เกินยอดที่เบิกไว้ ${left})`)
+  }
+  const today = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Bangkok' })
+
   return {
     kind: 'demo',
     myPermissions: async () => ['*'],
@@ -191,6 +260,7 @@ export function demoWms(): WmsApi {
           receivedAt: nowIso(),
           receiverCode: ME,
           note: p.note || null,
+          replacement: !!p.replacement,
         }
         db.grns.unshift(grn)
         const used = new Set(db.lpns.filter((l) => l.status === 'active').map((l) => l.locationCode))
@@ -464,8 +534,16 @@ export function demoWms(): WmsApi {
       commit(() => {
         if (!p.partNo.trim() || !p.name.trim()) fail('ต้องมี Part No. และชื่อ')
         const i = db.master.parts.findIndex((x) => x.partNo === p.partNo.trim())
-        const prev = i >= 0 ? db.master.parts[i].models : []
-        const next = { ...p, partNo: p.partNo.trim(), type: p.type?.trim().toUpperCase() || null, models: [...new Set([...prev, ...p.models])] }
+        const prev = i >= 0 ? db.master.parts[i] : null
+        const uam = p.uamCode?.trim() || null
+        if (uam && db.master.parts.some((x) => x.uamCode === uam && x.partNo !== p.partNo.trim())) fail(`รหัส UAM ${uam} ใช้กับ part อื่นแล้ว`)
+        const next = {
+          ...p,
+          partNo: p.partNo.trim(),
+          type: p.type?.trim().toUpperCase() || null,
+          uamCode: uam,
+          models: [...new Set([...(prev?.models ?? []), ...p.models])],
+        }
         if (i >= 0) db.master.parts[i] = next
         else db.master.parts.push(next)
       }),
@@ -484,6 +562,128 @@ export function demoWms(): WmsApi {
         if (i >= 0) db.master.rules[i] = { ...r, partType: type }
         else db.master.rules.push({ ...r, partType: type })
       }),
+    saveFg: (fg) =>
+      commit(() => {
+        const code = fg.code.trim().toUpperCase()
+        if (!code || !fg.name.trim()) fail('ต้องมีรหัสและชื่อชุดวงล้อ')
+        const next = { ...fg, code, name: fg.name.trim(), lines: fg.lines.filter((l) => l.qtyPer > 0) }
+        const i = db.master.fgItems.findIndex((x) => x.code === code)
+        if (i >= 0) db.master.fgItems[i] = next
+        else db.master.fgItems.push(next)
+      }),
+    postRequisition: (p) =>
+      commit(() => {
+        const lines = p.lines.filter((l) => l.qty > 0)
+        if (!lines.length) fail('ไม่มีรายการที่จะเบิก')
+        const reqNo = nextDoc('RQ')
+        const req: Requisition = {
+          id: uid(),
+          kind: p.kind,
+          reqNo,
+          docNo: p.docNo?.trim() || null,
+          docDate: p.docDate || today(),
+          modelCode: p.modelCode || null,
+          fgCode: p.fgCode || null,
+          fgQty: p.fgQty ?? null,
+          fromDept: p.fromDept || null,
+          toDept: p.toDept || null,
+          note: p.note || null,
+          status: 'posted',
+          reconciledBy: null,
+          createdCode: ME,
+          createdAt: nowIso(),
+          lines: [],
+        }
+        db.requisitions.unshift(req)
+        for (const l of lines) {
+          issueFifo(req.id, reqNo, req.docNo ?? reqNo, l.partNo, l.qty)
+          req.lines.push({ partNo: l.partNo, reqQty: l.reqQty ?? null, qty: l.qty, balance: onHand(l.partNo) })
+        }
+        return { id: req.id, reqNo }
+      }),
+    reconcileFm005: (p) =>
+      commit(() => {
+        const docNo = p.docNo.trim()
+        if (!docNo) fail('ใส่เลขที่ FM-P-005')
+        if (!p.docDate || !p.modelCode) fail('ใส่วันที่และ Model')
+        if (db.requisitions.some((r) => r.kind === 'fm005' && r.docNo === docNo && r.status === 'posted')) fail(`FM-P-005 เลขที่ ${docNo} บันทึกไปแล้ว`)
+        const subs = db.requisitions.filter((r) => r.kind === 'line' && r.status === 'posted' && !r.reconciledBy && r.docDate === p.docDate && r.modelCode === p.modelCode)
+        const subIds = subs.map((r) => r.id)
+        const reqNo = nextDoc('RQ')
+        const fm: Requisition = {
+          id: uid(),
+          kind: 'fm005',
+          reqNo,
+          docNo,
+          docDate: p.docDate,
+          modelCode: p.modelCode,
+          fgCode: p.fgCode || null,
+          fgQty: p.fgQty ?? null,
+          fromDept: p.fromDept || null,
+          toDept: p.toDept || null,
+          note: p.note || null,
+          status: 'posted',
+          reconciledBy: null,
+          createdCode: ME,
+          createdAt: nowIso(),
+          lines: [],
+        }
+        db.requisitions.unshift(fm)
+        const fmQty = new Map<string, number>()
+        for (const l of p.lines) fmQty.set(l.partNo, (fmQty.get(l.partNo) ?? 0) + (l.qty || 0))
+        const subQty = new Map<string, number>()
+        for (const r of subs) for (const l of r.lines) subQty.set(l.partNo, (subQty.get(l.partNo) ?? 0) + l.qty)
+        for (const part of [...new Set([...fmQty.keys(), ...subQty.keys()])].sort()) {
+          const f = fmQty.get(part) ?? 0
+          const sub = subQty.get(part) ?? 0
+          if (f > sub) issueFifo(fm.id, reqNo, docNo, part, f - sub)
+          else if (f < sub) returnLifo(fm.id, subIds, reqNo, docNo, part, sub - f)
+          fm.lines.push({ partNo: part, reqQty: sub, qty: f, balance: onHand(part) })
+        }
+        for (const r of subs) r.reconciledBy = fm.id
+        return { id: fm.id, reqNo, subs: subs.length }
+      }),
+    voidRequisition: (id, reason) =>
+      commit(() => {
+        const r = db.requisitions.find((x) => x.id === id)
+        if (!r || r.status !== 'posted') fail('ไม่พบใบเบิก หรือยกเลิกไปแล้ว')
+        if (r!.kind === 'fm005') fail('ยกเลิก FM-P-005 ไม่ได้ · แจ้งผู้ดูแลระบบ')
+        if (r!.reconciledBy) fail('ใบนี้กระทบยอดกับ FM-P-005 แล้ว ยกเลิกไม่ได้')
+        if (!reason.trim()) fail('ระบุเหตุผลที่ยกเลิก')
+        for (const t of db.tx.filter((x) => x.kind === 'ISSUE' && x.requisitionId === id)) putBack(t, t.qty ?? 0, r!.reqNo, t.ref, id, `ยกเลิกใบเบิก: ${reason.trim()}`)
+        r!.status = 'void'
+        r!.note = [r!.note, `ยกเลิก: ${reason.trim()}`].filter(Boolean).join(' · ')
+      }),
+    listRequisitions: async (from, to) => clone(db.requisitions.filter((r) => r.docDate >= from && r.docDate <= to)),
+    ledgerRows: async (parts, to) => {
+      const want = new Set(parts)
+      const reqs = new Map(db.requisitions.map((r) => [r.id, r]))
+      const rows: LedgerRow[] = []
+      for (const t of [...db.tx].reverse()) {
+        if (!t.partNo || !want.has(t.partNo) || t.createdAt >= to) continue
+        const ok = ['RECEIVE', 'ISSUE', 'RETURN'].includes(t.kind) || (t.kind === 'QI' && (t.ngQty ?? 0) > 0) || (t.kind === 'ADJ' && t.status === 'approved')
+        if (!ok) continue
+        const lpn = db.lpns.find((l) => l.id === t.lpnId)
+        const grn = db.grns.find((g) => g.id === lpn?.grnId)
+        const inv = db.invoices.find((i) => i.id === grn?.invoiceId)
+        const req = reqs.get(t.requisitionId ?? '')
+        const reqCol = req?.kind === 'qc' ? 'qc' : req?.kind === 'ng' ? 'ng' : 'issue'
+        rows.push({
+          at: t.createdAt,
+          partNo: t.partNo,
+          kind: t.kind,
+          col: t.kind === 'RECEIVE' ? (grn?.replacement ? 'recv_rep' : 'recv') : t.kind === 'ISSUE' || t.kind === 'RETURN' ? reqCol : t.kind === 'QI' ? 'ng' : 'adj',
+          qty: t.kind === 'RETURN' ? -(t.qty ?? 0) : t.kind === 'QI' ? (t.ngQty ?? 0) : t.kind === 'ADJ' ? (t.newQty ?? 0) - (t.qty ?? 0) : (t.qty ?? 0),
+          invNo: t.kind === 'RECEIVE' ? (inv?.invoiceNo ?? null) : null,
+          orderNo: t.kind === 'RECEIVE' ? (inv?.poNo ?? null) : null,
+          orderDate: t.kind === 'RECEIVE' ? (inv?.docDate ?? null) : null,
+          docNo: t.kind === 'ISSUE' || t.kind === 'RETURN' ? (req?.docNo ?? req?.reqNo ?? t.ref ?? t.docNo) : t.kind === 'RECEIVE' ? (grn?.grnNo ?? null) : t.docNo,
+          lot: grn?.grnNo ?? null,
+          note: t.reason ?? (req?.kind === 'fm005' ? 'กระทบยอด FM-P-005' : null),
+        })
+      }
+      return rows
+    },
     // สาธิต: ผังเก็บในเครื่อง (useLayoutEdits) — ที่นี่ปรับเฉพาะช่องเก็บให้ตรงกับผัง (กติกาเดียวกับ layout_save)
     saveLayout: (p) =>
       commit(() => {

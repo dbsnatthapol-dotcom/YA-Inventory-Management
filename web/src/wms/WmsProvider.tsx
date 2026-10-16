@@ -6,7 +6,7 @@ import { supabaseWms } from './supabaseApi'
 import type { MasterData, Perm, Settings } from './types'
 import { WmsContext } from './wmsContext'
 
-const EMPTY_MASTER: MasterData = { parts: [], models: [], rules: [], locations: [], zoneHeads: [] }
+const EMPTY_MASTER: MasterData = { parts: [], models: [], rules: [], locations: [], zoneHeads: [], fgItems: [] }
 
 export function WmsProvider({ children }: { children: ReactNode }) {
   const api = useMemo(() => (supabase ? supabaseWms(supabase) : demoWms()), [])

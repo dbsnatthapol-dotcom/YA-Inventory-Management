@@ -75,6 +75,8 @@ export interface Grn {
   receivedAt: string
   receiverCode: string | null
   note: string | null
+  /** รับของทดแทน (แทน NG ที่ส่งคืน) */
+  replacement?: boolean
 }
 
 export interface GrnLine {
@@ -114,7 +116,7 @@ export interface Lpn {
   items: LpnItem[]
 }
 
-export type TxKind = 'RECEIVE' | 'PUT' | 'MOVE' | 'ISSUE' | 'ADJ' | 'COUNT' | 'QI' | 'MERGE' | 'UNMERGE' | 'SPLIT'
+export type TxKind = 'RECEIVE' | 'PUT' | 'MOVE' | 'ISSUE' | 'ADJ' | 'COUNT' | 'QI' | 'MERGE' | 'UNMERGE' | 'SPLIT' | 'RETURN'
 
 export interface Tx {
   id: string
@@ -136,6 +138,8 @@ export interface Tx {
   createdCode: string | null
   createdAt: string
   decidedCode: string | null
+  /** ใบเบิกที่ทำให้เกิดรายการนี้ (เบิก/คืน) */
+  requisitionId?: string | null
 }
 
 export interface StorageLoc {
@@ -160,11 +164,24 @@ export interface StaffBrief {
 }
 
 export interface PartMaster {
+  /** รหัสลูกค้า (หลัก) เช่น RAT00586/B */
   partNo: string
   name: string
   type: string | null
   customerId: string | null
   models: string[]
+  /** รหัสภายใน UAM เช่น 2011409 */
+  uamCode?: string | null
+}
+
+/** ชุดวงล้อสำเร็จรูป (FG) ที่ไลน์เบิก + BOM จำนวน part ต่อ 1 วง */
+export interface FgItem {
+  /** รหัส FG เช่น 2019333 */
+  code: string
+  name: string
+  modelCode: string | null
+  active: boolean
+  lines: { partNo: string; qtyPer: number }[]
 }
 
 export interface ModelRow {
@@ -185,6 +202,81 @@ export interface MasterData {
   rules: ZoneRuleRow[]
   locations: StorageLoc[]
   zoneHeads: ZoneHead[]
+  fgItems: FgItem[]
+}
+
+/** ใบเบิก: line = ใบเบิกย่อยเข้าไลน์, fm005 = FM-P-005 ยอดรวมจบวัน, qc = QC เบิก, ng = ตัด NG ส่งคืน */
+export type RequisitionKind = 'line' | 'fm005' | 'qc' | 'ng'
+
+export interface RequisitionLine {
+  partNo: string
+  /** ใบย่อย: ขอเบิก · FM-P-005: ผลรวมใบย่อยของวัน */
+  reqQty: number | null
+  /** ใบย่อย: จ่ายจริง · FM-P-005: ยอดในเอกสาร */
+  qty: number
+  /** สต็อกคงเหลือหลังบันทึก */
+  balance: number | null
+}
+
+export interface Requisition {
+  id: string
+  kind: RequisitionKind
+  reqNo: string
+  docNo: string | null
+  docDate: string
+  modelCode: string | null
+  fgCode: string | null
+  fgQty: number | null
+  fromDept: string | null
+  toDept: string | null
+  note: string | null
+  status: 'posted' | 'void'
+  reconciledBy: string | null
+  createdCode: string | null
+  createdAt: string
+  lines: RequisitionLine[]
+}
+
+export interface RequisitionPayload {
+  kind: 'line' | 'qc' | 'ng'
+  docNo?: string
+  docDate: string
+  modelCode?: string
+  fgCode?: string
+  fgQty?: number | null
+  fromDept?: string
+  toDept?: string
+  note?: string
+  lines: { partNo: string; reqQty?: number | null; qty: number }[]
+}
+
+export interface ReconcilePayload {
+  docNo: string
+  docDate: string
+  modelCode: string
+  fgCode?: string
+  fgQty?: number | null
+  fromDept?: string
+  toDept?: string
+  note?: string
+  lines: { partNo: string; qty: number }[]
+}
+
+/** ช่องในบัญชีคุม FM-P-537: รับเข้าปกติ / ทดแทน / เบิก (ติดลบ = คืน) / NG / QC เบิก / ปรับยอด */
+export type LedgerCol = 'recv' | 'recv_rep' | 'issue' | 'ng' | 'qc' | 'adj'
+
+export interface LedgerRow {
+  at: string
+  partNo: string
+  kind: TxKind
+  col: LedgerCol
+  qty: number
+  invNo: string | null
+  orderNo: string | null
+  orderDate: string | null
+  docNo: string | null
+  lot: string | null
+  note: string | null
 }
 
 /** ข้อมูลที่หน้ารับของส่งไปสร้าง GRN */
@@ -201,6 +293,8 @@ export interface ReceivePayload {
   packingList: { refDoc: string; soNo?: string; packages?: string; imagePaths?: string[] }
   modelCode: string
   note?: string
+  /** รับของทดแทน */
+  replacement?: boolean
   /** zoneId = โซนเก็บที่ผู้รับเลือกเอง (ไม่ระบุ = ระบบแนะนำตามกฎลูกค้า + กลุ่ม part) */
   lines: { partNo: string; description: string; plQty: number; countedQty: number; zoneId?: string }[]
 }

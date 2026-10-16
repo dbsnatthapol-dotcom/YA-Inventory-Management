@@ -30,7 +30,7 @@ const loadMode = (): Mode => {
   }
 }
 
-const TX_TONE: Record<Tx['kind'], Tone> = { RECEIVE: 'info', PUT: 'ok', MOVE: 'ok', ISSUE: 'info', ADJ: 'warn', COUNT: 'muted', QI: 'mi3', MERGE: 'muted', UNMERGE: 'muted', SPLIT: 'muted' }
+const TX_TONE: Record<Tx['kind'], Tone> = { RECEIVE: 'info', PUT: 'ok', MOVE: 'ok', ISSUE: 'info', ADJ: 'warn', COUNT: 'muted', QI: 'mi3', MERGE: 'muted', UNMERGE: 'muted', SPLIT: 'muted', RETURN: 'info' }
 const time = (iso: string) => new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 
 interface Current {

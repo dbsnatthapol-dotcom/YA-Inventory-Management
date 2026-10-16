@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { WmsApi } from './api'
-import type { Grn, GrnLine, Invoice, InvoiceLine, Lpn, LpnItem, StorageLoc, Tx } from './types'
+import type { FgItem, Grn, GrnLine, Invoice, InvoiceLine, LedgerRow, Lpn, LpnItem, Requisition, StorageLoc, Tx, TxKind } from './types'
 
 type Row = Record<string, unknown>
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v))
@@ -14,7 +14,7 @@ async function run<T = unknown>(p: PromiseLike<{ data: unknown; error: { message
 
 const one = <T>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null))
 
-const GRN_SELECT = 'id, grn_no, invoice_id, model_code, customer_id, received_at, receiver_code, note, packing_lists(ref_doc, so_no, packages), invoices(invoice_no)'
+const GRN_SELECT = 'id, grn_no, invoice_id, model_code, customer_id, received_at, receiver_code, note, replacement, packing_lists(ref_doc, so_no, packages), invoices(invoice_no)'
 
 function toGrn(r: Row): Grn {
   const pl = one(r.packing_lists as Row | Row[] | null)
@@ -32,8 +32,30 @@ function toGrn(r: Row): Grn {
     receivedAt: String(r.received_at),
     receiverCode: str(r.receiver_code),
     note: str(r.note),
+    replacement: Boolean(r.replacement),
   }
 }
+
+const toRequisition = (r: Row): Requisition => ({
+  id: String(r.id),
+  kind: r.kind as Requisition['kind'],
+  reqNo: String(r.req_no),
+  docNo: str(r.doc_no),
+  docDate: String(r.doc_date),
+  modelCode: str(r.model_code),
+  fgCode: str(r.fg_code),
+  fgQty: num(r.fg_qty),
+  fromDept: str(r.from_dept),
+  toDept: str(r.to_dept),
+  note: str(r.note),
+  status: r.status === 'void' ? 'void' : 'posted',
+  reconciledBy: str(r.reconciled_by),
+  createdCode: str(r.created_code),
+  createdAt: String(r.created_at),
+  lines: ((r.requisition_lines as Row[] | null) ?? [])
+    .sort((a, b) => Number(a.line_no) - Number(b.line_no))
+    .map((l) => ({ partNo: String(l.part_no), reqQty: num(l.req_qty), qty: Number(l.qty ?? 0), balance: num(l.balance) })),
+})
 
 const toGrnLine = (r: Row): GrnLine => ({
   id: String(r.id),
@@ -132,12 +154,13 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
     },
 
     async master() {
-      const [parts, models, rules, locs, heads] = await Promise.all([
-        run(sb.from('parts').select('part_no, name, part_type, customer_id, part_models(model_code)').order('part_no').limit(5000)),
+      const [parts, models, rules, locs, heads, fgs] = await Promise.all([
+        run(sb.from('parts').select('part_no, name, part_type, customer_id, uam_code, part_models(model_code)').order('part_no').limit(5000)),
         run(sb.from('product_models').select('code, customer_id, requires_inspection').order('code')),
         run(sb.from('zone_rules').select('customer_id, part_type, zone_id')),
         run(sb.from('locations').select('code, zone_id, kind, active').order('code').limit(5000)),
         rpc<Row[]>('zone_head_list'),
+        run(sb.from('fg_items').select('code, name, model_code, active, fg_bom(part_no, qty_per)').order('code')),
       ])
       return {
         parts: (parts as Row[]).map((p) => ({
@@ -146,11 +169,21 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
           type: str(p.part_type),
           customerId: str(p.customer_id),
           models: ((p.part_models as Row[] | null) ?? []).map((m) => String(m.model_code)),
+          uamCode: str(p.uam_code),
         })),
         models: (models as Row[]).map((m) => ({ code: String(m.code), customerId: String(m.customer_id), requiresInspection: Boolean(m.requires_inspection) })),
         rules: (rules as Row[]).map((r) => ({ customerId: String(r.customer_id), partType: str(r.part_type), zoneId: String(r.zone_id) })),
         locations: (locs as Row[]).map((l) => ({ code: String(l.code), zoneId: String(l.zone_id), kind: l.kind as StorageLoc['kind'], active: Boolean(l.active) })),
         zoneHeads: heads.map((h) => ({ zoneId: String(h.zone_id), staffId: String(h.staff_id), employeeCode: String(h.employee_code), fullName: String(h.full_name) })),
+        fgItems: (fgs as Row[]).map(
+          (f): FgItem => ({
+            code: String(f.code),
+            name: String(f.name),
+            modelCode: str(f.model_code),
+            active: Boolean(f.active),
+            lines: ((f.fg_bom as Row[] | null) ?? []).filter((b) => Number(b.qty_per) > 0).map((b) => ({ partNo: String(b.part_no), qtyPer: Number(b.qty_per) })),
+          }),
+        ),
       }
     },
 
@@ -281,11 +314,53 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
     setZoneHead: (zoneId, staffId) => rpc('admin_set_zone_head', { p_zone: zoneId, p_staff: staffId }),
     setSetting: (key, value) => rpc('admin_set_setting', { p_key: key, p_value: value }),
     newTrialRound: async () => Number(await rpc('admin_new_trial_round')),
-    upsertPart: (p) => rpc('master_upsert_part', { p_part_no: p.partNo, p_name: p.name, p_type: p.type ?? '', p_customer: p.customerId, p_models: p.models }),
+    upsertPart: (p) =>
+      rpc('master_save_part', {
+        p: { partNo: p.partNo, name: p.name, type: p.type ?? '', customerId: p.customerId, uamCode: p.uamCode ?? '', models: p.models },
+      }),
     upsertLocation: (l) => rpc('master_upsert_location', { p_code: l.code, p_zone: l.zoneId, p_kind: l.kind, p_active: l.active }),
     setZoneRule: (r) => rpc('master_set_zone_rule', { p_customer: r.customerId, p_type: r.partType ?? '', p_zone: r.zoneId }),
     saveLayout: async (p) => {
       await rpc('layout_save', { p })
+    },
+
+    saveFg: async (fg) => {
+      await rpc('master_save_fg', { p: fg })
+    },
+    postRequisition: (p) => rpc<{ id: string; reqNo: string }>('requisition_post', { p }),
+    reconcileFm005: (p) => rpc<{ id: string; reqNo: string; subs: number }>('requisition_reconcile', { p }),
+    voidRequisition: async (id, reason) => {
+      await rpc('requisition_void', { p_id: id, p_reason: reason })
+    },
+    async listRequisitions(from, to) {
+      const rows = (await run(
+        sb
+          .from('requisitions')
+          .select('id, kind, req_no, doc_no, doc_date, model_code, fg_code, fg_qty, from_dept, to_dept, note, status, reconciled_by, created_code, created_at, requisition_lines(line_no, part_no, req_qty, qty, balance)')
+          .gte('doc_date', from)
+          .lte('doc_date', to)
+          .order('created_at', { ascending: false })
+          .limit(1000),
+      )) as Row[]
+      return rows.map(toRequisition)
+    },
+    async ledgerRows(parts, to) {
+      const rows = await rpc<Row[]>('stock_ledger_rows', { p_parts: parts, p_to: to })
+      return rows.map(
+        (r): LedgerRow => ({
+          at: String(r.at),
+          partNo: String(r.part_no),
+          kind: r.kind as TxKind,
+          col: r.col as LedgerRow['col'],
+          qty: Number(r.qty ?? 0),
+          invNo: str(r.inv_no),
+          orderNo: str(r.order_no),
+          orderDate: str(r.order_date),
+          docNo: str(r.doc_no),
+          lot: str(r.lot),
+          note: str(r.note),
+        }),
+      )
     },
   }
   return api

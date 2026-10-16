@@ -42,6 +42,7 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
   const { api, master, settings, can } = useWms()
   const mobile = useIsMobile()
   const [modelCode, setModelCode] = useState('')
+  const [replacement, setReplacement] = useState(false)
   const [pl, setPl] = useState({ refDoc: '', soNo: '', packages: '' })
   const [inv, setInv] = useState({ invoiceNo: '', poNo: '', docDate: '', movementType: '' })
   const [existing, setExisting] = useState<{ grnCount: number } | null>(null)
@@ -158,6 +159,7 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
     try {
       const res = await api.createGrn({
         modelCode,
+        replacement,
         packingList: { refDoc: pl.refDoc.trim(), soNo: pl.soNo.trim(), packages: pl.packages.trim() },
         invoice: inv.invoiceNo.trim()
           ? {
@@ -294,6 +296,10 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
               <input id="pl-pack" className={inputCls} value={pl.packages} onChange={(e) => setPl({ ...pl, packages: e.target.value })} placeholder="เช่น F28-F40" />
             </Field>
           </div>
+          <label className="flex min-h-[44px] items-center gap-2 rounded-lg bg-slate-50 px-3 text-sm text-slate-700">
+            <input type="checkbox" className="h-5 w-5" checked={replacement} onChange={(e) => setReplacement(e.target.checked)} />
+            รับของทดแทน (แทนของ NG ที่ส่งคืน) · ลงช่อง "ทดแทน" ในบัญชีคุม FM-P-537
+          </label>
         </Card>
 
         <Card eyebrow="ใช้อ้างอิงและกระทบยอด" title="Invoice">
