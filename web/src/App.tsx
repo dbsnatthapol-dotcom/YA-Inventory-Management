@@ -10,6 +10,7 @@ import { useWms } from './wms/useWms'
 import { layoutSavePayload } from './lib/layoutSave'
 import { useViewModeState, ViewModeContext } from './lib/viewMode'
 import { MobileShell } from './components/mobile/MobileShell'
+import { ModeChooser } from './components/mobile/ModeChooser'
 import { ExecTour } from './components/map/ExecTour'
 import { buildGuides, buildTourSteps, flowsFromTx, sampleFlows } from './lib/mapShowcase'
 import type { FlowSpec } from './components/FactoryScene'
@@ -278,6 +279,9 @@ function FactoryApp() {
     setHighlightLot(null)
     setSelectedPallet(null)
   }
+
+  // เครื่องนี้ยังไม่เคยเลือกโหมด: ถามครั้งเดียวหลังเข้าระบบ แล้วจำไว้
+  if (!view.chosen) return <ModeChooser narrow={view.narrow} userName={auth.profile?.full_name} onPick={view.setPref} />
 
   // มือถือ: หน้าจอหน้างาน (ไม่โหลดผัง 3D)
   if (view.mode === 'mobile')

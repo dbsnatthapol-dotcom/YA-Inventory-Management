@@ -347,6 +347,29 @@ export interface StockCountPayload {
   lines: { loc: string; partNo: string; counted: number }[]
 }
 
+/** งานในคิวพิมพ์ (ส่งจากมือถือ ให้คอมจุดพิมพ์พิมพ์) */
+export interface PrintJob {
+  id: string
+  format: 'label' | 'sheet' | 'a4'
+  grnId: string
+  lpnIds: string[]
+  copies: number
+  title: string | null
+  status: 'queued' | 'printed' | 'cancelled'
+  requestedCode: string | null
+  requestedAt: string
+  doneCode: string | null
+  doneAt: string | null
+}
+
+export interface PrintJobPayload {
+  format: PrintJob['format']
+  grnId: string
+  lpnIds: string[]
+  copies?: number
+  title?: string
+}
+
 /** ข้อมูลที่หน้ารับของส่งไปสร้าง GRN */
 export interface ReceivePayload {
   invoice?: {

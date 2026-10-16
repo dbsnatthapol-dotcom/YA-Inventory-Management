@@ -19,6 +19,7 @@ import type {
   Requisition,
   StockClosing,
   StockCount,
+  PrintJob,
   Settings,
   StaffBrief,
   Tx,
@@ -43,6 +44,7 @@ interface DemoDb {
   requisitions: Requisition[]
   closings: StockClosing[]
   counts: StockCount[]
+  printJobs: PrintJob[]
 }
 
 /** โซนที่มีหัวหน้าโซน (ตรงกับหน้าหลังบ้าน) */
@@ -60,6 +62,7 @@ function seed(): DemoDb {
     requisitions: [],
     closings: [],
     counts: [],
+    printJobs: [],
     invoices: [],
     grns: [],
     grnLines: [],
@@ -862,6 +865,35 @@ export function demoWms(): WmsApi {
         }
         Object.assign(c!, decided, { status: 'approved', grnId: (grn as Grn | null)?.id ?? null, decisionNote: note?.trim() || null })
         return { changed, newBoxes, grnId: (grn as Grn | null)?.id ?? null }
+      }),
+    queuePrint: (p) =>
+      commit(() => {
+        const lpns = db.lpns.filter((l) => l.grnId === p.grnId)
+        if (!db.grns.some((g) => g.id === p.grnId)) fail('ไม่พบใบรับสินค้า')
+        if (p.format !== 'a4' && !p.lpnIds.length) fail('ยังไม่ได้เลือกป้าย')
+        if (p.lpnIds.some((id) => !lpns.some((l) => l.id === id))) fail('ป้ายที่เลือกไม่อยู่ในใบรับสินค้านี้')
+        const job: PrintJob = {
+          id: uid(),
+          format: p.format,
+          grnId: p.grnId,
+          lpnIds: [...p.lpnIds],
+          copies: Math.max(1, Math.min(10, p.copies ?? 1)),
+          title: p.title?.trim() || null,
+          status: 'queued',
+          requestedCode: ME,
+          requestedAt: nowIso(),
+          doneCode: null,
+          doneAt: null,
+        }
+        db.printJobs.unshift(job)
+        return job.id
+      }),
+    listPrintJobs: async () => clone(db.printJobs.slice(0, 50)),
+    finishPrintJob: (id, status) =>
+      commit(() => {
+        const j = db.printJobs.find((x) => x.id === id && x.status === 'queued')
+        if (!j) fail('งานพิมพ์นี้ถูกพิมพ์หรือยกเลิกไปแล้ว')
+        Object.assign(j!, { status, doneCode: ME, doneAt: nowIso() })
       }),
     saveLayout: (p) =>
       commit(() => {

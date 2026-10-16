@@ -14,6 +14,8 @@ import type {
   LedgerRow,
   StockClosing,
   StockCount,
+  PrintJob,
+  PrintJobPayload,
   StockCountPayload,
   ReconcilePayload,
   Requisition,
@@ -94,6 +96,11 @@ export interface WmsApi {
   listStockCounts(): Promise<StockCount[]>
   /** อนุมัติ = ปรับยอดตามส่วนต่าง (สิทธิ์ scan.adjust.approve, คนส่งอนุมัติเองไม่ได้) */
   decideStockCount(id: string, approve: boolean, note?: string): Promise<{ changed: number; newBoxes: number; grnId: string | null }>
+  // คิวพิมพ์ป้าย: มือถือส่ง → คอมจุดพิมพ์พิมพ์
+  queuePrint(p: PrintJobPayload): Promise<string>
+  /** งานที่รอพิมพ์ + ที่เพิ่งพิมพ์/ยกเลิก (ล่าสุดก่อน) */
+  listPrintJobs(): Promise<PrintJob[]>
+  finishPrintJob(id: string, status: 'printed' | 'cancelled'): Promise<void>
 
   /** บันทึกผังที่แก้ลงฐานข้อมูลกลาง (สิทธิ์ layout.edit) */
   saveLayout(p: LayoutSavePayload): Promise<void>

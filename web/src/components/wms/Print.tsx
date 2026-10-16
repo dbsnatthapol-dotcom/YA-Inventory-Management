@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { PrintFormat } from '../../wms/labels'
 import { BigButton, Field, inputCls } from './ui'
@@ -20,6 +20,8 @@ export function PrintDialog({
   title,
   subtitle,
   printLabel,
+  onPrinted,
+  initialCopies = 1,
   children,
 }: {
   open: boolean
@@ -28,14 +30,24 @@ export function PrintDialog({
   title: string
   subtitle: string
   printLabel: string
+  /** หลังหน้าต่างพิมพ์ของเครื่องปิด (ใช้ปิดงานในคิวพิมพ์) */
+  onPrinted?: () => void
+  initialCopies?: number
   children: ReactNode
 }) {
   const [printing, setPrinting] = useState(false)
-  const [copies, setCopies] = useState(1)
+  const [copies, setCopies] = useState(initialCopies)
+  const printed = useRef(onPrinted)
+  useEffect(() => {
+    printed.current = onPrinted
+  }, [onPrinted])
 
   useEffect(() => {
     if (!printing) return
-    const done = () => setPrinting(false)
+    const done = () => {
+      setPrinting(false)
+      printed.current?.()
+    }
     window.addEventListener('afterprint', done)
     // รอให้ portal วาดเสร็จก่อนเปิดหน้าต่างพิมพ์ของเครื่อง
     const t = window.setTimeout(() => window.print(), 80)

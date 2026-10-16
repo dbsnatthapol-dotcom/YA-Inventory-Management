@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { WmsApi } from './api'
-import type { ClosingTotal, FgItem, Grn, GrnLine, Invoice, InvoiceLine, LedgerRow, Lpn, LpnItem, Requisition, StockClosing, StockCount, StorageLoc, Tx, TxKind } from './types'
+import type { ClosingTotal, FgItem, Grn, GrnLine, Invoice, InvoiceLine, LedgerRow, Lpn, LpnItem, PrintJob, Requisition, StockClosing, StockCount, StorageLoc, Tx, TxKind } from './types'
 
 type Row = Record<string, unknown>
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v))
@@ -419,6 +419,28 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
             .sort((a, b) => a.lineNo - b.lineNo),
         }),
       )
+    },
+    queuePrint: (p) => rpc<string>('print_job_create', { p }),
+    async listPrintJobs() {
+      const rows = (await run(sb.from('print_jobs').select('*').order('requested_at', { ascending: false }).limit(50))) as Row[]
+      return rows.map(
+        (r): PrintJob => ({
+          id: String(r.id),
+          format: r.format as PrintJob['format'],
+          grnId: String(r.grn_id),
+          lpnIds: ((r.lpn_ids as string[] | null) ?? []).map(String),
+          copies: Number(r.copies ?? 1),
+          title: str(r.title),
+          status: r.status as PrintJob['status'],
+          requestedCode: str(r.requested_code),
+          requestedAt: String(r.requested_at),
+          doneCode: str(r.done_code),
+          doneAt: str(r.done_at),
+        }),
+      )
+    },
+    finishPrintJob: async (id, status) => {
+      await rpc('print_job_finish', { p_id: id, p_status: status })
     },
     decideStockCount: async (id, approve, note) => {
       const r = await rpc<{ changed: number; newBoxes: number; grnId?: string | null }>('stock_count_decide', { p_id: id, p_approve: approve, p_note: note ?? null })

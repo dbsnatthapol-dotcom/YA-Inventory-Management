@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { errorText } from '../../wms/api'
 import { fmt } from '../../wms/logic'
-import type { Grn, GrnDetail, Lpn, LpnItem } from '../../wms/types'
+import { useIsMobile } from '../../lib/viewMode'
+import type { Grn, GrnDetail, Lpn, LpnItem, PrintJob } from '../../wms/types'
 import { useWms } from '../../wms/useWms'
 import { FORMAT_NAME, type LabelContext, type PrintFormat } from '../../wms/labels'
 import { GrnSheet, LabelCard, LabelSheet } from './Documents'
 import { PrintDialog } from './Print'
+import { usePrintQueue } from '../../wms/usePrintQueue'
+import { PrintQueue } from './PrintQueue'
 import { Alert, BigButton, Card, inputCls, Pill, Segmented, tdCls, thCls } from './ui'
 
 const dateTime = (iso: string) => new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
@@ -20,6 +23,12 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad' | 'info'; text: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [splitting, setSplitting] = useState<Lpn | null>(null)
+  const mobile = useIsMobile()
+  // คิวพิมพ์: มือถือส่ง → คอมพิมพ์ (คอมเห็นคิว · job = งานที่กำลังพิมพ์)
+  const [qver, setQver] = useState(0)
+  const queue = usePrintQueue(!mobile && can('label.print'), qver)
+  const [job, setJob] = useState<PrintJob | null>(null)
+  const jobRef = useRef<PrintJob | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -37,13 +46,71 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
       .then((d) => {
         if (!alive) return
         setDetail(d)
-        setSelected(new Set(d?.lpns.filter((l) => l.status === 'active').map((l) => l.id) ?? []))
+        // เปิดจากคิวพิมพ์: คงป้ายที่งานนั้นเลือกไว้
+        if (jobRef.current?.grnId !== d?.grn.id) setSelected(new Set(d?.lpns.filter((l) => l.status === 'active').map((l) => l.id) ?? []))
       })
       .catch((e) => alive && setMsg({ tone: 'bad', text: errorText(e) }))
     return () => {
       alive = false
     }
   }, [api, grnId])
+
+  // งานจากคิว: โหลด GRN ของงาน เลือกป้ายตามงาน แล้วเปิดตัวอย่างก่อนพิมพ์
+  const startJob = async (j: PrintJob) => {
+    try {
+      const d = detail?.grn.id === j.grnId ? detail : await api.grnDetail(j.grnId)
+      if (!d) return setMsg({ tone: 'bad', text: 'ไม่พบใบรับสินค้าของงานนี้' })
+      jobRef.current = j
+      setJob(j)
+      setFormat(j.format)
+      setDetail(d)
+      setSelected(new Set(j.lpnIds.length ? j.lpnIds : d.lpns.filter((l) => l.status === 'active').map((l) => l.id)))
+      if (d.grn.id !== grnId) onSelectGrn(j.grnId)
+      setPrintOpen(true)
+    } catch (e) {
+      setMsg({ tone: 'bad', text: errorText(e) })
+    }
+  }
+  const endJob = () => {
+    jobRef.current = null
+    setJob(null)
+  }
+  const cancelJob = async (j: PrintJob) => {
+    if (!window.confirm(`ยกเลิกงานพิมพ์ "${j.title ?? 'ป้ายกล่อง'}"?`)) return
+    try {
+      await api.finishPrintJob(j.id, 'cancelled')
+      setQver((v) => v + 1)
+    } catch (e) {
+      setMsg({ tone: 'bad', text: errorText(e) })
+    }
+  }
+  const printed = async () => {
+    if (!job) return
+    try {
+      await api.finishPrintJob(job.id, 'printed')
+      setMsg({ tone: 'ok', text: `พิมพ์งานจากคิวแล้ว: ${job.title ?? 'ป้ายกล่อง'}` })
+    } catch (e) {
+      setMsg({ tone: 'bad', text: errorText(e) })
+    } finally {
+      endJob()
+      setPrintOpen(false)
+      setQver((v) => v + 1)
+    }
+  }
+  const sendToPc = async () => {
+    if (!detail) return
+    setBusy(true)
+    setMsg(null)
+    try {
+      const what = format === 'a4' ? 'ใบ GRN' : `${chosen.length} ป้าย`
+      await api.queuePrint({ format, grnId: detail.grn.id, lpnIds: format === 'a4' ? [] : chosen.map((l) => l.id), copies: 1, title: `${detail.grn.grnNo} · ${what}` })
+      setMsg({ tone: 'ok', text: `ส่ง ${what} (${FORMAT_NAME[format]}) เข้าคิวพิมพ์แล้ว · คอมจุดพิมพ์จะเห็นที่แท็บ "ป้าย QR & พิมพ์"` })
+    } catch (e) {
+      setMsg({ tone: 'bad', text: errorText(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const lpns = detail?.lpns ?? []
   const chosen = lpns.filter((l) => selected.has(l.id))
@@ -120,6 +187,19 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4 pb-28 lg:grid-cols-[300px_minmax(0,1fr)]">
+      <PrintQueue queued={queue.queued} error={queue.error} activeId={job?.id ?? null} onPrint={(j) => void startJob(j)} onCancel={(j) => void cancelJob(j)} />
+      {mobile ? (
+        <Card title="ใบรับสินค้า (GRN)">
+          <select className={inputCls} value={detail?.grn.id ?? ''} onChange={(e) => e.target.value && onSelectGrn(e.target.value)} aria-label="เลือกใบรับสินค้า">
+            <option value="">— เลือก GRN ที่จะพิมพ์ป้าย —</option>
+            {grns.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.grnNo} · {g.modelCode ?? '-'} · {dateTime(g.receivedAt)}
+              </option>
+            ))}
+          </select>
+        </Card>
+      ) : (
       <Card title="ใบรับสินค้า (GRN) ล่าสุด">
         <div className="flex max-h-[60vh] flex-col gap-1.5 overflow-y-auto pr-1">
           {grns.length === 0 && <p className="text-sm text-slate-500">ยังไม่มีการรับของ · เริ่มที่แท็บ "รับสินค้า"</p>}
@@ -138,12 +218,13 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
           ))}
         </div>
       </Card>
+      )}
 
       <div className="flex min-w-0 flex-col gap-4">
         {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
         {!detail ? (
           <Card>
-            <p className="py-10 text-center text-slate-500">เลือก GRN ทางซ้ายเพื่อพิมพ์ป้ายกล่อง</p>
+            <p className="py-10 text-center text-slate-500">{mobile ? 'เลือก GRN ด้านบนเพื่อพิมพ์ป้ายกล่อง' : 'เลือก GRN ทางซ้ายเพื่อพิมพ์ป้ายกล่อง'}</p>
           </Card>
         ) : (
           <>
@@ -215,7 +296,8 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
                 {format === 'a4' && 'ใบรับสินค้าทั้งเที่ยว พร้อม QR และช่องเซ็น ใช้แนบ Packing List เก็บแฟ้ม'}
               </p>
               <div className="overflow-x-auto rounded-xl bg-slate-100 p-4">
-                <div className="flex w-max gap-4">
+                {/* มือถือ: ย่อตัวอย่างให้ป้าย 100 มม. พอดีจอ (ตอนพิมพ์ใช้ขนาดจริง) */}
+                <div className="flex w-max gap-4" style={mobile ? { zoom: 0.78 } : undefined}>
                   {format === 'a4' ? <div className="origin-top-left scale-[0.6]" style={{ height: '180mm' }}><GrnSheet ctx={ctx} /></div> : chosen.slice(0, 2).map((l) => <LabelCard key={l.id} lpn={l} ctx={ctx} mono={format === 'label'} />)}
                   {format !== 'a4' && chosen.length === 0 && <p className="text-sm text-slate-500">ยังไม่ได้เลือกป้าย</p>}
                 </div>
@@ -234,6 +316,16 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
               {format === 'sheet' && chosen.length ? ` · ${sheets} แผ่น` : ''}
             </div>
           </div>
+          {mobile ? (
+            <div className="grid w-full grid-cols-2 gap-2">
+              <BigButton disabled={busy || !count || !can('label.print')} onClick={() => void sendToPc()}>
+                🖥️ ส่งไปพิมพ์ที่คอม
+              </BigButton>
+              <BigButton tone="secondary" disabled={!count || !can('label.print')} onClick={() => setPrintOpen(true)}>
+                📱 พิมพ์จากมือถือ
+              </BigButton>
+            </div>
+          ) : (
           <div className="flex gap-2">
             <BigButton tone="secondary" disabled={!count || !can('label.print')} onClick={() => setPrintOpen(true)}>
               ดูตัวอย่างทั้งหมด
@@ -242,6 +334,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
               {format === 'a4' ? 'พิมพ์ใบ GRN' : `พิมพ์ ${count} ป้าย`}
             </BigButton>
           </div>
+          )}
         </div>
       )}
 
@@ -249,10 +342,16 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
 
       {detail && (
         <PrintDialog
+          key={job?.id ?? 'manual'}
           open={printOpen}
-          onClose={() => setPrintOpen(false)}
+          onClose={() => {
+            setPrintOpen(false)
+            endJob()
+          }}
+          onPrinted={job ? () => void printed() : undefined}
+          initialCopies={job?.copies ?? 1}
           format={format}
-          title="ตัวอย่างก่อนพิมพ์"
+          title={job ? `พิมพ์งานจากคิว · ${job.title ?? ''}` : 'ตัวอย่างก่อนพิมพ์'}
           subtitle={`${FORMAT_NAME[format]} · ${format === 'a4' ? detail.grn.grnNo : `${chosen.length} ป้าย`}${format === 'sheet' ? ` · ${sheets} แผ่น` : ''}`}
           printLabel={format === 'a4' ? 'พิมพ์ใบ GRN' : `พิมพ์ ${count} ป้าย`}
         >

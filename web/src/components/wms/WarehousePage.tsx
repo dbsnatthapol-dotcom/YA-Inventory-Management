@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { BRAND } from '../../data/brand'
 import { useWms } from '../../wms/useWms'
 import { pendingAcks } from '../../wms/closing'
+import { usePrintQueue } from '../../wms/usePrintQueue'
 import { InvoiceTab } from './InvoiceTab'
 import { IssueTab } from './IssueTab'
 import { LabelsTab } from './LabelsTab'
@@ -58,6 +59,9 @@ export function WarehousePage({ deepLink, zones }: { deepLink: WmsDeepLink | nul
     }
   }, [api, ready, can, tab])
 
+  // งานพิมพ์ที่มือถือส่งมารอ ⇒ ตัวเลขที่แท็บป้าย (หน้าป้ายมีคิวให้กดพิมพ์)
+  const printQueue = usePrintQueue(ready && can('label.print') && tab !== 'labels')
+
   const openGrn = (id: string) => {
     setGrnId(id)
     setTab('labels')
@@ -78,6 +82,11 @@ export function WarehousePage({ deepLink, zones }: { deepLink: WmsDeepLink | nul
               >
                 <span className={`grid h-6 w-6 place-items-center rounded-full border-2 text-xs ${tab === k ? 'border-white' : 'border-slate-300'}`}>{n}</span>
                 {label}
+                {k === 'labels' && tab !== 'labels' && printQueue.queued.length > 0 && (
+                  <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-500 px-1 text-[11px] font-bold text-white" title="งานพิมพ์จากมือถือรออยู่">
+                    {printQueue.queued.length}
+                  </span>
+                )}
                 {k === 'ledger' && toAck > 0 && (
                   <span className="grid h-5 min-w-5 place-items-center rounded-full bg-rose-600 px-1 text-[11px] font-bold text-white" title="ปิดยอดรอคุณรับทราบ">
                     {toAck}
