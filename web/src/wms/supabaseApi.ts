@@ -3,6 +3,8 @@ import type { WmsApi } from './api'
 import { bangkokDay } from './ledger'
 import type {
   ClosingTotal,
+  EnvArchive,
+  EnvCounts,
   FgItem,
   Grn,
   GrnLine,
@@ -355,7 +357,14 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
     },
     setZoneHead: (zoneId, staffId) => rpc('admin_set_zone_head', { p_zone: zoneId, p_staff: staffId }),
     setSetting: (key, value) => rpc('admin_set_setting', { p_key: key, p_value: value }),
-    newTrialRound: async () => Number(await rpc('admin_new_trial_round')),
+    async envSummary() {
+      const r = await rpc<{ env: string; counts: EnvCounts; archives: EnvArchive[] }>('admin_env_summary')
+      return { env: r.env, counts: r.counts, archives: r.archives.map((a) => ({ ...a, id: Number(a.id) })) }
+    },
+    archiveEnv: async (confirm, note) => Number((await rpc<{ id: number }>('admin_archive_env', { p_confirm: confirm, p_note: note })).id),
+    restoreArchive: async (id) => {
+      await rpc('admin_restore_archive', { p_id: id })
+    },
     upsertPart: (p) =>
       rpc('master_save_part', {
         p: { partNo: p.partNo, name: p.name, type: p.type ?? '', customerId: p.customerId, uamCode: p.uamCode ?? '', models: p.models },
