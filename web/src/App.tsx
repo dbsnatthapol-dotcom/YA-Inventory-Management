@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AuthProvider } from './auth/AuthProvider'
 import { ChangePasswordScreen, LoadingScreen, LoginScreen } from './auth/AuthScreens'
-import { ROLE_LABEL } from './auth/staff'
+import { homePage, ROLE_LABEL } from './auth/staff'
 import { useAuth } from './auth/useAuth'
 import { BackofficePage } from './components/admin/BackofficePage'
 import { WarehousePage, type WmsDeepLink } from './components/wms/WarehousePage'
@@ -10,6 +10,7 @@ import { useWms } from './wms/useWms'
 import { layoutSavePayload } from './lib/layoutSave'
 import { useViewModeState, ViewModeContext } from './lib/viewMode'
 import { MobileShell } from './components/mobile/MobileShell'
+import { ModeChooser } from './components/mobile/ModeChooser'
 import { ExecTour } from './components/map/ExecTour'
 import { buildGuides, buildTourSteps, flowsFromTx, sampleFlows } from './lib/mapShowcase'
 import type { FlowSpec } from './components/FactoryScene'
@@ -25,8 +26,7 @@ import { SearchBox } from './components/map/SearchBox'
 import { palletsFor } from './data/warehouse'
 import { buildingOf } from './lib/geometry'
 import { mapStats } from './lib/mapStats'
-import type { SearchHit } from './lib/search'
-import { InventoryPage } from './components/inventory/InventoryPage'
+import type { StockHit } from './components/mobile/stockSearch'
 import { RoutePanel } from './components/RoutePanel'
 import logoUrl from './assets/uam-logo.png'
 import { BRAND } from './data/brand'
@@ -35,9 +35,10 @@ import { applyLayoutEdits } from './lib/layoutEdit'
 import { loadLayout, type LoadedLayout } from './lib/layoutSource'
 import { useLayoutEdits } from './lib/useLayoutEdits'
 import { findRoute, type RouteOptions } from './lib/pathfinding'
-import { useInventory } from './inventory/useInventory'
-import { bangkokDate, zoneContents, zoneTotals } from './inventory/reports'
+import { emptyZone } from './wms/mapStock'
+import { useMapStock } from './wms/useMapStock'
 import { ZonePanel } from './components/ZonePanel'
+import { WarehousePlan, type PlanFocus } from './components/plan/WarehousePlan'
 import { LayoutEditorPage } from './components/layout-editor/LayoutEditorPage'
 import type { Zone } from './types/layout'
 
@@ -68,6 +69,8 @@ function WmsApp() {
   )
 }
 
+type Page = 'plan' | 'map' | 'wms' | 'layout' | 'admin'
+
 /** ลิงก์จาก QR บนป้าย: /t/LPN-2610-000001 (กล่อง) หรือ /g/GRN-2610-0001 (ใบรับสินค้า) */
 function readDeepLink(): WmsDeepLink | null {
   const m = window.location.pathname.match(/^\/(t|g)\/([A-Za-z0-9-]+)\/?$/)
@@ -79,7 +82,6 @@ function readDeepLink(): WmsDeepLink | null {
 function FactoryApp() {
   const auth = useAuth()
   const role = auth.enabled ? (auth.profile?.role ?? null) : null
-  const staffName = auth.profile ? `${auth.profile.full_name} (${auth.profile.employee_code})` : undefined
   const [loaded, setLoaded] = useState<LoadedLayout>({ layout: sampleLayout, source: 'sample' })
   const layoutEdits = useLayoutEdits()
   const wms = useWms()
@@ -97,15 +99,26 @@ function FactoryApp() {
   const [tripsPerDay, setTripsPerDay] = useState(40)
   const [mode, setMode] = useState<ViewMode>('exterior')
   const [explode, setExplode] = useState(2.5)
-  const [hiddenFloors, setHiddenFloors] = useState<Set<string>>(new Set())
+  /** ชั้นที่ดูในโหมดภายในอาคาร: null = ชั้นแรก (ค่าเริ่มต้น ดูทีละชั้น), 'all' = ซ้อนทุกชั้น */
+  const [floorPick, setFloorPick] = useState<string | null>(null)
   const [topView, setTopView] = useState(false)
   const [showSurroundings, setShowSurroundings] = useState(false)
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
   const [sideTab, setSideTab] = useState<'zone' | 'route'>('zone')
   const [deepLink] = useState(readDeepLink)
-  const [page, setPage] = useState<'map' | 'wms' | 'inventory' | 'layout' | 'admin'>(deepLink ? 'wms' : 'map')
+  // หน้าแรกตามบทบาท: ผังคลัง 2D (คนหน้างาน) หรือผังโรงงาน 3D
+  const home = homePage(role)
+  const [page, setPage] = useState<Page>(deepLink ? 'wms' : home)
   const canAdmin = !auth.enabled || role === 'admin' || role === 'manager'
-  const inventory = useInventory(staffName)
+  // ของบนผัง / ช่องค้นหา / หน้าปรับผัง มาจากกล่องในระบบคลังชุดเดียวกับงานคลังและมือถือ
+  const [searchAwake, setSearchAwake] = useState(false)
+  const mapData = useMapStock(page === 'map' || page === 'plan' || page === 'layout' || searchAwake, layout, page)
+  /** สั่งผังคลัง 2D เปิดโซน/ช่อง (จากช่องค้นหา หรือปุ่มจากผัง 3D) */
+  const [planFocus, setPlanFocus] = useState<PlanFocus | null>(null)
+  const showInPlan = (zoneId: string, pick: Pick<PlanFocus, 'lpnNo' | 'code'> = {}) => {
+    setPage('plan')
+    setPlanFocus((f) => ({ zoneId, ...pick, n: (f?.n ?? 0) + 1 }))
+  }
 
   useEffect(() => {
     loadLayout().then(setLoaded)
@@ -138,40 +151,32 @@ function FactoryApp() {
     else if (zone.kind === 'storage' || zone.kind === 'receiving' || zone.kind === 'tent') setSourceId(zone.id)
   }
 
-  const toggleFloor = (id: string) =>
-    setHiddenFloors((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-
   // เรียงตามอาคารแล้วตามความสูง (A ชั้น 1-3, F ชั้น 1 / ชั้นลอย / ชั้น 2)
   const buildingFloors = useMemo(
     () => layout.floors.filter((f) => f.area === 'building').sort((a, b) => buildingOf(a).localeCompare(buildingOf(b)) || a.elevation - b.elevation),
     [layout.floors],
   )
-  const zoneStock = useMemo(() => zoneTotals(inventory.state), [inventory.state])
-
-  /** เปิดผัง 3D ที่โซนจัดเก็บ (เรียกจากหน้ารับเข้า/สต็อก) */
-  const showZone = (zoneId: string) => {
-    const zone = layout.zones.find((z) => z.id === zoneId)
-    if (!zone) return
-    handleZoneClick(zone)
-    setMode(layout.floors.find((f) => f.id === zone.floorId)?.area === 'building' ? 'interior' : 'exterior')
-    setPage('map')
+  // ภายในอาคารดูทีละชั้น (ไม่ทับซ้อนกัน) · "ทุกชั้น" = ซ้อนกันแบบเดิม
+  const shownFloor = floorPick === 'all' ? null : (buildingFloors.find((f) => f.id === floorPick) ?? buildingFloors[0])?.id ?? null
+  const hiddenFloors = useMemo(() => new Set(shownFloor ? buildingFloors.filter((f) => f.id !== shownFloor).map((f) => f.id) : []), [shownFloor, buildingFloors])
+  /** เปิดชั้นของโซนนี้ในโหมดภายใน (โซนบนชั้นอื่นจะถูกซ่อน) */
+  const showFloorOf = (zone: Zone) => {
+    const floor = layout.floors.find((f) => f.id === zone.floorId)
+    if (floor?.area === 'building' && shownFloor !== null) setFloorPick(floor.id)
   }
+  const zoneStock = mapData.stock
 
   // ---- ผังเต็มจอ: ค้นหา, หมุด, พาเลท, กล้อง
   const [panelOpen, setPanelOpen] = useState(true)
   const [qcPins, setQcPins] = useState(true)
-  const [searchZoneId, setSearchZoneId] = useState<string | null>(null)
-  const [highlightLot, setHighlightLot] = useState<string | null>(null)
+  /** โซนที่ผลค้นหาอยู่ (part เดียวอยู่ได้หลายโซน) และป้ายกล่องที่ไฮไลต์ */
+  const [searchZones, setSearchZones] = useState<string[]>([])
+  const [highlight, setHighlight] = useState<ReadonlySet<string> | null>(null)
   const [selectedPallet, setSelectedPallet] = useState<{ zoneId: string; index: number } | null>(null)
   const [cameraCommand, setCameraCommand] = useState<CameraCommand | null>(null)
   const camera = (cmd: DistributiveOmit<CameraCommand, 'n'>) => setCameraCommand((prev) => ({ ...cmd, n: (prev?.n ?? 0) + 1 }) as CameraCommand)
 
-  const stats = useMemo(() => mapStats(layout, inventory.state, zoneStock, bangkokDate()), [layout, inventory.state, zoneStock])
+  const stats = useMemo(() => mapStats(layout, zoneStock, mapData.activity), [layout, zoneStock, mapData.activity])
 
   // ---- ไกด์ประจำจุด, heatmap, live flow, โหมดนำเสนอ
   const [guidesOn, setGuidesOn] = useState(true)
@@ -204,48 +209,51 @@ function FactoryApp() {
   }, [liveFlow, flowTx, wms.master.locations, wms.api.kind, layout])
   const tourSteps = useMemo(() => buildTourSteps(layout, stats, zoneStock), [layout, stats, zoneStock])
   const pins = useMemo<MapPinSpec[]>(() => {
-    const list: MapPinSpec[] = searchZoneId ? [{ zoneId: searchZoneId, tone: 'search' }] : []
+    const list: MapPinSpec[] = searchZones.map((zoneId) => ({ zoneId, tone: 'search' }))
     if (qcPins)
       for (const [zoneId, z] of zoneStock)
-        if (z.pendingQcQty > 0 && zoneId !== searchZoneId && layout.zones.some((zone) => zone.id === zoneId)) list.push({ zoneId, tone: 'qc' })
+        if (z.pendingQcQty > 0 && !searchZones.includes(zoneId) && layout.zones.some((zone) => zone.id === zoneId)) list.push({ zoneId, tone: 'qc' })
     return list
-  }, [searchZoneId, qcPins, zoneStock, layout.zones])
+  }, [searchZones, qcPins, zoneStock, layout.zones])
 
-  /** เลือกผลค้นหา: เปิดชั้นที่ของอยู่, เลือกโซน, ไฮไลต์พาเลทของ lot แล้วบินกล้องไปหา */
-  const pickSearch = (hit: SearchHit) => {
-    const zone = hit.kind === 'zone' ? hit.zone : hit.zone
+  /**
+   * เลือกผลค้นหา: เลือกโซนที่มีของมากสุด ไฮไลต์กล่อง แล้วเปิดผังที่ใช้อยู่ —
+   * ผังคลัง 2D (เลือกช่องให้) ถ้าอยู่หน้าผังคลังหรือเป็นหน้าแรกของบทบาท · ไม่งั้นผัง 3D (เปิดชั้นของมัน บินกล้องไปหา)
+   */
+  const pickSearch = (hit: StockHit) => {
+    const qty = new Map<string, number>()
+    for (const b of hit.boxes) if (b.zoneId) qty.set(b.zoneId, (qty.get(b.zoneId) ?? 0) + b.qty)
+    const zoneIds = hit.zoneId ? [hit.zoneId] : [...qty].sort((a, b) => b[1] - a[1]).map(([id]) => id)
+    const zone = layout.zones.find((z) => z.id === zoneIds[0])
     if (!zone) return
+    setSearchZones(zoneIds)
+    setHighlight(hit.boxes.length ? new Set(hit.boxes.map((b) => b.lpnNo)) : null)
+    if (page === 'plan' || (page !== 'map' && home === 'plan')) {
+      showInPlan(zone.id, { lpnNo: hit.kind === 'lpn' ? hit.title : null, code: hit.kind === 'place' ? hit.title : null })
+      return
+    }
     const floor = layout.floors.find((f) => f.id === zone.floorId)
     const inBuilding = floor?.area === 'building'
     setPage('map')
     setMode(inBuilding ? 'interior' : 'exterior')
     setTopView(false)
-    // ซ่อนชั้นที่อยู่เหนือของที่ค้นหา (ไม่ให้บังมุมกล้อง) และเปิดชั้นของมันถ้าซ่อนอยู่
-    if (inBuilding && floor)
-      setHiddenFloors(new Set(buildingFloors.filter((f) => f.elevation > floor.elevation).map((f) => f.id)))
+    if (inBuilding && floor) setFloorPick(floor.id)
     setSideTab('zone')
     setSelectedZoneId(zone.id)
-    setSearchZoneId(zone.id)
     setPanelOpen(true)
-    if (hit.kind === 'lot') {
-      setHighlightLot(hit.lot.id)
-      const index = palletsFor(zoneContents(inventory.state, zone.id)).findIndex((p) => p.lotId === hit.lot.id)
-      setSelectedPallet(index >= 0 ? { zoneId: zone.id, index } : null)
-    } else {
-      setHighlightLot(null)
-      setSelectedPallet(null)
-    }
+    const index = hit.kind === 'lpn' ? palletsFor(zoneStock.get(zone.id)).findIndex((p) => p.lpnNo === hit.title) : -1
+    setSelectedPallet(index >= 0 ? { zoneId: zone.id, index } : null)
     camera({ kind: 'focus', zoneId: zone.id })
   }
-  /** จากหน้าปรับผัง: เปิดผัง 3D ภายในอาคารที่โซนนั้น */
+  /** จากหน้าปรับผัง / ผังคลัง 2D: เปิดผัง 3D ที่โซนนั้น (ภายในอาคารเปิดชั้นของโซน) */
   const open3D = (zoneId: string | null) => {
     setPage('map')
-    setMode('interior')
     setTopView(false)
     const zone = zoneId ? layout.zones.find((z) => z.id === zoneId) : undefined
+    const floor = zone && layout.floors.find((f) => f.id === zone.floorId)
+    setMode(!floor || floor.area === 'building' ? 'interior' : 'exterior')
     if (!zone) return
-    const floor = layout.floors.find((f) => f.id === zone.floorId)
-    if (floor) setHiddenFloors(new Set(buildingFloors.filter((f) => f.elevation > floor.elevation).map((f) => f.id)))
+    if (floor?.area === 'building') setFloorPick(floor.id)
     setSelectedZoneId(zone.id)
     setSideTab('zone')
     camera({ kind: 'focus', zoneId: zone.id })
@@ -269,15 +277,26 @@ function FactoryApp() {
     setOpenGuide(step.guide ? step.zoneId : null)
     const zone = step.zoneId ? layout.zones.find((z) => z.id === step.zoneId) : undefined
     const floor = zone && layout.floors.find((f) => f.id === zone.floorId)
-    setHiddenFloors(floor && floor.area === 'building' && step.mode === 'interior' ? new Set(buildingFloors.filter((f) => f.elevation > floor.elevation).map((f) => f.id)) : new Set())
+    // ภายในอาคาร: เปิดชั้นของจุดนั้นชั้นเดียว · ภาพรวมภายใน = ทุกชั้นซ้อนกัน
+    if (step.mode === 'interior') setFloorPick(floor && floor.area === 'building' ? floor.id : 'all')
     camera(zone ? { kind: 'focus', zoneId: zone.id } : { kind: 'home' })
   }
 
   const clearSearch = () => {
-    setSearchZoneId(null)
-    setHighlightLot(null)
+    setSearchZones([])
+    setHighlight(null)
     setSelectedPallet(null)
   }
+  const navItems: [Page, string][] = [
+    ['plan', 'ผังคลัง 2D'],
+    ['map', 'ผังโรงงาน 3D'],
+    ['wms', 'งานคลัง'],
+    ...(canEditLayout ? ([['layout', 'ปรับผัง']] as [Page, string][]) : []),
+    ...(canAdmin ? ([['admin', 'หลังบ้าน']] as [Page, string][]) : []),
+  ]
+
+  // เครื่องนี้ยังไม่เคยเลือกโหมด: ถามครั้งเดียวหลังเข้าระบบ แล้วจำไว้
+  if (!view.chosen) return <ModeChooser narrow={view.narrow} userName={auth.profile?.full_name} onPick={view.setPref} />
 
   // มือถือ: หน้าจอหน้างาน (ไม่โหลดผัง 3D)
   if (view.mode === 'mobile')
@@ -302,20 +321,12 @@ function FactoryApp() {
             <div className="text-[13px] font-bold tracking-wide" style={{ color: BRAND.primary }}>
               {layout.siteName.toUpperCase()}
             </div>
-            <div className="text-[11px] text-slate-500">ระบบบริหารคลังสินค้า · ผังโรงงาน 3 มิติ</div>
+            <div className="text-[11px] text-slate-500">ระบบบริหารคลังสินค้า · ผังคลังรายช่อง + ผังโรงงาน 3 มิติ</div>
           </div>
         </div>
 
         <nav className="flex rounded-lg bg-slate-100 p-0.5 text-sm" aria-label="เมนูหลัก">
-          {(
-            [
-              ['map', 'ผังโรงงาน 3D'],
-              ['wms', 'งานคลัง'],
-              ['inventory', 'สต็อก (ตัวอย่างเดิม)'],
-              ...(canEditLayout ? ([['layout', 'ปรับผัง']] as const) : []),
-              ...(canAdmin ? ([['admin', 'หลังบ้าน']] as const) : []),
-            ] as const
-          ).map(([value, label]) => (
+          {navItems.map(([value, label]) => (
             <button
               key={value}
               onClick={() => setPage(value)}
@@ -328,7 +339,15 @@ function FactoryApp() {
         </nav>
 
         <div className="order-last w-full flex-1 md:order-none md:w-auto">
-          <SearchBox layout={layout} state={inventory.state} onPick={pickSearch} onClear={clearSearch} active={!!searchZoneId} />
+          <SearchBox
+            layout={layout}
+            lpns={mapData.lpns}
+            master={wms.master}
+            onPick={pickSearch}
+            onClear={clearSearch}
+            onWake={() => setSearchAwake(true)}
+            active={searchZones.length > 0}
+          />
         </div>
 
         <div className="ml-auto flex items-center gap-3">
@@ -364,11 +383,6 @@ function FactoryApp() {
         </div>
       </header>
 
-      {page === 'inventory' && (
-        <main className="min-h-0 flex-1">
-          <InventoryPage api={inventory} zones={layout.zones} onShowZone={showZone} lockedOperator={staffName} />
-        </main>
-      )}
       {page === 'layout' && (
         <main className="min-h-0 flex-1">
           <LayoutEditorPage
@@ -387,6 +401,10 @@ function FactoryApp() {
           <WarehousePage deepLink={deepLink} zones={layout.zones} />
         </main>
       )}
+      {/* ผังคลัง 2D: ซ่อนแทนการ unmount เพื่อคงชั้น/โซนที่เลือกไว้ */}
+      <main className={page === 'plan' ? 'min-h-0 flex-1' : 'hidden'}>
+        <WarehousePlan layout={layout} lpns={mapData.loaded ? mapData.lpns : null} focus={planFocus} highlight={highlight} onOpen3D={open3D} />
+      </main>
       {page === 'admin' && (
         <main className="min-h-0 flex-1">
           <BackofficePage zones={layout.zones} />
@@ -409,7 +427,7 @@ function FactoryApp() {
             active={page === 'map'}
             showSurroundings={showSurroundings}
             zoneStock={zoneStock}
-            highlightLot={highlightLot}
+            highlight={highlight}
             selectedPallet={selectedPallet}
             onPalletClick={(zoneId, index) => {
               setSelectedPallet({ zoneId, index })
@@ -438,8 +456,8 @@ function FactoryApp() {
                 mode={mode}
                 onMode={setMode}
                 floors={buildingFloors}
-                hiddenFloors={hiddenFloors}
-                onToggleFloor={toggleFloor}
+                floor={shownFloor}
+                onFloor={(id) => setFloorPick(id ?? 'all')}
                 explode={explode}
                 onExplode={setExplode}
                 topView={topView}
@@ -568,13 +586,20 @@ function FactoryApp() {
             <div className="min-h-0 flex-1 overflow-y-auto p-4 text-sm text-slate-700">
               {selectedPallet && (
                 <div className="-mx-1 mb-4">
-                  <PalletCard layout={layout} state={inventory.state} zoneId={selectedPallet.zoneId} index={selectedPallet.index} onClose={() => setSelectedPallet(null)} />
+                  <PalletCard
+                    layout={layout}
+                    stock={zoneStock.get(selectedPallet.zoneId)}
+                    lpns={mapData.lpns}
+                    zoneId={selectedPallet.zoneId}
+                    index={selectedPallet.index}
+                    onClose={() => setSelectedPallet(null)}
+                  />
                 </div>
               )}
               <ZonePanel
                 layout={layout}
                 zoneId={selectedZoneId}
-                contents={selectedZoneId ? zoneContents(inventory.state, selectedZoneId) : null}
+                contents={selectedZoneId ? (zoneStock.get(selectedZoneId) ?? emptyZone(selectedZoneId)) : null}
                 allZones={zoneStock}
                 onSelectZone={(id) => {
                   setSelectedZoneId(id)
@@ -582,14 +607,24 @@ function FactoryApp() {
                   const zone = layout.zones.find((z) => z.id === id)
                   if (zone) {
                     setMode(layout.floors.find((f) => f.id === zone.floorId)?.area === 'building' ? 'interior' : 'exterior')
+                    showFloorOf(zone)
                     camera({ kind: 'focus', zoneId: id })
                   }
                 }}
               />
               {selectedZoneId && (
-                <button className="mt-3 text-xs text-sky-700 hover:underline" onClick={() => setSelectedZoneId(null)}>
-                  ← ดูทุกโซน
-                </button>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <button className="text-sky-700 hover:underline" onClick={() => setSelectedZoneId(null)}>
+                    ← ดูทุกโซน
+                  </button>
+                  <button
+                    className="rounded-full px-3 py-1.5 font-semibold text-sky-700 ring-1 ring-sky-200 hover:bg-sky-50"
+                    onClick={() => showInPlan(selectedZoneId)}
+                    title="ดูทุกช่องเก็บของโซนนี้ในผังคลัง 2D"
+                  >
+                    ดูช่องเก็บในผังคลัง 2D →
+                  </button>
+                </div>
               )}
             </div>
           ) : (

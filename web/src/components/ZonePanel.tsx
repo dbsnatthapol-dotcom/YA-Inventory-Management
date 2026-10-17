@@ -1,7 +1,7 @@
 import { BRAND } from '../data/brand'
 import { modelColor } from '../data/modelColors'
 import { ZONE_STYLE } from '../data/zoneStyle'
-import type { ZoneContents } from '../inventory/reports'
+import type { ZoneContents } from '../wms/mapStock'
 import type { FactoryLayout } from '../types/layout'
 
 interface Props {
@@ -65,7 +65,7 @@ export function ZonePanel({ layout, zoneId, contents, allZones, onSelectZone }: 
 
       <div className="grid grid-cols-2 gap-2">
         <div className="rounded-md border border-slate-200 bg-slate-50 p-2">
-          <div className="text-[11px] text-slate-500">ของในโซน (BOI)</div>
+          <div className="text-[11px] text-slate-500">ของในโซน</div>
           <div className="text-lg font-bold tabular-nums" style={{ color: BRAND.primary }}>
             {fmt(contents.totalQty)} ชิ้น
           </div>
@@ -96,23 +96,25 @@ export function ZonePanel({ layout, zoneId, contents, allZones, onSelectZone }: 
           <table className="w-full text-left text-xs">
             <thead className="text-slate-400">
               <tr className="border-b border-slate-200">
-                <th className="py-1">Part / Lot</th>
+                <th className="py-1">Part / ป้ายกล่อง</th>
                 <th>Model</th>
                 <th className="text-right">จำนวน</th>
               </tr>
             </thead>
             <tbody>
               {contents.items.map((i) => (
-                <tr key={i.lot.id} className="border-b border-slate-100 align-top">
+                <tr key={i.key} className="border-b border-slate-100 align-top">
                   <td className="py-1">
-                    <div className="font-mono">{i.lot.partNo}</div>
-                    <div className="text-[11px] text-slate-500">{i.part?.description}</div>
-                    <div className="font-mono text-[10px] text-slate-400">{i.lot.id}</div>
+                    <div className="font-mono">{i.partNo}</div>
+                    <div className="text-[11px] text-slate-500">{i.name}</div>
+                    <div className="font-mono text-[10px] text-slate-400">
+                      {i.lpnNo} · {i.location}
+                    </div>
                   </td>
                   <td>
                     <span className="inline-flex items-center gap-1">
-                      <i className="inline-block h-2 w-2 rounded-sm" style={{ background: modelColor(i.lot.model) }} />
-                      {i.lot.model}
+                      <i className="inline-block h-2 w-2 rounded-sm" style={{ background: modelColor(i.model) }} />
+                      {i.model}
                     </span>
                   </td>
                   <td className="text-right tabular-nums">

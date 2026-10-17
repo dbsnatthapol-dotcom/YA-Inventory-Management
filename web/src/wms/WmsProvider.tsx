@@ -9,7 +9,7 @@ import { WmsContext } from './wmsContext'
 const EMPTY_MASTER: MasterData = { parts: [], models: [], rules: [], locations: [], zoneHeads: [], fgItems: [] }
 
 export function WmsProvider({ children }: { children: ReactNode }) {
-  const api = useMemo(() => (supabase ? supabaseWms(supabase) : demoWms()), [])
+  const api = useMemo(() => (supabase ? supabaseWms(supabase) : demoWms({ samples: true })), [])
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [settings, setSettings] = useState<Settings>({ mode: 'trial', trialRound: 1, qiPartTypes: ['RIM', 'HUB'] })

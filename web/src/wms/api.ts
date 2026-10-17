@@ -14,10 +14,14 @@ import type {
   LedgerRow,
   StockClosing,
   StockCount,
+  PrintJob,
+  PrintJobPayload,
   StockCountPayload,
   ReconcilePayload,
   Requisition,
   RequisitionPayload,
+  ScanIssuePayload,
+  ScanIssueResult,
   StorageLoc,
   Tx,
   ZoneRuleRow,
@@ -46,10 +50,12 @@ export interface WmsApi {
 
   findLpn(lpnNo: string): Promise<{ lpn: Lpn; grn: Grn | null; homeLocation: string | null } | null>
   scanMove(lpnId: string, to: string, kind: 'PUT' | 'MOVE'): Promise<void>
-  scanIssue(itemId: string, qty: number, ref: string, note: string): Promise<string>
+  /** เบิกจากกล่องที่สแกน = ใบเบิก (เข้าไลน์ / QC เบิก / NG) · FM-P-005 นับรวม ไม่ตัดซ้ำ */
+  scanIssue(p: ScanIssuePayload): Promise<ScanIssueResult>
   scanAdjustRequest(itemId: string, newQty: number, reason: string): Promise<string>
   scanAdjustDecide(txId: string, approve: boolean): Promise<void>
-  scanCount(lpnId: string, counted: number): Promise<number>
+  /** บันทึกการนับของ part ในกล่อง (ยอดยังไม่เปลี่ยน) · คืนส่วนต่าง นับได้ − ระบบ */
+  scanCountItem(itemId: string, counted: number): Promise<number>
   scanQi(lpnId: string, pass: number, ng: number, note: string): Promise<string>
   recentTx(limit?: number, lpnId?: string): Promise<Tx[]>
   pendingAdjustments(): Promise<Tx[]>
@@ -67,6 +73,7 @@ export interface WmsApi {
   setSetting(key: 'wms_mode' | 'qi_part_types', value: unknown): Promise<void>
   newTrialRound(): Promise<number>
   upsertPart(p: PartMaster): Promise<void>
+  /** หลังบ้าน: active = false ปิดช่อง (ชำรุด) · true เปิดคืน · รหัสใหม่ = ช่องพิเศษ */
   upsertLocation(l: StorageLoc): Promise<void>
   setZoneRule(r: ZoneRuleRow): Promise<void>
   /** ชุดวงล้อ (FG) + BOM */
@@ -94,6 +101,11 @@ export interface WmsApi {
   listStockCounts(): Promise<StockCount[]>
   /** อนุมัติ = ปรับยอดตามส่วนต่าง (สิทธิ์ scan.adjust.approve, คนส่งอนุมัติเองไม่ได้) */
   decideStockCount(id: string, approve: boolean, note?: string): Promise<{ changed: number; newBoxes: number; grnId: string | null }>
+  // คิวพิมพ์ป้าย: มือถือส่ง → คอมจุดพิมพ์พิมพ์
+  queuePrint(p: PrintJobPayload): Promise<string>
+  /** งานที่รอพิมพ์ + ที่เพิ่งพิมพ์/ยกเลิก (ล่าสุดก่อน) */
+  listPrintJobs(): Promise<PrintJob[]>
+  finishPrintJob(id: string, status: 'printed' | 'cancelled'): Promise<void>
 
   /** บันทึกผังที่แก้ลงฐานข้อมูลกลาง (สิทธิ์ layout.edit) */
   saveLayout(p: LayoutSavePayload): Promise<void>

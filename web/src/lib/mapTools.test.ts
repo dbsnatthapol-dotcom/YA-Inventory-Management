@@ -1,51 +1,61 @@
 import { describe, expect, it } from 'vitest'
 import { sampleLayout } from '../data/factoryLayout'
 import { palletsFor } from '../data/warehouse'
-import { buildDemoState } from '../inventory/demoSeed'
-import { zoneContents, zoneTotals } from '../inventory/reports'
+import { buildZoneStock, NO_ACTIVITY, todayActivity, zoneLocator } from '../wms/mapStock'
+import type { Grn, Requisition, Tx } from '../wms/types'
+import { fixtureLpns, fixtureMaster } from './mapFixture'
 import { mapStats } from './mapStats'
-import { searchMap } from './search'
 
-const state = buildDemoState('2026-10-14')
+const stock = buildZoneStock(fixtureLpns, fixtureMaster, sampleLayout)
 
-describe('map search', () => {
-  it('finds a part regardless of revision, case and spaces, on-shelf lots first', () => {
-    expect(searchMap('raj 00537', sampleLayout, state).length).toBeGreaterThan(0)
-    const hits = searchMap('raj00537/b', sampleLayout, state)
-    expect(hits.length).toBeGreaterThan(0)
-    expect(hits.every((h) => h.kind === 'lot' && h.lot.partNo === 'RAJ00537')).toBe(true)
-    const first = hits[0]
-    expect(first.kind === 'lot' && first.boi).toBeGreaterThan(0)
+describe('map stock from warehouse boxes', () => {
+  it('maps slot codes, zone codes and unknown slots of a zone onto the map', () => {
+    const zoneOf = zoneLocator(fixtureMaster, sampleLayout)
+    expect(['RK-A-01-1', 'MI3-QC', 'NG-HOLD', 'RK-A-99-9', 'RCV-01'].map(zoneOf)).toEqual(['F1-RK-A', 'F1-MI3', 'F1-NG', 'F1-RK-A', 'RCV-01'])
+    expect(zoneOf('NOWHERE-9')).toBeNull()
   })
 
-  it('finds zones by code and lots by invoice number', () => {
-    expect(searchMap('RK-A', sampleLayout, state)[0]).toMatchObject({ kind: 'zone', zone: { id: 'F1-RK-A' } })
-    const byInvoice = searchMap('RE-INV-2610-0152', sampleLayout, state)
-    expect(byInvoice.length).toBeGreaterThan(0)
-    expect(byInvoice.every((h) => h.kind === 'lot' && h.lot.model === 'TWIN')).toBe(true)
-    expect(searchMap('x', sampleLayout, state)).toEqual([])
-  })
-})
-
-describe('pallets and map stats', () => {
-  it('splits each lot into pallets whose pieces add up to the lot balance', () => {
-    const z = zoneContents(state, 'F1-RK-A')
-    const pallets = palletsFor(z)
-    for (const item of z.items) {
-      const mine = pallets.filter((p) => p.lotId === item.lot.id)
-      expect(mine.reduce((s, p) => s + p.qty, 0)).toBe(item.qty)
-      expect(mine.every((p) => p.qty > 0)).toBe(true)
-    }
+  it('shows one pallet per box label, with totals, models and the MI3 hold per zone', () => {
+    const rkA = stock.get('F1-RK-A')!
+    expect(rkA.totalQty).toBe(9050)
+    expect(rkA.models).toEqual([{ model: 'K1G', qty: 9050 }])
+    expect(palletsFor(rkA).map((p) => [p.lpnNo, p.qty])).toEqual([
+      ['LPN-1', 6000],
+      ['LPN-2', 3050],
+    ])
+    const mi3 = stock.get('F1-MI3')!
+    expect([mi3.pendingQcQty, mi3.models[0].model, palletsFor(mi3)[0].hold]).toEqual([60, 'J1A', true])
+    // ไม่มีโซนของกล่องที่หมด / ไม่ active / ช่องที่ไม่รู้จัก
+    expect([...stock.keys()].sort()).toEqual(['F1-MI3', 'F1-NG', 'F1-RK-A', 'F1-RK-B'])
   })
 
-  it('summarises stock, rack usage, MI3 queue and NG for the map header', () => {
-    const s = mapStats(sampleLayout, state, zoneTotals(state), '2026-10-14')
-    expect(s.boiQty).toBeGreaterThan(0)
+  it('summarises good stock, boxes, rack usage, MI3 queue and NG for the map header', () => {
+    const s = mapStats(sampleLayout, stock, NO_ACTIVITY)
+    expect(s.boiQty).toBe(9050 + 200)
+    expect(s.pallets).toBe(5)
+    expect([s.pendingQcQty, s.pendingQcBoxes, s.ngWaitingQty]).toEqual([60, 1, 20])
+    expect(s.usedSlots).toBe(3)
     expect(s.usedSlots).toBeLessThanOrEqual(s.slots)
-    // J1D/J1A/TWIN ที่ยังไม่ผ่านการคัด รวมทุกโซน (Rack E โซนเดียวมี 700)
-    expect(s.pendingQcQty).toBeGreaterThanOrEqual(700)
-    expect(s.pendingQcLots).toBeGreaterThan(0)
-    expect(s.issuedToday).toBe(120 + 4320 + 8640 + 100 + 200)
-    expect(s.ngWaitingQty).toBeGreaterThan(0)
+  })
+
+  it("counts today's line issues (sub requisitions + FM-P-005 difference), GRNs and MI3 NG in Thai time", () => {
+    const req = (kind: Requisition['kind'], docDate: string, lines: [number, number | null][], status: Requisition['status'] = 'posted') =>
+      ({ kind, docDate, status, lines: lines.map(([qty, reqQty]) => ({ partNo: 'P', qty, reqQty, balance: null })) }) as Requisition
+    const reqs = [
+      req('line', '2026-10-14', [
+        [100, 100],
+        [50, 50],
+      ]),
+      req('line', '2026-10-13', [[999, 999]]),
+      req('line', '2026-10-14', [[777, 777]], 'void'),
+      req('fm005', '2026-10-14', [[300, 150]]),
+      req('qc', '2026-10-14', [[10, 10]]),
+    ]
+    const grns = ['2026-10-14T03:00:00Z', '2026-10-13T20:00:00Z', '2026-10-13T03:00:00Z'].map((receivedAt) => ({ receivedAt }) as Grn)
+    const tx = [
+      { kind: 'QI', ngQty: 5, createdAt: '2026-10-14T04:00:00Z' },
+      { kind: 'QI', ngQty: 3, createdAt: '2026-10-13T04:00:00Z' },
+    ] as Tx[]
+    expect(todayActivity(reqs, grns, tx, '2026-10-14')).toEqual({ issuedToday: 300, receiptsToday: 2, ngFoundToday: 5 })
   })
 })

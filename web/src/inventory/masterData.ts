@@ -1,5 +1,5 @@
 import { canonCodes, partRevision } from '../wms/partCodes'
-import type { Customer, ExtractedInvoice, Part, ProductModel, StockSheet, ZoneRule } from './types'
+import type { Customer, Part, ProductModel, ZoneRule } from './types'
 
 /**
  * Master: ใบรายงาน STOCK ประจำวันแผนก W/H ASSY ของลูกค้า Royal Enfield แยกตาม Model (คัดลอกจากไฟล์ Excel ของแผนก)
@@ -285,9 +285,6 @@ const SHEETS_SOURCE: SheetSource[] = [
 /** รหัสต้นฉบับ → รหัสในระบบ (เลขฐาน) */
 const CANON = canonCodes(SHEETS_SOURCE.flatMap((s) => s.rows.map((r) => r[1])))
 
-/** ใบรายงานแยกตาม Model (ลำดับแถวตามแบบฟอร์มเดิม) */
-export const STOCK_SHEETS: StockSheet[] = SHEETS_SOURCE.map(({ rows, ...sheet }) => ({ ...sheet, partNos: rows.map((r) => CANON.get(r[1])!) }))
-
 /** รวม part จากทุกใบรายงาน: รหัสเดียวกันเป็น part เดียว และรวม Model ที่ใช้ */
 function buildParts(sources: SheetSource[]): Part[] {
   const byNo = new Map<string, Part>()
@@ -329,47 +326,3 @@ export const ZONE_RULES: ZoneRule[] = [
   { customerId: 'RE', type: 'RIM TAPE', zoneId: 'F2-RK-D' },
   { customerId: 'RE', type: null, zoneId: 'TENT-D' },
 ]
-
-/**
- * Invoice ตัวอย่างสำหรับ demo (ผลที่ "อ่าน" ได้จากภาพ)
- * ตั้งใจใส่ความผิดพลาดแบบที่ OCR เจอบ่อย เช่น ตัว O กับเลข 0 เพื่อแสดงการตรวจเทียบกับ Master
- */
-export const SAMPLE_INVOICES: Record<string, Omit<ExtractedInvoice, 'provider'>> = {
-  k1g: {
-    invoiceNo: 'RE-INV-2610-0158',
-    invoiceDate: '2026-10-14',
-    supplier: 'Royal Enfield (ตัวอย่าง)',
-    model: 'K1G',
-    lines: [
-      { partNo: 'RAJ00537/B', description: 'RIM, FRONT, TUBELESS,21X 2.15"', qty: 200 },
-      { partNo: 'RAT00587/B', description: 'RIM, REAR, TUBELESS, 17" X 3.5"', qty: 200 },
-      { partNo: 'RAJ00536/B', description: 'HUB, FRONT, TUBELESS, 21X 2.15"', qty: 200 },
-      { partNo: 'RAT00586/B', description: 'HUB, REAR, TUBELESS, K1G', qty: 200 },
-      { partNo: 'RAJ00538/B', description: 'SPOKE, FRONT, TUBELESS,21X 2.15"', qty: 7200 },
-      { partNo: 'RAJ0O550/B', description: 'NIPPLE, SPOKE, LOCKING', qty: 14400 },
-      { partNo: 'RAJ00239/B', description: 'BEARING, WHEEL, 6004', qty: 400 },
-      { partNo: 'RAJ00301/D', description: 'TYRE 90/90-21 FRONT', qty: 200 },
-    ],
-  },
-  j1a: {
-    invoiceNo: 'RE-INV-2610-0171',
-    invoiceDate: '2026-10-14',
-    supplier: 'Royal Enfield (ตัวอย่าง)',
-    model: 'J1A',
-    lines: [
-      { partNo: 'RAJ00296/A', description: 'ALLOY RIM, FRONT, MATTE BLACK', qty: 120 },
-      { partNo: 'RAT00328/A', description: 'ALLOY RIM, REAR, MATTE BLACK', qty: 120 },
-      { partNo: 'RAJ00575/A', description: 'SPOKE-FRONT', qty: 4320 },
-      { partNo: 'RAJ0O298/A', description: 'NIPPLE', qty: 8640 },
-      { partNo: '141109/1', description: 'GREASE SEAL 25X40X7', qty: 240 },
-      { partNo: '150324/A', description: 'WHEEL BEARING 6203', qty: 240 },
-    ],
-  },
-  j1d: {
-    invoiceNo: 'RE-INV-2610-0163',
-    invoiceDate: '2026-10-14',
-    supplier: 'Royal Enfield (ตัวอย่าง)',
-    model: 'J1D',
-    lines: [{ partNo: '150324/A', description: 'WHEEL BEARING 6203 (17x40x12)', qty: 1200 }],
-  },
-}

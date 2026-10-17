@@ -5,20 +5,22 @@ import type { FactoryLayout } from '../../types/layout'
 import { errorText } from '../../wms/api'
 import type { Lpn } from '../../wms/types'
 import { useWms } from '../../wms/useWms'
-import { IconBox, IconPin, IconScan, IconSearch } from '../map/icons'
+import { IconBox, IconPin, IconScan, IconSearch, IconTag } from '../map/icons'
 import { LabelsTab } from '../wms/LabelsTab'
 import { ReceiveTab } from '../wms/ReceiveTab'
 import { ScanTab } from '../wms/ScanTab'
-import { Alert, BigButton } from '../wms/ui'
+import { Alert } from '../wms/ui'
 import type { WmsDeepLink } from '../wms/WarehousePage'
-import { MobileMap } from './MobileMap'
+import { WarehousePlan, type PlanFocus } from '../plan/WarehousePlan'
 import { MobileSearch } from './MobileSearch'
 
-export type MobileTab = 'scan' | 'receive' | 'search' | 'map'
+export type MobileTab = 'receive' | 'labels' | 'scan' | 'search' | 'map'
 
+// เรียงตามลำดับงานหน้างาน: รับของ → พิมพ์ป้าย → สแกน (จัดเก็บ/ย้าย/เบิก/ตรวจนับ/MI3) · ค้นหา · ผัง
 const TABS: { k: MobileTab; label: string; icon: ReactNode }[] = [
-  { k: 'scan', label: 'สแกน', icon: <IconScan /> },
   { k: 'receive', label: 'รับของ', icon: <IconBox /> },
+  { k: 'labels', label: 'ป้าย', icon: <IconTag /> },
+  { k: 'scan', label: 'สแกน', icon: <IconScan /> },
   { k: 'search', label: 'ค้นหา', icon: <IconSearch size={18} /> },
   { k: 'map', label: 'ผัง', icon: <IconPin size={18} /> },
 ]
@@ -32,15 +34,17 @@ interface Props {
 }
 
 /**
- * โหมดมือถือสำหรับหน้างาน: เมนูล่าง 4 อย่าง (สแกน รับของ ค้นหา ผัง 2D) ปุ่มใหญ่ ใช้มือเดียว
+ * โหมดมือถือสำหรับหน้างาน: เมนูล่าง 5 อย่าง (รับของ ป้าย สแกน ค้นหา ผังคลัง 2D รายช่อง) ปุ่มใหญ่ ใช้มือเดียว
  * ไม่โหลดผัง 3D (ประหยัดแบตและเน็ต) · ผัง 3D ปรับผัง หลังบ้าน ใช้บนจอคอม
  */
 export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Props) {
   const { api, ready, error, settings } = useWms()
-  const [tab, setTab] = useState<MobileTab>(deepLink?.kind === 'grn' ? 'receive' : 'scan')
+  const [tab, setTab] = useState<MobileTab>(deepLink?.kind === 'grn' ? 'labels' : 'scan')
   const [scan, setScan] = useState<{ code: string | null; key: number }>({ code: deepLink?.kind === 'lpn' ? deepLink.code : null, key: 0 })
   const [grnId, setGrnId] = useState<string | null>(null)
-  const [target, setTarget] = useState<string | null>(null)
+  // ผังคลัง: โซน/ช่องที่เปิดจากหน้าค้นหา และกล่องที่ไฮไลต์
+  const [focus, setFocus] = useState<PlanFocus | null>(null)
+  const [highlight, setHighlight] = useState<ReadonlySet<string> | null>(null)
   const [menu, setMenu] = useState(false)
   // กล่องที่อยู่ในคลัง ใช้ร่วมกันระหว่างหน้าค้นหาและผัง
   const [lpns, setLpns] = useState<Lpn[] | null>(null)
@@ -81,14 +85,16 @@ export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Pr
   const go = (t: MobileTab) => {
     setTab(t)
     setMenu(false)
+    if (t === 'map') setHighlight(null)
     if (t === 'search' || t === 'map') void loadLpns()
   }
   const scanLpn = (code: string) => {
     setScan((s) => ({ code, key: s.key + 1 }))
     setTab('scan')
   }
-  const showZone = (zoneId: string) => {
-    setTarget(zoneId)
+  const showZone = (zoneId: string, lpnNos: string[], code?: string) => {
+    setFocus((f) => ({ zoneId, lpnNo: lpnNos.length === 1 ? lpnNos[0] : null, code: code ?? null, n: (f?.n ?? 0) + 1 }))
+    setHighlight(lpnNos.length ? new Set(lpnNos) : null)
     setTab('map')
   }
 
@@ -138,7 +144,7 @@ export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Pr
 
       <main className={`min-h-0 flex-1 ${tab === 'map' ? 'overflow-hidden' : 'overflow-y-auto'}`} onClick={() => menu && setMenu(false)}>
         {tab === 'map' ? (
-          <MobileMap layout={layout} lpns={lpns} target={target} onTarget={setTarget} />
+          <WarehousePlan layout={layout} lpns={lpns} error={lpnError} focus={focus} highlight={highlight} onOpenLpn={scanLpn} />
         ) : (
         <div className="flex flex-col gap-3 p-3">
           {api.kind === 'demo' && <Alert tone="info">หน้าสาธิต: ข้อมูลเก็บในเครื่องนี้เท่านั้น</Alert>}
@@ -148,17 +154,16 @@ export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Pr
           ) : (
             <>
               {tab === 'scan' && <ScanTab key={scan.key} initialCode={scan.code} />}
-              {tab === 'receive' &&
-                (grnId ? (
-                  <>
-                    <BigButton tone="secondary" onClick={() => setGrnId(null)}>
-                      ← รับของรายการใหม่
-                    </BigButton>
-                    <LabelsTab grnId={grnId} onSelectGrn={setGrnId} />
-                  </>
-                ) : (
-                  <ReceiveTab onCreated={setGrnId} />
-                ))}
+              {tab === 'receive' && (
+                <ReceiveTab
+                  onCreated={(id) => {
+                    // รับเสร็จ ⇒ ไปหน้าป้ายของ GRN นี้ทันที
+                    setGrnId(id)
+                    setTab('labels')
+                  }}
+                />
+              )}
+              {tab === 'labels' && <LabelsTab grnId={grnId} onSelectGrn={setGrnId} />}
               {tab === 'search' && (
                 <MobileSearch layout={layout} lpns={lpns} error={lpnError} onRefresh={loadLpns} onScanLpn={scanLpn} onShowZone={showZone} />
               )}
@@ -168,7 +173,7 @@ export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Pr
         )}
       </main>
 
-      <nav className="grid shrink-0 grid-cols-4 border-t border-slate-200 bg-white pb-[env(safe-area-inset-bottom)]" aria-label="เมนูหน้างาน">
+      <nav className="grid shrink-0 grid-cols-5 border-t border-slate-200 bg-white pb-[env(safe-area-inset-bottom)]" aria-label="เมนูหน้างาน">
         {TABS.map((t) => (
           <button
             key={t.k}

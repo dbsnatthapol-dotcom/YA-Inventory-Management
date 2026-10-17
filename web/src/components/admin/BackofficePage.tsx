@@ -8,7 +8,6 @@ import { PERMS, type FgItem, type PermRow, type StaffBrief, type StorageLoc } fr
 import { resolvePart } from '../../wms/partCodes'
 import { useWms } from '../../wms/useWms'
 import { Alert, BigButton, Card, Field, inputCls, Pill, Segmented, tdCls, thCls } from '../wms/ui'
-import { StockImport } from '../wms/StockImport'
 import { MasterImport } from './MasterImport'
 import { UsersPage } from './UsersPage'
 
@@ -25,7 +24,7 @@ export function BackofficePage({ zones }: { zones: Zone[] }) {
     ...(enabled ? ([['users', 'ผู้ใช้งาน & ประวัติเข้าใช้']] as [Tab, string][]) : []),
     ...(isAdmin ? ([['perms', 'สิทธิ์ตามบทบาท'], ['heads', 'หัวหน้าโซน']] as [Tab, string][]) : []),
     ...(isAdmin || can('master.edit') ? ([['master', 'ข้อมูลหลัก']] as [Tab, string][]) : []),
-    ...(isAdmin || can('master.edit') || can('scan.count') || can('scan.adjust.approve') ? ([['import', 'นำเข้าข้อมูล (Excel)']] as [Tab, string][]) : []),
+    ...(isAdmin || can('master.edit') ? ([['import', 'นำเข้าข้อมูล (Excel)']] as [Tab, string][]) : []),
     ...(isAdmin ? ([['system', 'โหมดระบบ']] as [Tab, string][]) : []),
   ]
   const [tab, setTab] = useState<Tab>(tabs[0]?.[0] ?? 'master')
@@ -54,7 +53,7 @@ export function BackofficePage({ zones }: { zones: Zone[] }) {
             {tab === 'perms' && <PermissionsTab />}
             {tab === 'heads' && <ZoneHeadsTab zones={zones} />}
             {tab === 'master' && <MasterTab zones={zones} />}
-            {tab === 'import' && <ImportTab zones={zones} />}
+            {tab === 'import' && <ImportTab />}
             {tab === 'system' && <SystemTab />}
           </div>
         )}
@@ -229,25 +228,26 @@ function ZoneHeadsTab({ zones }: { zones: Zone[] }) {
 }
 
 /**
- * ศูนย์นำเข้าข้อมูลจาก Excel (แบบฟอร์มของระบบ): Part / รหัส UAM, BOM ชุดวงล้อ, ยอดคงเหลือจากการตรวจนับ
- * ทุกแบบ: ดาวน์โหลดแบบฟอร์ม (มีข้อมูลปัจจุบัน) → กรอก → อัปโหลด → ตรวจทีละแถว → บันทึก/ส่งอนุมัติ
+ * นำเข้าข้อมูลหลักจาก Excel (แบบฟอร์มของระบบ): Part / รหัส UAM, BOM ชุดวงล้อ
+ * ดาวน์โหลดแบบฟอร์ม (มีข้อมูลปัจจุบัน) → กรอก → อัปโหลด → ตรวจทีละแถว → บันทึก
+ * ยอดคงเหลือ (ตรวจนับ) อยู่ที่เดียว: งานคลัง › 7 ตรวจนับ & อนุมัติ
  */
-function ImportTab({ zones }: { zones: Zone[] }) {
-  const { can } = useWms()
-  const { profile, enabled } = useAuth()
-  const master = !enabled || profile?.role === 'admin' || can('master.edit')
-  const [sub, setSub] = useState<'parts' | 'bom' | 'stock'>(master ? 'parts' : 'stock')
+function ImportTab() {
+  const [sub, setSub] = useState<'parts' | 'bom'>('parts')
   return (
     <>
       <Segmented
         label="นำเข้าข้อมูล"
         value={sub}
         onChange={setSub}
-        options={[...(master ? ([['parts', 'Part / รหัส UAM'], ['bom', 'BOM ชุดวงล้อ']] as ['parts' | 'bom', string][]) : []), ['stock', 'ยอดคงเหลือ (ตรวจนับ)']]}
+        options={[
+          ['parts', 'Part / รหัส UAM'],
+          ['bom', 'BOM ชุดวงล้อ'],
+        ]}
       />
       {sub === 'parts' && <MasterImport kind="parts" />}
       {sub === 'bom' && <MasterImport kind="bom" />}
-      {sub === 'stock' && <StockImport zones={zones} />}
+      <p className="text-sm text-slate-500">ยอดคงเหลือ (ตรวจนับด้วย Excel) อยู่ที่ งานคลัง › 7 ตรวจนับ &amp; อนุมัติ · ที่เดียวกับคิวอนุมัติปรับยอด</p>
     </>
   )
 }
@@ -595,7 +595,8 @@ function LocationsEditor({ zones }: { zones: Zone[] }) {
   const [zoneId, setZoneId] = useState(zones.find((z) => z.kind === 'storage')?.id ?? '')
   const [code, setCode] = useState('')
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
-  const locs = master.locations.filter((l) => l.zoneId === zoneId)
+  // ช่องตามผัง + ช่องพิเศษ (ไม่แสดงช่องที่ผังเลิกใช้แล้ว)
+  const locs = master.locations.filter((l) => l.zoneId === zoneId && (l.active || l.blocked || l.manual))
   const zone = zones.find((z) => z.id === zoneId)
 
   const save = async (l: StorageLoc, text: string) => {
@@ -609,7 +610,10 @@ function LocationsEditor({ zones }: { zones: Zone[] }) {
   }
 
   return (
-    <Card title="ช่องเก็บ" eyebrow="รหัสสากล: โซน-ช่อง-ชั้น (RK-A-01-1) · เต็นท์ใช้ โซน-บล็อก (TENT-T-01) · ปิดช่องที่ใช้ไม่ได้ ระบบจะไม่แนะนำ">
+    <Card title="ช่องเก็บ" eyebrow="รหัสสากล: โซน-ช่อง-ชั้น (RK-A-01-1) · เต็นท์ใช้ โซน-บล็อก (TENT-T-01)">
+      <p className="text-sm text-slate-600">
+        จำนวนช่องตามผัง เพิ่ม/ลดที่หน้า <b>ปรับผัง</b> · หน้านี้ใช้ <b>ปิดช่องที่ชำรุด</b> (ระบบจะไม่แนะนำให้วางของ) และ <b>เพิ่มช่องพิเศษ</b> ที่ไม่อยู่ในผัง · บันทึกผังจะไม่เปิดช่องที่ปิดไว้ และไม่ลบช่องพิเศษ
+      </p>
       {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
       <div className="flex flex-wrap items-end gap-2">
         <Field label="โซน">
@@ -623,30 +627,31 @@ function LocationsEditor({ zones }: { zones: Zone[] }) {
               ))}
           </select>
         </Field>
-        <Field label="เพิ่มช่องใหม่">
+        <Field label="เพิ่มช่องพิเศษ">
           <input id="loc-code" className={`${inputCls} font-mono uppercase`} value={code} onChange={(e) => setCode(e.target.value)} placeholder={`${zone?.code ?? 'RK-A'}-25-1`} />
         </Field>
         <BigButton
           disabled={!code.trim() || !zoneId}
           onClick={() =>
-            void save({ code: code.trim().toUpperCase(), zoneId, kind: zone?.kind === 'tent' ? 'floor' : 'bin', active: true }, `เพิ่มช่อง ${code.trim().toUpperCase()} แล้ว`).then(() => setCode(''))
+            void save({ code: code.trim().toUpperCase(), zoneId, kind: zone?.kind === 'tent' ? 'floor' : 'bin', active: true }, `เพิ่มช่องพิเศษ ${code.trim().toUpperCase()} แล้ว`).then(() => setCode(''))
           }
         >
-          เพิ่มช่อง
+          เพิ่มช่องพิเศษ
         </BigButton>
       </div>
       <p className="text-sm text-slate-500">
-        {locs.length} ช่อง · ใช้งาน {locs.filter((l) => l.active).length}
+        {locs.length} ช่อง · ใช้งาน {locs.filter((l) => l.active).length} · ปิด (ชำรุด) {locs.filter((l) => l.blocked).length} · ช่องพิเศษ {locs.filter((l) => l.manual).length}
       </p>
       <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
         {locs.map((l) => (
           <button
             key={l.code}
             onClick={() => void save({ ...l, active: !l.active }, `${l.active ? 'ปิด' : 'เปิด'}ช่อง ${l.code} แล้ว`)}
-            title={`${LOC_KIND[l.kind]} · แตะเพื่อ${l.active ? 'ปิด' : 'เปิด'}`}
-            className={`rounded-md px-2 py-1.5 font-mono text-xs ring-1 ${l.active ? 'bg-white text-slate-700 ring-slate-200 hover:bg-sky-50' : 'bg-slate-100 text-slate-400 line-through ring-slate-200'}`}
+            title={`${LOC_KIND[l.kind]}${l.manual ? ' · ช่องพิเศษ' : ''} · แตะเพื่อ${l.active ? 'ปิด (ชำรุด / ห้ามใช้)' : 'เปิดใช้'}`}
+            className={`rounded-md px-2 py-1.5 font-mono text-xs ring-1 ${l.active ? 'bg-white text-slate-700 ring-slate-200 hover:bg-sky-50' : 'bg-slate-100 text-slate-400 line-through ring-slate-200'} ${l.manual ? 'ring-violet-300' : ''}`}
           >
             {l.code}
+            {l.manual && <span className="ml-1 rounded bg-violet-100 px-1 font-sans text-[10px] text-violet-700 no-underline">พิเศษ</span>}
           </button>
         ))}
       </div>

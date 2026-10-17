@@ -44,5 +44,10 @@ const ALLOWED: Record<Action, Role[]> = {
   viewAccessLog: ['admin', 'manager'],
 }
 
+/** คนหน้างาน (คลัง / MI3 / ผลิต) เปิดเจอผังคลัง 2D รายช่องก่อน · ผู้จัดการ วิศวกร วางแผน ผู้ดูแล และโหมดสาธิต เปิดเจอผังโรงงาน 3D */
+const PLAN_FIRST: Role[] = ['warehouse', 'mi3', 'production']
+
+export const homePage = (role: Role | null): 'plan' | 'map' => (role && PLAN_FIRST.includes(role) ? 'plan' : 'map')
+
 /** role = null คือโหมดสาธิต (ไม่ได้ต่อ Supabase) — เปิดทุกอย่างเพื่อทดลองใช้ */
 export const can = (role: Role | null, action: Action) => role === null || ALLOWED[action].includes(role)

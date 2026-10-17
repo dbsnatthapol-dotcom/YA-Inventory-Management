@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent } from 'react'
 import { planRack, RACK } from '../../data/warehouse'
 import { ZONE_STYLE } from '../../data/zoneStyle'
-import type { ZoneContents } from '../../inventory/reports'
+import type { ZoneContents } from '../../wms/mapStock'
 import { AISLE_WIDTH, type FloorPaint } from '../../lib/floorPlan'
 import { clampToFloor, distanceToRect, snap, type ZoneIssue, type ZonePatch } from '../../lib/layoutEdit'
 import type { Floor, NavNode, Zone } from '../../types/layout'
@@ -37,6 +37,16 @@ interface Props {
   route?: [number, number][][]
   /** หมุดบนผัง เช่น จุดเริ่ม / ปลายทาง */
   marks?: { x: number; z: number; color: string; label: string }[]
+  /** วาดภายในโซนเอง (เช่น ช่องเก็บรายช่อง) แทนแถว rack · คืน null = แบบเดิม · unit = ขนาดอ้างอิงตามระดับซูม */
+  renderZone?: (zone: Zone, unit: number) => ReactNode
+  /** แตะผัง (ไม่ได้ลาก): โซนที่แตะ + จุดที่แตะ (พิกัดภายในชั้น) — ใช้แทน onSelect */
+  onTapAt?: (zoneId: string | null, x: number, z: number) => void
+  /** ซูมไปที่กรอบนี้ทุกครั้งที่ n เปลี่ยน (เช่น เลือกผลค้นหา) */
+  zoomTo?: (Rect & { n: number }) | null
+  /** ดูอย่างเดียว (ผังคลัง): ระบายสีตามประเภทโซน ไม่ใช้ลายของโซนที่แก้ไม่ได้ */
+  readOnly?: boolean
+  /** กรอบของปุ่ม "เห็นทั้งชั้น" และมุมมองแรก (ค่าเริ่มต้น = ทั้งพื้นชั้น) เช่น ลานนอกอาคารใช้กรอบรอบเต็นท์ */
+  fitTo?: Rect
 }
 
 const MIN_SIZE = 1
@@ -73,12 +83,22 @@ function resize(orig: Rect, handle: Handle | 'move', dx: number, dz: number, flo
 }
 
 /** ผังพื้นมุมบน: ลากโซนเพื่อย้าย ลากจุดมุม/ขอบเพื่อปรับขนาด ลากพื้นที่ว่างเพื่อเลื่อนผัง หมุนล้อเมาส์เพื่อซูม */
-export function PlanCanvas({ floor, paint, zones, nodes, selectedId, onSelect, onCommit, issues, stock, showAisles, isEditable, route, marks }: Props) {
+export function PlanCanvas({ floor, paint, zones, nodes, selectedId, onSelect, onCommit, issues, stock, showAisles, isEditable, route, marks, renderZone, onTapAt, zoomTo, readOnly, fitTo }: Props) {
   const svg = useRef<SVGSVGElement>(null)
   // นิ้วที่แตะจออยู่ (2 นิ้ว = ซูมแบบบีบ)
   const pointers = useRef(new Map<number, [number, number]>())
-  const fit = useMemo<View>(() => ({ x: -7, y: -6, w: floor.width + 14, h: floor.depth + 13 }), [floor.width, floor.depth])
+  const fit = useMemo<View>(
+    () => (fitTo ? { x: fitTo.x - 6, y: fitTo.z - 6, w: fitTo.width + 12, h: fitTo.depth + 12 } : { x: -7, y: -6, w: floor.width + 14, h: floor.depth + 13 }),
+    [fitTo, floor.width, floor.depth],
+  )
   const [view, setView] = useState<View>(fit)
+  // ซูมไปที่กรอบที่สั่ง (เปลี่ยนตาม n)
+  const [zoomN, setZoomN] = useState<number | null>(null)
+  if (zoomTo && zoomTo.n !== zoomN) {
+    setZoomN(zoomTo.n)
+    const m = Math.max(3, Math.max(zoomTo.width, zoomTo.depth) * 0.25)
+    setView({ x: zoomTo.x - m, y: zoomTo.z - m, w: zoomTo.width + m * 2, h: zoomTo.depth + m * 2 })
+  }
   const [drag, setDrag] = useState<Drag | null>(null)
   const [draft, setDraft] = useState<(Rect & { id: string }) | null>(null)
   const unit = view.w / 100 // ขนาดอ้างอิงของเส้น/ตัวอักษรตามระดับซูม
@@ -168,7 +188,10 @@ export function PlanCanvas({ floor, paint, zones, nodes, selectedId, onSelect, o
       if (pointers.current.size === 0) setDrag(null)
       return
     }
-    if (drag?.kind === 'pan' && !drag.moved) onSelect(drag.tap ?? null)
+    if (drag?.kind === 'pan' && !drag.moved) {
+      if (onTapAt) onTapAt(drag.tap ?? null, ...toPlan(e.clientX, e.clientY))
+      else onSelect(drag.tap ?? null)
+    }
     if (drag?.kind === 'zone' && draft && draft.id === drag.id) {
       const o = drag.orig
       if (draft.x !== o.x || draft.z !== o.z || draft.width !== o.width || draft.depth !== o.depth)
@@ -214,6 +237,10 @@ export function PlanCanvas({ floor, paint, zones, nodes, selectedId, onSelect, o
             <rect width="0.8" height="0.8" fill="#f1f5f9" />
             <rect width="0.12" height="0.8" fill="#cbd5e1" />
           </pattern>
+          <pattern id="slot-blocked" width="0.45" height="0.45" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <rect width="0.45" height="0.45" fill="#e2e8f0" />
+            <rect width="0.14" height="0.45" fill="#64748b" />
+          </pattern>
         </defs>
 
         {/* พื้นชั้น + ผนัง */}
@@ -250,8 +277,11 @@ export function PlanCanvas({ floor, paint, zones, nodes, selectedId, onSelect, o
             zone={zone}
             selected={zone.id === selectedId}
             editable={isEditable(zone)}
+            readOnly={readOnly}
             issues={issues.get(zone.id) ?? []}
             stock={stock.get(zone.id)}
+            custom={renderZone?.(zone, unit)}
+            unit={unit}
             onDown={(e) => startZone(e, zone, 'move')}
           />
         ))}
@@ -263,6 +293,7 @@ export function PlanCanvas({ floor, paint, zones, nodes, selectedId, onSelect, o
             access={nodes.find((n) => n.id === selected.accessNodeId)}
             unit={unit}
             editable={isEditable(selected)}
+            showSize={!readOnly}
             onHandle={(e, h) => startZone(e, selected, h)}
           />
         )}
@@ -321,21 +352,32 @@ function PlanZone({
   zone,
   selected,
   editable,
+  readOnly,
   issues,
   stock,
+  custom,
+  unit,
   onDown,
 }: {
   zone: Zone
   selected: boolean
   editable: boolean
+  readOnly?: boolean
   issues: ZoneIssue[]
   stock?: ZoneContents
+  /** ภายในโซนที่วาดเอง (ช่องเก็บ) · ป้ายชื่อเล็กลงตามการซูมเพื่อไม่บังช่อง */
+  custom?: ReactNode
+  unit: number
   onDown: (e: ReactPointerEvent) => void
 }) {
   const style = PLAN[zone.kind]
   const error = issues.some((i) => i.level === 'error')
-  const locked = !editable
-  const label = Math.min(1.6, zone.width / 5, zone.depth / 2.2)
+  const locked = !editable && !readOnly
+  const hasCustom = custom !== undefined && custom !== null
+  // วาดช่องเก็บเอง: ป้ายชื่อไปอยู่กลางทางเดินในโซน (ไม่บังช่อง) และเล็กลงเมื่อซูมเข้า
+  const spot = useMemo(() => (hasCustom ? labelSpot(zone) : null), [hasCustom, zone])
+  const label = Math.min(1.6, zone.width / 5, zone.depth / 2.2, hasCustom ? unit * 2.2 : Infinity, spot ? spot.fit : Infinity)
+  const [lx, lz] = spot ? [spot.x, spot.z - label * 0.35] : [zone.x + zone.width / 2, zone.z + zone.depth / 2]
   const qty = stock?.totalQty ?? 0
 
   // รายละเอียดภายใน: แถว rack / สายพานไลน์ประกอบ
@@ -373,14 +415,14 @@ function PlanZone({
         height={zone.depth}
         fill={locked ? 'url(#locked)' : style.fill}
         stroke={error ? '#dc2626' : selected ? '#1d4ed8' : style.stroke}
-        strokeWidth={selected || error ? 0.28 : 0.16}
+        strokeWidth={selected || error ? Math.min(0.28, Math.max(0.08, unit * 0.45)) : Math.min(0.16, Math.max(0.05, unit * 0.25))}
         strokeDasharray={error ? '0.8 0.4' : undefined}
         opacity={0.95}
       />
-      {inner}
+      {hasCustom ? custom : inner}
       <text
-        x={zone.x + zone.width / 2}
-        y={zone.z + zone.depth / 2}
+        x={lx}
+        y={lz}
         textAnchor="middle"
         dominantBaseline="middle"
         fontSize={label}
@@ -394,8 +436,8 @@ function PlanZone({
       </text>
       {zone.depth > 3 && zone.width > 5 && (
         <text
-          x={zone.x + zone.width / 2}
-          y={zone.z + zone.depth / 2 + label * 1.05}
+          x={lx}
+          y={lz + label * 1.05}
           textAnchor="middle"
           dominantBaseline="middle"
           fontSize={label * 0.6}
@@ -411,17 +453,39 @@ function PlanZone({
   )
 }
 
+/**
+ * จุดวางป้ายชื่อโซนที่วาดช่องเก็บ: กลางทางเดินที่กว้างที่สุดระหว่างแถวพาเลท (fit = ขนาดตัวอักษรที่ใส่ได้)
+ * ไม่มีทางเดินในโซน (แถวเดียวชิดขอบ) = กลางโซน
+ */
+function labelSpot(zone: Zone): { x: number; z: number; fit: number } | null {
+  if (zone.kind !== 'storage') return null
+  const plan = planRack(zone.width, zone.depth)
+  const edges = [0, ...plan.rows.flatMap((r) => [r.offset, r.offset + r.units * RACK.singleDepth]), plan.span]
+  let best = { v: 0, room: 0 }
+  for (let i = 0; i + 1 < edges.length; i += 2) {
+    const room = edges[i + 1] - edges[i]
+    if (room > best.room) best = { v: (edges[i] + edges[i + 1]) / 2, room }
+  }
+  if (best.room < 0.8) return null
+  return zone.width >= zone.depth
+    ? { x: zone.x + plan.length / 2, z: zone.z + best.v, fit: best.room / 2.2 }
+    : { x: zone.x + best.v, z: zone.z + plan.length / 2, fit: best.room / (zone.code.length * 0.62) }
+}
+
 function SelectionOverlay({
   zone,
   access,
   unit,
   editable,
+  showSize,
   onHandle,
 }: {
   zone: Zone
   access?: NavNode
   unit: number
   editable: boolean
+  /** แสดงขนาดโซน (หน้าปรับผัง) */
+  showSize: boolean
   onHandle: (e: ReactPointerEvent, h: Handle) => void
 }) {
   const hs = Math.max(0.5, unit * 1.1)
@@ -439,7 +503,8 @@ function SelectionOverlay({
   const edge: [number, number] | null = access
     ? [Math.min(Math.max(access.x, zone.x), zone.x + zone.width), Math.min(Math.max(access.z, zone.z), zone.z + zone.depth)]
     : null
-  const font = Math.max(0.9, unit * 1.3)
+  // ตัวอักษร/จุดเล็กลงเมื่อซูมเข้า (ไม่บังช่องเก็บ) · ทั้งชั้นยังอ่านได้
+  const font = Math.max(0.35, unit * 1.3)
   return (
     <g>
       {access && edge && distanceToRect(access.x, access.z, zone) > 0.05 && (
@@ -447,30 +512,34 @@ function SelectionOverlay({
       )}
       {access && (
         <g>
-          <circle cx={access.x} cy={access.z} r={Math.max(0.6, unit * 0.8)} fill="#16a34a" stroke="#ffffff" strokeWidth={0.2} />
-          <text x={access.x} y={access.z - Math.max(1, unit * 1.4)} textAnchor="middle" fontSize={font * 0.85} fill="#15803d" fontWeight={600} stroke="#ffffff" strokeWidth={0.25} paintOrder="stroke">
+          <circle cx={access.x} cy={access.z} r={Math.max(0.25, unit * 0.8)} fill="#16a34a" stroke="#ffffff" strokeWidth={Math.max(0.25, unit * 0.8) * 0.3} />
+          <text x={access.x} y={access.z - Math.max(0.45, unit * 1.4)} textAnchor="middle" fontSize={font * 0.85} fill="#15803d" fontWeight={600} stroke="#ffffff" strokeWidth={font * 0.25} paintOrder="stroke">
             จุดหยิบของ
           </text>
         </g>
       )}
       {/* ขนาด */}
-      <text x={zone.x + zone.width / 2} y={zone.z - font * 0.6} textAnchor="middle" fontSize={font} fill="#1d4ed8" fontWeight={700} stroke="#ffffff" strokeWidth={0.3} paintOrder="stroke">
-        {zone.width} ม.
-      </text>
-      <text
-        x={zone.x - font * 0.6}
-        y={zone.z + zone.depth / 2}
-        textAnchor="middle"
-        fontSize={font}
-        fill="#1d4ed8"
-        fontWeight={700}
-        stroke="#ffffff"
-        strokeWidth={0.3}
-        paintOrder="stroke"
-        transform={`rotate(-90 ${zone.x - font * 0.6} ${zone.z + zone.depth / 2})`}
-      >
-        {zone.depth} ม.
-      </text>
+      {showSize && (
+        <>
+          <text x={zone.x + zone.width / 2} y={zone.z - font * 0.6} textAnchor="middle" fontSize={font} fill="#1d4ed8" fontWeight={700} stroke="#ffffff" strokeWidth={font * 0.3} paintOrder="stroke">
+            {zone.width} ม.
+          </text>
+          <text
+            x={zone.x - font * 0.6}
+            y={zone.z + zone.depth / 2}
+            textAnchor="middle"
+            fontSize={font}
+            fill="#1d4ed8"
+            fontWeight={700}
+            stroke="#ffffff"
+            strokeWidth={font * 0.3}
+            paintOrder="stroke"
+            transform={`rotate(-90 ${zone.x - font * 0.6} ${zone.z + zone.depth / 2})`}
+          >
+            {zone.depth} ม.
+          </text>
+        </>
+      )}
       {editable &&
         HANDLES.map((h) => (
           <rect

@@ -99,7 +99,7 @@ export function IssueTab() {
         )}
       </div>
 
-      {!canIssue && mode !== 'report' && <Alert tone="warn">บัญชีนี้ดูได้อย่างเดียว · ต้องมีสิทธิ์ "เบิก / ตัดยอด (ISSUE)" จึงจะบันทึกได้</Alert>}
+      {!canIssue && mode !== 'report' && <Alert tone="warn">บัญชีนี้ดูได้อย่างเดียว · ต้องมีสิทธิ์ "เบิก" จึงจะบันทึกได้</Alert>}
 
       {mode === 'sub' && <SubForm key={`${day}-${model}`} day={day} model={model} stock={stock} reqs={reqs} canIssue={canIssue} onDone={refresh} />}
       {mode === 'fm005' && <Fm005Form key={`${day}-${model}`} day={day} model={model} stock={stock} reqs={reqs} canIssue={canIssue} onDone={refresh} />}

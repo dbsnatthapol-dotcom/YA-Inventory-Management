@@ -1,10 +1,10 @@
 import { BRAND } from '../../data/brand'
 import { palletsFor, STORAGE_LABEL } from '../../data/warehouse'
 import { zonePlan } from '../../wms/locations'
-import type { ZoneContents } from '../../inventory/reports'
+import type { ZoneContents } from '../../wms/mapStock'
 import { clampToFloor, rotated, zoneIssues, type ZonePatch } from '../../lib/layoutEdit'
 import type { FactoryLayout, Zone } from '../../types/layout'
-import { inputCls } from '../inventory/format'
+import { inputCls } from '../../lib/format'
 
 const KIND_LABEL: Partial<Record<Zone['kind'], string>> = {
   storage: 'โซนเก็บ',

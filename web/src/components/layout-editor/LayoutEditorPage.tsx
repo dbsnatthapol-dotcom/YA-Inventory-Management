@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { BRAND } from '../../data/brand'
 import { ZONE_STYLE } from '../../data/zoneStyle'
-import type { ZoneContents } from '../../inventory/reports'
+import type { ZoneContents } from '../../wms/mapStock'
 import { floorPaint } from '../../lib/floorPlan'
 import { errorText } from '../../wms/api'
 import {
