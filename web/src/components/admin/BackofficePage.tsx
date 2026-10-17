@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ROLE_LABEL, type Role } from '../../auth/staff'
 import { useAuth } from '../../auth/useAuth'
 import { BRAND } from '../../data/brand'
 import type { Zone } from '../../types/layout'
+import { fmtTime } from '../../lib/format'
 import { errorText } from '../../wms/api'
-import { PERMS, type FgItem, type PermRow, type StaffBrief, type StorageLoc } from '../../wms/types'
+import { ARCHIVE_CONFIRM, ENV_TABLES, envLabel, PERMS, type EnvSummary, type FgItem, type PermRow, type StaffBrief, type StorageLoc } from '../../wms/types'
 import { resolvePart } from '../../wms/partCodes'
 import { useWms } from '../../wms/useWms'
 import { Alert, BigButton, Card, Field, inputCls, Pill, Segmented, tdCls, thCls } from '../wms/ui'
@@ -661,21 +662,46 @@ function LocationsEditor({ zones }: { zones: Zone[] }) {
 
 function SystemTab() {
   const { api, settings, master, reload } = useWms()
-  const [confirm, setConfirm] = useState<'live' | 'trial' | 'round' | null>(null)
+  const [confirm, setConfirm] = useState<'live' | 'trial' | null>(null)
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
+  const [summary, setSummary] = useState<EnvSummary | null>(null)
   const types = useMemo(() => [...new Set(master.parts.map((p) => p.type).filter(Boolean))].sort() as string[], [master.parts])
 
-  const act = async (fn: () => Promise<unknown>, text: string) => {
+  const loadSummary = useCallback(async () => {
     try {
-      await fn()
-      await reload()
-      setMsg({ tone: 'ok', text })
+      setSummary(await api.envSummary())
     } catch (e) {
       setMsg({ tone: 'bad', text: errorText(e) })
+    }
+  }, [api])
+  useEffect(() => {
+    let alive = true
+    api.envSummary().then((s) => alive && setSummary(s)).catch((e) => alive && setMsg({ tone: 'bad', text: errorText(e) }))
+    return () => {
+      alive = false
+    }
+  }, [api])
+
+  /** ทำงานแล้วโหลดค่าตั้ง + จำนวนข้อมูลใหม่ · คืน true เมื่อสำเร็จ */
+  const run = async (fn: () => Promise<string>) => {
+    try {
+      const text = await fn()
+      await reload()
+      await loadSummary()
+      setMsg({ tone: 'ok', text })
+      return true
+    } catch (e) {
+      setMsg({ tone: 'bad', text: errorText(e) })
+      return false
     } finally {
       setConfirm(null)
     }
   }
+  const act = (fn: () => Promise<unknown>, text: string) =>
+    run(async () => {
+      await fn()
+      return text
+    })
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -691,10 +717,10 @@ function SystemTab() {
         <p className="text-sm text-slate-600">
           โหมดทดลองเก็บข้อมูลแยกจากของจริง ทุกเครื่องเห็นโหมดเดียวกัน · ป้ายที่พิมพ์ในโหมดทดลองมีคำว่า "ทดลอง" · เลขเอกสารของสองโหมดนับแยกกัน
         </p>
-        {confirm === 'live' || confirm === 'trial' ? (
+        {confirm ? (
           <div className="flex flex-col gap-2 rounded-lg bg-amber-50 p-3 ring-1 ring-amber-200">
             <p className="text-sm font-medium text-amber-900">
-              {confirm === 'live' ? 'เปลี่ยนเป็นใช้งานจริง: ทุกคนจะเห็นข้อมูลจริง (เริ่มจากว่าง) ข้อมูลทดลองถูกเก็บไว้ ไม่ได้ย้ายมา' : 'กลับไปโหมดทดลอง: ข้อมูลจริงยังอยู่ครบ แต่จะซ่อนจนกว่าจะเปลี่ยนกลับ'}
+              {confirm === 'live' ? 'เปลี่ยนเป็นใช้งานจริง: ทุกคนจะเห็นข้อมูลของโหมดใช้งานจริง ข้อมูลทดลองถูกเก็บไว้ ไม่ได้ย้ายมา' : 'กลับไปโหมดทดลอง: ข้อมูลจริงยังอยู่ครบ แต่จะซ่อนจนกว่าจะเปลี่ยนกลับ'}
             </p>
             <div className="flex gap-2">
               <BigButton tone={confirm === 'live' ? 'primary' : 'secondary'} onClick={() => void act(() => api.setSetting('wms_mode', confirm), confirm === 'live' ? 'เปลี่ยนเป็นใช้งานจริงแล้ว' : 'กลับเป็นโหมดทดลองแล้ว')}>
@@ -712,23 +738,25 @@ function SystemTab() {
         )}
       </Card>
 
-      <Card title="เริ่มรอบทดลองใหม่">
-        <p className="text-sm text-slate-600">ล้างหน้าจอทดลองให้เริ่มจากว่าง · ข้อมูลรอบก่อนถูกซ่อนไว้ ไม่ได้ลบทิ้ง (กู้คืนได้) · ข้อมูลใช้งานจริงไม่ถูกแตะ</p>
-        {confirm === 'round' ? (
-          <div className="flex gap-2">
-            <BigButton tone="danger" onClick={() => void act(() => api.newTrialRound(), 'เริ่มรอบทดลองใหม่แล้ว')}>
-              ยืนยัน เริ่มรอบที่ {settings.trialRound + 1}
-            </BigButton>
-            <BigButton tone="ghost" onClick={() => setConfirm(null)}>
-              ยกเลิก
-            </BigButton>
-          </div>
-        ) : (
-          <BigButton tone="secondary" disabled={settings.mode !== 'trial'} onClick={() => setConfirm('round')}>
-            เริ่มรอบทดลองใหม่
-          </BigButton>
-        )}
-      </Card>
+      <ResetCard
+        summary={summary}
+        onArchive={(typed, note) =>
+          run(async () => {
+            const id = await api.archiveEnv(typed, note)
+            return `เก็บข้อมูลโหมด${envLabel(summary?.env ?? '')} เป็นชุดที่ ${id} แล้ว · ทุกเครื่องเริ่มจากคลังว่าง (กู้คืนได้จากรายการด้านล่าง)`
+          })
+        }
+      />
+
+      <ArchivesCard
+        summary={summary}
+        onRestore={(id) =>
+          run(async () => {
+            await api.restoreArchive(id)
+            return `กู้คืนชุดที่ ${id} แล้ว · ข้อมูลกลับมาแสดงในโหมด${envLabel(summary?.env ?? '')}`
+          })
+        }
+      />
 
       <Card title="กลุ่ม part ที่ MI3 ต้องตรวจ" className="lg:col-span-2">
         <p className="text-sm text-slate-600">ใช้กับ Model ที่ตั้งว่าต้องผ่าน MI3 เท่านั้น (K1G ไม่ตรวจ) · แตะเพื่อเปิด/ปิด</p>
@@ -749,5 +777,149 @@ function SystemTab() {
         </div>
       </Card>
     </div>
+  )
+}
+
+const countsText = (counts: EnvSummary['counts']) =>
+  ENV_TABLES.filter(([k]) => counts[k] > 0)
+    .map(([k, label]) => `${label} ${counts[k].toLocaleString('th-TH')}`)
+    .join(' · ')
+
+/** ล้างข้อมูลรายการของโหมดปัจจุบันแบบเก็บถาวร: พิมพ์คำยืนยันก่อน */
+function ResetCard({ summary, onArchive }: { summary: EnvSummary | null; onArchive: (typed: string, note: string) => Promise<boolean> }) {
+  const [open, setOpen] = useState(false)
+  const [typed, setTyped] = useState('')
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const live = summary?.env === 'live'
+  const mode = `โหมด${envLabel(summary?.env ?? '')}`
+  const total = summary ? ENV_TABLES.reduce((s, [k]) => s + summary.counts[k], 0) : 0
+  const close = () => {
+    setOpen(false)
+    setTyped('')
+    setNote('')
+  }
+  const submit = async () => {
+    setBusy(true)
+    const ok = await onArchive(typed, note)
+    setBusy(false)
+    if (ok) close()
+  }
+
+  return (
+    <Card title="ล้างข้อมูล (เก็บถาวร)">
+      <p className="text-sm text-slate-600">ย้ายข้อมูลรายการทั้งหมดของ{summary ? mode : 'โหมดปัจจุบัน'} ไปเก็บเป็นชุด ไม่มีการลบ · กู้คืนได้จากรายการด้านล่าง</p>
+      {summary ? (
+        <dl className="grid grid-cols-1 gap-x-5 text-sm sm:grid-cols-2" aria-label={`ข้อมูลของ${mode}ตอนนี้`}>
+          {ENV_TABLES.map(([k, label]) => (
+            <div key={k} className="flex items-baseline justify-between gap-2 border-b border-slate-100 py-1">
+              <dt className="text-slate-500">{label}</dt>
+              <dd className={`font-semibold tabular-nums ${summary.counts[k] ? 'text-slate-800' : 'text-slate-300'}`}>{summary.counts[k].toLocaleString('th-TH')}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <p className="text-sm text-slate-400">กำลังนับข้อมูล…</p>
+      )}
+      <p className="text-xs text-slate-500">
+        คงไว้ครบ: part, BOM, Model, ผังคลัง, ช่องเก็บ, ผู้ใช้, สิทธิ์ และค่าตั้ง · เลขเอกสารเดินต่อจากเดิม ป้ายเก่าที่ยังติดกล่องจะสแกนแล้ว "ไม่พบ" ไม่ชนกับป้ายใหม่
+      </p>
+      {open ? (
+        <div className={`flex flex-col gap-3 rounded-lg p-3 ring-1 ${live ? 'bg-rose-50 ring-rose-200' : 'bg-amber-50 ring-amber-200'}`}>
+          <p className={`text-sm font-medium ${live ? 'text-rose-900' : 'text-amber-900'}`}>
+            หลังยืนยัน ทุกเครื่องจะเห็นคลังว่างทันที: กล่อง สต็อก ใบเบิก และประวัติของ{mode} หายจากหน้าจอ (เก็บไว้ กู้คืนได้) · ควรทำตอนไม่มีใครรับหรือเบิกของ
+          </p>
+          <Field label="หมายเหตุ (ไม่บังคับ)">
+            <input className={inputCls} value={note} onChange={(e) => setNote(e.target.value)} placeholder="เช่น ข้อมูลฝึกใช้งานก่อนเริ่มจริง" />
+          </Field>
+          <Field label={`พิมพ์ "${ARCHIVE_CONFIRM}" เพื่อยืนยัน`}>
+            <input className={inputCls} value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" aria-describedby="archive-total" />
+          </Field>
+          <p id="archive-total" className="text-xs text-slate-600">
+            จะเก็บ {countsText(summary!.counts)}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <BigButton tone="danger" disabled={busy || typed.trim() !== ARCHIVE_CONFIRM} onClick={() => void submit()}>
+              {busy ? 'กำลังล้าง…' : `ยืนยัน ล้างข้อมูล${mode}`}
+            </BigButton>
+            <BigButton tone="ghost" disabled={busy} onClick={close}>
+              ยกเลิก
+            </BigButton>
+          </div>
+        </div>
+      ) : (
+        <BigButton tone="secondary" className="self-start" disabled={!summary || total === 0} onClick={() => setOpen(true)}>
+          {summary && total === 0 ? 'โหมดนี้ยังไม่มีข้อมูลรายการ' : `ล้างข้อมูล${summary ? mode : ''}…`}
+        </BigButton>
+      )}
+    </Card>
+  )
+}
+
+/** ชุดที่ล้างเก็บไว้: กู้คืนได้เมื่ออยู่ในโหมดเดียวกับตอนล้างและโหมดนั้นยังว่าง */
+function ArchivesCard({ summary, onRestore }: { summary: EnvSummary | null; onRestore: (id: number) => Promise<boolean> }) {
+  const [ask, setAsk] = useState<number | null>(null)
+  const [busy, setBusy] = useState(false)
+  const restore = async (id: number) => {
+    setBusy(true)
+    if (await onRestore(id)) setAsk(null)
+    setBusy(false)
+  }
+
+  return (
+    <Card title="ชุดข้อมูลที่ล้างเก็บไว้" className="lg:col-span-2">
+      {!summary ? (
+        <p className="text-sm text-slate-400">กำลังโหลด…</p>
+      ) : summary.archives.length === 0 ? (
+        <p className="text-sm text-slate-500">ยังไม่เคยล้างข้อมูล</p>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {summary.archives.map((a) => (
+            <li key={a.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <b className="text-slate-800">ชุดที่ {a.id}</b>
+                  <Pill tone={a.fromEnv === 'live' ? 'ok' : 'warn'}>{envLabel(a.fromEnv)}</Pill>
+                  {a.restoredAt && <Pill tone="muted">กู้คืนแล้ว</Pill>}
+                </div>
+                <div className="mt-0.5 text-sm text-slate-600">
+                  ล้างเมื่อ {fmtTime(a.archivedAt)} · โดย {a.archivedCode ?? 'ผู้ดูแลฐานข้อมูล'}
+                  {a.note && ` · ${a.note}`}
+                </div>
+                <div className="text-xs text-slate-500">{countsText(a.counts)}</div>
+                {a.restoredAt && (
+                  <div className="text-xs text-slate-500">
+                    กู้คืนเมื่อ {fmtTime(a.restoredAt)} · โดย {a.restoredCode ?? 'ผู้ดูแลฐานข้อมูล'}
+                  </div>
+                )}
+              </div>
+              {!a.restoredAt &&
+                (ask === a.id ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm text-slate-600">ข้อมูลชุดนี้จะกลับมาแสดงใน{`โหมด${envLabel(a.fromEnv)}`}</span>
+                    <BigButton disabled={busy} onClick={() => void restore(a.id)}>
+                      {busy ? 'กำลังกู้คืน…' : `ยืนยัน กู้คืนชุดที่ ${a.id}`}
+                    </BigButton>
+                    <BigButton tone="ghost" disabled={busy} onClick={() => setAsk(null)}>
+                      ยกเลิก
+                    </BigButton>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-end gap-1">
+                    <BigButton tone="secondary" disabled={!a.restorable} onClick={() => setAsk(a.id)}>
+                      กู้คืน
+                    </BigButton>
+                    {!a.restorable && (
+                      <span className="max-w-[18rem] text-right text-xs text-slate-500">
+                        {a.fromEnv !== summary.env ? `กู้คืนได้เมื่ออยู่ในโหมด${envLabel(a.fromEnv)}` : 'โหมดนี้มีข้อมูลใหม่แล้ว · ล้างข้อมูลปัจจุบันเก็บไว้ก่อนจึงกู้คืนได้'}
+                      </span>
+                    )}
+                  </div>
+                ))}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   )
 }

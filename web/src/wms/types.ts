@@ -45,6 +45,47 @@ export interface Settings {
   qiPartTypes: string[]
 }
 
+/** ตารางข้อมูลรายการที่ล้างได้ (ชื่อตามฐานข้อมูล) · ข้อมูลหลักไม่อยู่ในนี้ */
+export const ENV_TABLES = [
+  ['grns', 'ใบรับสินค้า (GRN)'],
+  ['lpns', 'กล่อง (LPN)'],
+  ['wms_tx', 'รายการเคลื่อนไหว'],
+  ['requisitions', 'ใบเบิก'],
+  ['invoices', 'Invoice'],
+  ['packing_lists', 'Packing list'],
+  ['stock_counts', 'ใบตรวจนับ'],
+  ['stock_closings', 'ปิดยอดเดือน'],
+  ['print_jobs', 'คิวพิมพ์'],
+] as const
+export type EnvTable = (typeof ENV_TABLES)[number][0]
+export type EnvCounts = Record<EnvTable, number>
+
+/** ชุดข้อมูลรายการที่ล้างเก็บไว้ (ไม่ลบ) */
+export interface EnvArchive {
+  id: number
+  /** live หรือ trial-<รอบ> */
+  fromEnv: string
+  counts: EnvCounts
+  note: string | null
+  archivedCode: string | null
+  archivedAt: string
+  restoredCode: string | null
+  restoredAt: string | null
+  /** อยู่ในโหมดเดียวกับตอนล้างและโหมดนั้นยังว่าง */
+  restorable: boolean
+}
+
+export interface EnvSummary {
+  env: string
+  counts: EnvCounts
+  archives: EnvArchive[]
+}
+
+/** คำที่ต้องพิมพ์ก่อนล้างข้อมูล (ตรงกับ admin_archive_env) */
+export const ARCHIVE_CONFIRM = 'ล้างข้อมูล'
+
+export const envLabel = (env: string) => (env === 'live' ? 'ใช้งานจริง' : env.startsWith('trial-') ? `ทดลอง รอบ ${env.slice(6)}` : env)
+
 export type InvoiceStatus = 'open' | 'complete' | 'discrepancy_reported' | 'closed'
 
 export interface Invoice {

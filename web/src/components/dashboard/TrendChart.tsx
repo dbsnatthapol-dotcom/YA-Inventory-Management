@@ -33,12 +33,12 @@ const fmt = (n: number) => Math.round(n).toLocaleString('en-US')
 const compact = (n: number) => (n >= 1000 ? `${+(n / 1000).toFixed(n % 1000 ? 1 : 0)}K` : String(n))
 const dayLabel = (day: string, o: Intl.DateTimeFormatOptions) => new Date(`${day}T00:00:00+07:00`).toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok', ...o })
 
-/** แกน y ตัวเลขกลม ๆ (2–4 ช่วง) */
+/** แกน y ตัวเลขกลม ๆ (2–4 ช่วง) · นับเป็นชิ้น ช่วงจึงไม่ต่ำกว่า 1 (วันที่ไม่มีของ แกนเป็น 0–1 ไม่ซ้ำกัน) */
 function niceTicks(max: number, steps: number) {
   const raw = Math.max(max, 1) / steps
   const mag = 10 ** Math.floor(Math.log10(raw))
   const norm = raw / mag
-  const step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10) * mag
+  const step = Math.max(1, (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10) * mag)
   const top = step * Math.ceil(Math.max(max, 1) / step)
   const ticks: number[] = []
   for (let v = 0; v <= top + 1e-9; v += step) ticks.push(Math.round(v))

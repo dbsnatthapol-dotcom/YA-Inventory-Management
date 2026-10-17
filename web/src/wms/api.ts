@@ -1,5 +1,6 @@
 import type {
   DashActivity,
+  EnvSummary,
   Grn,
   GrnDetail,
   InvoiceStatus,
@@ -72,7 +73,12 @@ export interface WmsApi {
   staffDirectory(): Promise<StaffBrief[]>
   setZoneHead(zoneId: string, staffId: string | null): Promise<void>
   setSetting(key: 'wms_mode' | 'qi_part_types', value: unknown): Promise<void>
-  newTrialRound(): Promise<number>
+  /** ข้อมูลรายการของโหมดปัจจุบัน + ชุดที่ล้างเก็บไว้ */
+  envSummary(): Promise<EnvSummary>
+  /** ล้างข้อมูลรายการของโหมดปัจจุบันไปเก็บเป็นชุดใหม่ (ไม่ลบ) · confirm ต้องเป็น ARCHIVE_CONFIRM · คืนเลขชุด */
+  archiveEnv(confirm: string, note: string): Promise<number>
+  /** กู้คืนชุดที่เก็บไว้กลับเข้าโหมดเดิม (ต้องอยู่ในโหมดนั้นและโหมดนั้นยังว่าง) */
+  restoreArchive(id: number): Promise<void>
   upsertPart(p: PartMaster): Promise<void>
   /** หลังบ้าน: active = false ปิดช่อง (ชำรุด) · true เปิดคืน · รหัสใหม่ = ช่องพิเศษ */
   upsertLocation(l: StorageLoc): Promise<void>

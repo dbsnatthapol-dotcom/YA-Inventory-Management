@@ -24,7 +24,10 @@ import type {
   StaffBrief,
   Tx,
   ZoneHead,
+  EnvArchive,
+  EnvCounts,
 } from './types'
+import { ARCHIVE_CONFIRM, envLabel } from './types'
 
 /**
  * โหมดสาธิต (ไม่ได้ต่อ Supabase): เก็บทุกอย่างในเบราว์เซอร์ และใช้กฎเดียวกับฟังก์ชันในฐานข้อมูล
@@ -45,9 +48,16 @@ interface DemoDb {
   closings: StockClosing[]
   counts: StockCount[]
   printJobs: PrintJob[]
+  /** ชุดที่ล้างเก็บไว้ (ฐานข้อมูลจริงย้ายแถวไป env archive-<เลขชุด>) */
+  archives: Omit<EnvArchive, 'restorable'>[]
+  archiveData: Record<string, DemoData>
   /** เติมกล่องตัวอย่างของหน้าสาธิตไปแล้ว (ไม่เติมซ้ำ) */
   sampled?: boolean
 }
+
+/** ข้อมูลรายการ (ล้างเก็บได้) · ที่เหลือใน DemoDb เป็นข้อมูลหลัก ค่าตั้ง และเลขเอกสาร */
+const DATA_KEYS = ['invoices', 'grns', 'grnLines', 'lpns', 'tx', 'requisitions', 'closings', 'counts', 'printJobs'] as const
+type DemoData = Pick<DemoDb, (typeof DATA_KEYS)[number]>
 
 /** โซนที่มีหัวหน้าโซน (ตรงกับหน้าหลังบ้าน) */
 const HEAD_KINDS = new Set(['storage', 'tent', 'receiving', 'inspection', 'ng', 'assembly', 'utility'])
@@ -65,6 +75,8 @@ function seed(): DemoDb {
     closings: [],
     counts: [],
     printJobs: [],
+    archives: [],
+    archiveData: {},
     invoices: [],
     grns: [],
     grnLines: [],
@@ -156,6 +168,21 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
     const n = (db.counters[key] = (db.counters[key] ?? 0) + 1)
     return `${prefix}-${yymm}-${String(n).padStart(prefix === 'LPN' ? 6 : 4, '0')}`
   }
+  // โหมดสาธิตเก็บข้อมูลชุดเดียว: env ใช้แสดงผลและเทียบตอนกู้คืนเท่านั้น
+  const envNow = () => (db.settings.mode === 'live' ? 'live' : `trial-${db.settings.trialRound}`)
+  const envCounts = (d: DemoData): EnvCounts => ({
+    grns: d.grns.length,
+    lpns: d.lpns.length,
+    wms_tx: d.tx.length,
+    requisitions: d.requisitions.length,
+    invoices: d.invoices.length,
+    // 1 GRN = 1 Packing list (เหมือน create_grn)
+    packing_lists: d.grns.length,
+    stock_counts: d.counts.length,
+    stock_closings: d.closings.length,
+    print_jobs: d.printJobs.length,
+  })
+  const hasData = (c: EnvCounts) => Object.values(c).some((n) => n > 0)
   const log = (t: Partial<Tx> & Pick<Tx, 'kind'>) =>
     db.tx.unshift({
       id: uid(),
@@ -605,11 +632,33 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         if (key === 'wms_mode') db.settings.mode = value === 'live' ? 'live' : 'trial'
         else db.settings.qiPartTypes = value as string[]
       }),
-    newTrialRound: () =>
+    envSummary: async () => {
+      const env = envNow()
+      const counts = envCounts(db)
+      const archives = [...db.archives].reverse().map((a) => ({ ...a, restorable: !a.restoredAt && a.fromEnv === env && !hasData(counts) }))
+      return clone({ env, counts, archives })
+    },
+    archiveEnv: (confirm, note) =>
       commit(() => {
-        // สาธิต: ข้อมูลทดลองถูกซ่อนด้วยการเริ่มชุดใหม่ (ฐานข้อมูลจริงเก็บรอบเก่าไว้)
-        db = { ...db, invoices: [], grns: [], grnLines: [], lpns: [], tx: [], settings: { ...db.settings, trialRound: db.settings.trialRound + 1 } }
-        return db.settings.trialRound
+        if (confirm.trim() !== ARCHIVE_CONFIRM) fail(`พิมพ์คำว่า "${ARCHIVE_CONFIRM}" ให้ตรงเพื่อยืนยัน`)
+        const counts = envCounts(db)
+        if (!hasData(counts)) fail('ไม่มีข้อมูลรายการในโหมดนี้ให้ล้าง')
+        const id = db.archives.reduce((m, a) => Math.max(m, a.id), 0) + 1
+        db.archiveData[id] = Object.fromEntries(DATA_KEYS.map((k) => [k, db[k]])) as unknown as DemoData
+        for (const k of DATA_KEYS) db[k] = []
+        db.archives.push({ id, fromEnv: envNow(), counts, note: note.trim() || null, archivedCode: ME, archivedAt: nowIso(), restoredCode: null, restoredAt: null })
+        return id
+      }),
+    restoreArchive: (id) =>
+      commit(() => {
+        const a = db.archives.find((x) => x.id === id)
+        if (!a) fail('ไม่พบชุดข้อมูลที่เก็บไว้')
+        if (a!.restoredAt) fail('ชุดนี้กู้คืนไปแล้ว')
+        if (a!.fromEnv !== envNow()) fail(`ชุดนี้ล้างมาจากโหมด${envLabel(a!.fromEnv)} · สลับไปโหมดนั้นก่อนจึงจะกู้คืนได้`)
+        if (hasData(envCounts(db))) fail('โหมดนี้มีข้อมูลใหม่แล้ว · ล้างข้อมูลปัจจุบันเก็บไว้ก่อน แล้วจึงกู้คืนชุดนี้')
+        Object.assign(db, db.archiveData[id])
+        delete db.archiveData[id]
+        Object.assign(a!, { restoredCode: ME, restoredAt: nowIso() })
       }),
     upsertPart: (p) =>
       commit(() => {
