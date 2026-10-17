@@ -13,7 +13,8 @@ interface Props {
   error: string | null
   onRefresh: () => Promise<void>
   onScanLpn: (lpnNo: string) => void
-  onShowZone: (zoneId: string) => void
+  /** เปิดผังคลังที่โซน: ไฮไลต์กล่องที่พบ · code = ช่องที่จะเลือก (ค้นด้วยรหัสช่อง) */
+  onShowZone: (zoneId: string, lpnNos: string[], code?: string) => void
 }
 
 /** ค้นหาของในคลัง: พิมพ์หรือสแกน เลขป้าย / Part No. / ชื่อ part / รหัสช่องหรือโซน */
@@ -76,13 +77,25 @@ export function MobileSearch({ layout, lpns, error, onRefresh, onScanLpn, onShow
   )
 }
 
-function HitCard({ hit, onScanLpn, onShowZone }: { hit: StockHit; onScanLpn: (lpnNo: string) => void; onShowZone: (zoneId: string) => void }) {
+function HitCard({ hit, onScanLpn, onShowZone }: { hit: StockHit; onScanLpn: (lpnNo: string) => void; onShowZone: Props['onShowZone'] }) {
   const eyebrow = { lpn: 'ป้ายกล่อง', part: 'Part', place: 'ช่อง / โซน' }[hit.kind]
   return (
     <Card
       eyebrow={eyebrow}
       title={<span className="font-mono">{hit.title}</span>}
-      action={hit.zoneId ? <MapButton onClick={() => onShowZone(hit.zoneId!)} /> : undefined}
+      action={
+        hit.zoneId ? (
+          <MapButton
+            onClick={() =>
+              onShowZone(
+                hit.zoneId!,
+                hit.boxes.map((b) => b.lpnNo),
+                hit.kind === 'place' ? hit.title : undefined,
+              )
+            }
+          />
+        ) : undefined
+      }
     >
       {hit.subtitle && <p className="-mt-2 text-sm text-slate-600">{hit.subtitle}</p>}
       <div className="flex flex-wrap gap-1.5">
@@ -99,7 +112,7 @@ function HitCard({ hit, onScanLpn, onShowZone }: { hit: StockHit; onScanLpn: (lp
                 {[b.lpnNo, `${fmt(b.qty)} ชิ้น`, hit.kind === 'place' ? b.location : null, b.hold ? 'รอ MI3' : null].filter(Boolean).join(' · ')}
               </div>
             </div>
-            {b.zoneId && hit.kind === 'part' && <MapButton small onClick={() => onShowZone(b.zoneId!)} />}
+            {b.zoneId && hit.kind === 'part' && <MapButton small onClick={() => onShowZone(b.zoneId!, [b.lpnNo])} />}
             <button className="min-h-[40px] rounded-lg px-3 text-sm font-semibold text-sky-700 ring-1 ring-sky-200" onClick={() => onScanLpn(b.lpnNo)}>
               เปิด
             </button>

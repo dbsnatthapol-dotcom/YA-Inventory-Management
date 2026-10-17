@@ -11,7 +11,7 @@ import { ReceiveTab } from '../wms/ReceiveTab'
 import { ScanTab } from '../wms/ScanTab'
 import { Alert } from '../wms/ui'
 import type { WmsDeepLink } from '../wms/WarehousePage'
-import { MobileMap } from './MobileMap'
+import { WarehousePlan, type PlanFocus } from '../plan/WarehousePlan'
 import { MobileSearch } from './MobileSearch'
 
 export type MobileTab = 'receive' | 'labels' | 'scan' | 'search' | 'map'
@@ -34,7 +34,7 @@ interface Props {
 }
 
 /**
- * โหมดมือถือสำหรับหน้างาน: เมนูล่าง 5 อย่าง (รับของ ป้าย สแกน ค้นหา ผัง 2D) ปุ่มใหญ่ ใช้มือเดียว
+ * โหมดมือถือสำหรับหน้างาน: เมนูล่าง 5 อย่าง (รับของ ป้าย สแกน ค้นหา ผังคลัง 2D รายช่อง) ปุ่มใหญ่ ใช้มือเดียว
  * ไม่โหลดผัง 3D (ประหยัดแบตและเน็ต) · ผัง 3D ปรับผัง หลังบ้าน ใช้บนจอคอม
  */
 export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Props) {
@@ -42,7 +42,9 @@ export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Pr
   const [tab, setTab] = useState<MobileTab>(deepLink?.kind === 'grn' ? 'labels' : 'scan')
   const [scan, setScan] = useState<{ code: string | null; key: number }>({ code: deepLink?.kind === 'lpn' ? deepLink.code : null, key: 0 })
   const [grnId, setGrnId] = useState<string | null>(null)
-  const [target, setTarget] = useState<string | null>(null)
+  // ผังคลัง: โซน/ช่องที่เปิดจากหน้าค้นหา และกล่องที่ไฮไลต์
+  const [focus, setFocus] = useState<PlanFocus | null>(null)
+  const [highlight, setHighlight] = useState<ReadonlySet<string> | null>(null)
   const [menu, setMenu] = useState(false)
   // กล่องที่อยู่ในคลัง ใช้ร่วมกันระหว่างหน้าค้นหาและผัง
   const [lpns, setLpns] = useState<Lpn[] | null>(null)
@@ -83,14 +85,16 @@ export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Pr
   const go = (t: MobileTab) => {
     setTab(t)
     setMenu(false)
+    if (t === 'map') setHighlight(null)
     if (t === 'search' || t === 'map') void loadLpns()
   }
   const scanLpn = (code: string) => {
     setScan((s) => ({ code, key: s.key + 1 }))
     setTab('scan')
   }
-  const showZone = (zoneId: string) => {
-    setTarget(zoneId)
+  const showZone = (zoneId: string, lpnNos: string[], code?: string) => {
+    setFocus((f) => ({ zoneId, lpnNo: lpnNos.length === 1 ? lpnNos[0] : null, code: code ?? null, n: (f?.n ?? 0) + 1 }))
+    setHighlight(lpnNos.length ? new Set(lpnNos) : null)
     setTab('map')
   }
 
@@ -140,7 +144,7 @@ export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Pr
 
       <main className={`min-h-0 flex-1 ${tab === 'map' ? 'overflow-hidden' : 'overflow-y-auto'}`} onClick={() => menu && setMenu(false)}>
         {tab === 'map' ? (
-          <MobileMap layout={layout} lpns={lpns} target={target} onTarget={setTarget} />
+          <WarehousePlan layout={layout} lpns={lpns} error={lpnError} focus={focus} highlight={highlight} onOpenLpn={scanLpn} />
         ) : (
         <div className="flex flex-col gap-3 p-3">
           {api.kind === 'demo' && <Alert tone="info">หน้าสาธิต: ข้อมูลเก็บในเครื่องนี้เท่านั้น</Alert>}

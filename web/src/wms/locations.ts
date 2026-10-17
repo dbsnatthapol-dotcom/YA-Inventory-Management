@@ -10,7 +10,10 @@ export interface StorageLocation {
   kind: LocationKind
 }
 
-const pad = (n: number) => String(n).padStart(2, '0')
+export const pad = (n: number) => String(n).padStart(2, '0')
+
+/** จำนวนบล็อกวางของในเต็นท์: แบ่งตามแนวยาวทุก ~2.4 ม. (4–30 บล็อก) */
+export const tentBlocks = (zone: Pick<Zone, 'width' | 'depth'>) => Math.max(4, Math.min(30, Math.floor(Math.max(zone.width, zone.depth) / 2.4)))
 
 /**
  * ช่องเก็บตั้งต้นจากผัง: โซนเก็บของ = โซน-ที่วาง-ชั้น (RK-A-01-1 = ที่วางที่ 1 ชั้นล่าง) 1 ช่องต่อ 1 พาเลท
@@ -26,8 +29,7 @@ export function defaultLocations(zones: Zone[], planOf: (zone: Zone) => StorageP
       for (let p = 1; p <= plan.perLevel; p++)
         for (let l = 1; l <= plan.levels.length; l++) out.push({ code: `${z.code}-${pad(p)}-${l}`, zoneId: z.id, kind })
     } else if (z.kind === 'tent') {
-      const blocks = Math.max(4, Math.min(30, Math.floor(Math.max(z.width, z.depth) / 2.4)))
-      for (let b = 1; b <= blocks; b++) out.push({ code: `${z.code}-${pad(b)}`, zoneId: z.id, kind: 'floor' })
+      for (let b = 1; b <= tentBlocks(z); b++) out.push({ code: `${z.code}-${pad(b)}`, zoneId: z.id, kind: 'floor' })
     } else if (z.kind === 'receiving') out.push({ code: z.code, zoneId: z.id, kind: 'staging' })
     else if (z.kind === 'inspection') out.push({ code: z.code, zoneId: z.id, kind: 'hold' })
     else if (z.kind === 'ng') out.push({ code: z.code, zoneId: z.id, kind: 'ng' })

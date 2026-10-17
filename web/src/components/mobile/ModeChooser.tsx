@@ -3,8 +3,8 @@ import { BRAND } from '../../data/brand'
 import type { ViewMode } from '../../lib/viewMode'
 
 const OPTIONS: { mode: ViewMode; icon: string; title: string; detail: string }[] = [
-  { mode: 'mobile', icon: '📱', title: 'หน้างาน (มือถือ)', detail: 'รับของ · ป้าย QR & พิมพ์ · สแกน 7 โหมด · ค้นหา · ผัง 2D นำทาง' },
-  { mode: 'desktop', icon: '🖥️', title: 'สำนักงาน (คอม)', detail: 'ผังโรงงาน 3D · งานคลังครบทุกแท็บ · บัญชีคุม · หลังบ้าน · คิวพิมพ์ป้าย' },
+  { mode: 'mobile', icon: '📱', title: 'หน้างาน (มือถือ)', detail: 'รับของ · ป้าย QR & พิมพ์ · สแกน 6 โหมด · ค้นหา · ผังคลังรายช่อง + นำทาง' },
+  { mode: 'desktop', icon: '🖥️', title: 'สำนักงาน (คอม)', detail: 'ผังคลัง 2D + ผังโรงงาน 3D · งานคลังครบทุกแท็บ · บัญชีคุม · หลังบ้าน · คิวพิมพ์ป้าย' },
 ]
 
 /**

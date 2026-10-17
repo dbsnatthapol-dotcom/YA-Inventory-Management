@@ -335,7 +335,10 @@ export function FactoryScene(props: Props) {
   } = props
   const exterior = mode === 'exterior'
   const floorsById = new Map(layout.floors.map((f) => [f.id, f]))
-  const floorY = (id: string) => (floorsById.get(id)?.elevation ?? 0) * (exterior ? 1 : explode)
+  // ภายในอาคาร: แยกชั้นตาม explode เมื่อแสดงหลายชั้นซ้อนกัน · ดูชั้นเดียว = ระดับจริง
+  const shownFloors = layout.floors.filter((f) => f.area === 'building' && !hiddenFloors.has(f.id)).length
+  const spread = exterior || shownFloors <= 1 ? 1 : explode
+  const floorY = (id: string) => (floorsById.get(id)?.elevation ?? 0) * spread
 
   const center = useMemo(() => siteCenter(layout), [layout])
   /** จุดกึ่งกลางพื้นของแต่ละโซนในพิกัดฉาก — ใช้บินกล้องไปหาและปักหมุด */
@@ -345,11 +348,11 @@ export function FactoryScene(props: Props) {
       layout.zones.map((zone) => {
         const floor = floors.get(zone.floorId)!
         const [x, z] = toSite(floor, zone.x + zone.width / 2, zone.z + zone.depth / 2)
-        const y = floor.area !== 'building' ? 0 : floor.elevation * (exterior ? 1 : explode) + FLOOR_LIFT
+        const y = floor.area !== 'building' ? 0 : floor.elevation * spread + FLOOR_LIFT
         return [zone.id, new Vector3(x - center[0], y, z - center[1])]
       }),
     )
-  }, [layout, exterior, explode, center])
+  }, [layout, spread, center])
 
   const mainFloor = floorsById.get(MAIN_BUILDING_FLOOR_ID)
   const buildingFloors = layout.floors.filter((f) => f.area === 'building')
@@ -425,16 +428,18 @@ export function FactoryScene(props: Props) {
         if (!a || !b || a.id === b.id) return []
         const r = findRoute(layout, a.accessNodeId, b.accessNodeId)
         if (!r || r.nodes.length < 2) return []
+        // ดูทีละชั้น: ไม่วาดการเคลื่อนไหวที่ผ่านชั้นที่ซ่อนอยู่ (จะลอยกลางอากาศ)
+        if (!exterior && r.nodes.some((n) => hiddenFloors.has(n.floorId))) return []
         const floors = new Map(layout.floors.map((fl) => [fl.id, fl]))
         const points = r.nodes.map((n) => {
           const fl = floors.get(n.floorId)!
           const [x, z] = toSite(fl, n.x, n.z)
-          const y = fl.area === 'building' ? fl.elevation * (exterior ? 1 : explode) + FLOOR_LIFT + 0.15 : 0.15
+          const y = fl.area === 'building' ? fl.elevation * spread + FLOOR_LIFT + 0.15 : 0.15
           return [x, y, z] as [number, number, number]
         })
         return [{ ...f, points }]
       }),
-    [flows, layout, exterior, explode],
+    [flows, layout, exterior, spread, hiddenFloors],
   )
 
   return (
@@ -550,7 +555,7 @@ export function FactoryScene(props: Props) {
               const rise = storeyHeight(layout.floors, floor)
               // ชั้นลอย: ระยะลงไปถึงพื้นชั้นล่าง (เสารับพื้น) และช่องหัวบันไดในราวกันตก
               const below = buildingFloors.filter((f) => buildingOf(f) === buildingOf(floor) && f.elevation < floor.elevation).map((f) => f.elevation)
-              const drop = floor.mezzanine && below.length ? (floor.elevation - Math.max(...below)) * explode : 0
+              const drop = floor.mezzanine && below.length ? (floor.elevation - Math.max(...below)) * spread : 0
               return (
                 <group
                   key={floor.id}
