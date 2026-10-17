@@ -3,6 +3,7 @@ import type { WmsApi } from './api'
 import { bangkokDay } from './ledger'
 import type {
   ClosingTotal,
+  CountRow,
   EnvArchive,
   EnvCounts,
   FgItem,
@@ -173,6 +174,26 @@ async function toJpeg(file: File, maxSide = 2000): Promise<Blob> {
 
 export function supabaseWms(sb: SupabaseClient): WmsApi {
   const rpc = <T>(fn: string, args?: Record<string, unknown>) => run<T>(sb.rpc(fn, args))
+  // ใหม่สุดก่อน: ถ้าเกินจำนวนที่ดึงได้ ส่วนที่ตกไปคือรายการเก่า
+  const countRows = async (fromDay: string): Promise<CountRow[]> =>
+    ((await run(
+      sb
+        .from('wms_tx')
+        .select('created_at, from_loc, lpn_item_id, part_no, qty, new_qty, created_code')
+        .eq('kind', 'COUNT')
+        .gte('created_at', `${fromDay}T00:00:00+07:00`)
+        .order('created_at', { ascending: false })
+        .limit(5000),
+    )) as Row[]).map((t) => ({
+      at: String(t.created_at),
+      day: bangkokDay(String(t.created_at)),
+      loc: str(t.from_loc),
+      itemId: str(t.lpn_item_id),
+      partNo: String(t.part_no ?? ''),
+      system: Number(t.qty ?? 0),
+      counted: Number(t.new_qty ?? 0),
+      code: str(t.created_code),
+    }))
 
   const api: WmsApi = {
     kind: 'supabase',
@@ -397,7 +418,7 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
     },
     async dashboardActivity(fromDay) {
       const from = `${fromDay}T00:00:00+07:00`
-      const [grns, qi] = await Promise.all([
+      const [grns, qi, counts] = await Promise.all([
         run(
           sb
             .from('grns')
@@ -416,6 +437,7 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
             .order('created_at')
             .limit(5000),
         ),
+        countRows(fromDay),
       ])
       return {
         receipts: (grns as Row[]).flatMap((g) =>
@@ -434,6 +456,25 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
           const grn = one(one(t.lpns as Row | Row[] | null)?.grns as Row | Row[] | null)
           return { day: bangkokDay(String(t.created_at)), model: grn ? str(grn.model_code) : null, partNo: String(t.part_no ?? ''), pass: Number(t.pass_qty ?? 0), ng: Number(t.ng_qty ?? 0) }
         }),
+        counts,
+      }
+    },
+    async cycleActivity(countsFrom, movesFrom) {
+      const [counts, moves] = await Promise.all([
+        countRows(countsFrom),
+        run(
+          sb
+            .from('wms_tx')
+            .select('created_at, from_loc, to_loc')
+            .in('kind', ['PUT', 'MOVE', 'ISSUE', 'RETURN'])
+            .gte('created_at', `${movesFrom}T00:00:00+07:00`)
+            .order('created_at', { ascending: false })
+            .limit(10000),
+        ),
+      ])
+      return {
+        counts,
+        moves: (moves as Row[]).flatMap((t) => [str(t.from_loc), str(t.to_loc)].filter((loc): loc is string => !!loc).map((loc) => ({ day: bangkokDay(String(t.created_at)), loc }))),
       }
     },
     async ledgerRows(parts, to) {

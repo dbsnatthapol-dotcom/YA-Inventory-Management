@@ -1,4 +1,5 @@
 import type {
+  CycleActivity,
   DashActivity,
   EnvSummary,
   Grn,
@@ -97,6 +98,8 @@ export interface WmsApi {
   ledgerRows(parts: string[], to: string): Promise<LedgerRow[]>
   /** หน้าภาพรวม: รับเข้า (ต่อบรรทัดใบรับ ไม่รวมกล่องใหม่จากการตรวจนับ) และผลตรวจ MI3 ตั้งแต่วันที่ fromDay (เวลาไทย) */
   dashboardActivity(fromDay: string): Promise<DashActivity>
+  /** วางแผนนับวน: การนับตั้งแต่ countsFrom และการเข้า-ออกของช่องตั้งแต่ movesFrom (วันที่ YYYY-MM-DD) */
+  cycleActivity(countsFrom: string, movesFrom: string): Promise<CycleActivity>
   /** ปิดยอดทุก Model (ใช้ดูสถานะและงานรอรับทราบ) */
   listClosings(): Promise<StockClosing[]>
   /** ปิดยอดเดือนที่จบแล้ว (สิทธิ์ ledger.close) · ใบเบิกของเดือนนั้นแก้ไม่ได้จนกว่าจะเปิดเดือน */

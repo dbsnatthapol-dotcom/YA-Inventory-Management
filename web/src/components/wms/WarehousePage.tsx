@@ -9,14 +9,16 @@ import { InvoiceTab } from './InvoiceTab'
 import { IssueTab } from './IssueTab'
 import { LabelsTab } from './LabelsTab'
 import { LedgerTab } from './LedgerTab'
+import { MyWork } from './MyWork'
 import { ReceiveTab } from './ReceiveTab'
-import { ScanTab } from './ScanTab'
+import { ScanTab, type ScanMode } from './ScanTab'
 import type { Zone } from '../../types/layout'
 import { Alert } from './ui'
 
-export type WmsTab = 'receive' | 'labels' | 'scan' | 'invoice' | 'issue' | 'ledger' | 'count'
+export type WmsTab = 'work' | 'receive' | 'labels' | 'scan' | 'invoice' | 'issue' | 'ledger' | 'count'
 
 const TABS: [WmsTab, string, string][] = [
+  ['work', '✓', 'งานวันนี้'],
   ['receive', '1', 'รับสินค้า'],
   ['labels', '2', 'ป้าย QR & พิมพ์'],
   ['scan', '3', 'สแกนหน้างาน'],
@@ -34,8 +36,14 @@ export interface WmsDeepLink {
 
 export function WarehousePage({ deepLink, zones, initialTab }: { deepLink: WmsDeepLink | null; zones: Zone[]; /** เปิดแท็บนี้ก่อน (เช่น จากหน้าภาพรวม) */ initialTab?: WmsTab | null }) {
   const { api, ready, error, settings, can } = useWms()
-  const [tab, setTab] = useState<WmsTab>(initialTab ?? (deepLink?.kind === 'lpn' ? 'scan' : deepLink?.kind === 'grn' ? 'labels' : 'receive'))
+  const [tab, setTab] = useState<WmsTab>(initialTab ?? (deepLink?.kind === 'lpn' ? 'scan' : deepLink?.kind === 'grn' ? 'labels' : 'work'))
   const [grnId, setGrnId] = useState<string | null>(null)
+  // เปิดหน้าสแกนที่กล่อง + งานที่เลือกจากหน้างานวันนี้ (key ใหม่ = เริ่มหน้าสแกนใหม่)
+  const [scan, setScan] = useState<{ code: string | null; mode?: ScanMode; key: number }>({ code: deepLink?.kind === 'lpn' ? deepLink.code : null, key: 0 })
+  const scanBox = (code: string, mode: ScanMode) => {
+    setScan((s) => ({ code, mode, key: s.key + 1 }))
+    setTab('scan')
+  }
 
   useEffect(() => {
     if (deepLink?.kind !== 'grn') return
@@ -79,7 +87,11 @@ export function WarehousePage({ deepLink, zones, initialTab }: { deepLink: WmsDe
             {TABS.map(([k, n, label]) => (
               <button
                 key={k}
-                onClick={() => setTab(k)}
+                onClick={() => {
+                  // เปิดแท็บสแกนเอง = เริ่มสแกนใหม่ด้วยงานที่จำไว้ (ไม่ย้อนไปกล่อง/งานที่สั่งจากหน้างานวันนี้)
+                  if (k === 'scan' && tab !== 'scan') setScan((s) => ({ code: null, key: s.key + 1 }))
+                  setTab(k)
+                }}
                 aria-current={tab === k ? 'page' : undefined}
                 className={`flex min-h-[44px] items-center gap-2 rounded-lg px-4 text-[15px] font-semibold transition ${tab === k ? 'text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
                 style={tab === k ? { background: BRAND.primary } : undefined}
@@ -119,10 +131,11 @@ export function WarehousePage({ deepLink, zones, initialTab }: { deepLink: WmsDe
           <p className="py-16 text-center text-slate-500">กำลังโหลด…</p>
         ) : (
           <>
+            {tab === 'work' && <MyWork onScan={scanBox} onTab={setTab} />}
             {tab === 'receive' && <ReceiveTab onCreated={openGrn} />}
             {tab === 'labels' && <LabelsTab grnId={grnId} onSelectGrn={setGrnId} />}
             {tab === 'scan' && (
-              <ScanTab initialCode={deepLink?.kind === 'lpn' ? deepLink.code : null} onOpenApprovals={() => setTab('count')} onChanged={() => setApprovalsVer((v) => v + 1)} />
+              <ScanTab key={scan.key} initialCode={scan.code} initialMode={scan.mode} onOpenApprovals={() => setTab('count')} onChanged={() => setApprovalsVer((v) => v + 1)} />
             )}
             {tab === 'invoice' && <InvoiceTab onOpenGrn={openGrn} />}
             {tab === 'issue' && <IssueTab />}

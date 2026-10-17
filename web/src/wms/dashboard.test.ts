@@ -63,6 +63,7 @@ const input = (over: Partial<DashInput> = {}): DashInput => ({
       { day: addDays(TODAY, -3), grnNo: 'GRN-2', model: 'J1A', partNo: '1100351', qty: 120, replacement: false },
     ],
     qi: [{ day: TODAY, model: 'J1A', partNo: '1100351', pass: 55, ng: 5 }],
+    counts: [],
   },
   pending: { adjustments: 1, countSheets: 2 },
   closings: [],
@@ -176,5 +177,8 @@ describe('dashboard on the demo site', () => {
     // วันนี้เบิกครบทั้ง 3 part ของตัวอย่าง (100 + 100 + 900)
     expect(d.trend.at(-1)!.issued).toBe(1100)
     expect(d.alerts.find((a) => a.id === 'low-K1G-RAT00586')?.level).toBe('critical')
+    // ตรวจนับวนตัวอย่างเมื่อ 2 วันก่อน: ตรง 5 จาก 6 ⇒ ต่ำกว่าเป้า 98% ⇒ เตือนและพาไปหน้าตรวจนับ
+    expect(d.kpi.accuracy).toEqual({ lines: 6, matched: 5, pct: 83.3 })
+    expect(d.alerts.find((a) => a.id === 'accuracy')?.action).toEqual({ kind: 'wms', tab: 'count' })
   })
 })

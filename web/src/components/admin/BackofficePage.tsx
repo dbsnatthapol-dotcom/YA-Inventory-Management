@@ -5,23 +5,28 @@ import { BRAND } from '../../data/brand'
 import type { Zone } from '../../types/layout'
 import { fmtTime } from '../../lib/format'
 import { errorText } from '../../wms/api'
+import { buildReadiness, HEAD_KINDS, type ReadyItem, type ReadyTarget } from '../../wms/readiness'
 import { ARCHIVE_CONFIRM, ENV_TABLES, envLabel, PERMS, type EnvSummary, type FgItem, type PermRow, type StaffBrief, type StorageLoc } from '../../wms/types'
 import { resolvePart } from '../../wms/partCodes'
 import { useWms } from '../../wms/useWms'
+import { PrintDialog } from '../wms/Print'
+import { SlotLabelPages, SLOTS_PER_PAGE } from '../wms/SlotLabels'
 import { Alert, BigButton, Card, Field, inputCls, Pill, Segmented, tdCls, thCls } from '../wms/ui'
 import { MasterImport } from './MasterImport'
 import { UsersPage } from './UsersPage'
 
-type Tab = 'users' | 'perms' | 'heads' | 'master' | 'import' | 'system'
+type Tab = 'ready' | 'users' | 'perms' | 'heads' | 'master' | 'import' | 'system'
+type MasterSub = 'parts' | 'fg' | 'rules' | 'locs'
 
 const EDIT_ROLES: Role[] = ['warehouse', 'mi3', 'production', 'planner', 'engineer', 'manager']
 
 /** หลังบ้าน: ผู้ดูแลระบบจัดการผู้ใช้ สิทธิ์ หัวหน้าโซน ข้อมูลหลัก และโหมดระบบ */
-export function BackofficePage({ zones }: { zones: Zone[] }) {
+export function BackofficePage({ zones, onNavigate }: { zones: Zone[]; /** ไปหน้าอื่นนอกหลังบ้าน (จากเช็กลิสต์พร้อมใช้จริง) */ onNavigate?: (to: 'layout' | 'count') => void }) {
   const { profile, enabled } = useAuth()
   const { can } = useWms()
   const isAdmin = !enabled || profile?.role === 'admin'
   const tabs: [Tab, string][] = [
+    ...(isAdmin ? ([['ready', 'พร้อมใช้จริง']] as [Tab, string][]) : []),
     ...(enabled ? ([['users', 'ผู้ใช้งาน & ประวัติเข้าใช้']] as [Tab, string][]) : []),
     ...(isAdmin ? ([['perms', 'สิทธิ์ตามบทบาท'], ['heads', 'หัวหน้าโซน']] as [Tab, string][]) : []),
     ...(isAdmin || can('master.edit') ? ([['master', 'ข้อมูลหลัก']] as [Tab, string][]) : []),
@@ -29,6 +34,13 @@ export function BackofficePage({ zones }: { zones: Zone[] }) {
     ...(isAdmin ? ([['system', 'โหมดระบบ']] as [Tab, string][]) : []),
   ]
   const [tab, setTab] = useState<Tab>(tabs[0]?.[0] ?? 'master')
+  const [masterSub, setMasterSub] = useState<MasterSub>('parts')
+  const go = (t: ReadyTarget) => {
+    if (t.kind === 'admin') {
+      setTab(t.tab)
+      if (t.sub) setMasterSub(t.sub)
+    } else onNavigate?.(t.kind === 'layout' ? 'layout' : 'count')
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -51,9 +63,10 @@ export function BackofficePage({ zones }: { zones: Zone[] }) {
         {tab === 'users' && <UsersPage />}
         {tab !== 'users' && (
           <div className="mx-auto flex max-w-[1400px] flex-col gap-4 px-4 py-4">
+            {tab === 'ready' && <ReadinessTab zones={zones} onGo={go} />}
             {tab === 'perms' && <PermissionsTab />}
             {tab === 'heads' && <ZoneHeadsTab zones={zones} />}
-            {tab === 'master' && <MasterTab zones={zones} />}
+            {tab === 'master' && <MasterTab zones={zones} sub={masterSub} onSub={setMasterSub} />}
             {tab === 'import' && <ImportTab />}
             {tab === 'system' && <SystemTab />}
           </div>
@@ -138,8 +151,6 @@ function PermissionsTab() {
     </Card>
   )
 }
-
-const HEAD_KINDS = new Set(['storage', 'tent', 'receiving', 'inspection', 'ng', 'assembly', 'utility'])
 
 function ZoneHeadsTab({ zones }: { zones: Zone[] }) {
   const { api, master, reload } = useWms()
@@ -253,14 +264,13 @@ function ImportTab() {
   )
 }
 
-function MasterTab({ zones }: { zones: Zone[] }) {
-  const [sub, setSub] = useState<'parts' | 'fg' | 'rules' | 'locs'>('parts')
+function MasterTab({ zones, sub, onSub }: { zones: Zone[]; sub: MasterSub; onSub: (s: MasterSub) => void }) {
   return (
     <>
       <Segmented
         label="ข้อมูลหลัก"
         value={sub}
-        onChange={setSub}
+        onChange={onSub}
         options={[
           ['parts', 'Part'],
           ['fg', 'ชุดวงล้อ (BOM)'],
@@ -599,6 +609,11 @@ function LocationsEditor({ zones }: { zones: Zone[] }) {
   // ช่องตามผัง + ช่องพิเศษ (ไม่แสดงช่องที่ผังเลิกใช้แล้ว)
   const locs = master.locations.filter((l) => l.zoneId === zoneId && (l.active || l.blocked || l.manual))
   const zone = zones.find((z) => z.id === zoneId)
+  const [printOpen, setPrintOpen] = useState(false)
+  const printable = locs
+    .filter((l) => l.active)
+    .map((l) => l.code)
+    .sort()
 
   const save = async (l: StorageLoc, text: string) => {
     try {
@@ -639,7 +654,20 @@ function LocationsEditor({ zones }: { zones: Zone[] }) {
         >
           เพิ่มช่องพิเศษ
         </BigButton>
+        <BigButton tone="secondary" disabled={!printable.length} onClick={() => setPrintOpen(true)}>
+          พิมพ์ป้าย QR ช่อง ({printable.length})
+        </BigButton>
       </div>
+      <PrintDialog
+        open={printOpen}
+        onClose={() => setPrintOpen(false)}
+        format="sheet"
+        title={`ป้ายช่องเก็บ ${zone?.code ?? ''}`}
+        subtitle={`${printable.length} ป้าย · ${Math.ceil(printable.length / SLOTS_PER_PAGE)} แผ่น A4 (สติกเกอร์ 3×8 ดวง 70×37 มม. หรือกระดาษธรรมดาแล้วตัดตามเส้น) · ช่องที่ปิดใช้ไม่พิมพ์`}
+        printLabel={`พิมพ์ ${printable.length} ป้าย`}
+      >
+        <SlotLabelPages codes={printable} zoneName={zone ? `${zone.code} · ${zone.name}` : ''} />
+      </PrintDialog>
       <p className="text-sm text-slate-500">
         {locs.length} ช่อง · ใช้งาน {locs.filter((l) => l.active).length} · ปิด (ชำรุด) {locs.filter((l) => l.blocked).length} · ช่องพิเศษ {locs.filter((l) => l.manual).length}
       </p>
@@ -657,6 +685,90 @@ function LocationsEditor({ zones }: { zones: Zone[] }) {
         ))}
       </div>
     </Card>
+  )
+}
+
+const READY_TONE = {
+  ok: { icon: '✓', label: 'เรียบร้อย', cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
+  todo: { icon: '○', label: 'ยังไม่ครบ', cls: 'bg-amber-50 text-amber-800 ring-amber-200' },
+  manual: { icon: '?', label: 'ตรวจที่หน้างาน', cls: 'bg-slate-100 text-slate-600 ring-slate-200' },
+}
+
+/** เช็กลิสต์ก่อนใช้งานจริง: คิดจากข้อมูลในระบบตอนนี้ · กดปุ่มไปยังหน้าที่ใช้แก้ */
+function ReadinessTab({ zones, onGo }: { zones: Zone[]; onGo: (t: ReadyTarget) => void }) {
+  const { api, master, settings } = useWms()
+  const [data, setData] = useState<{ staff: StaffBrief[]; boxes: number; countSheets: number } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    Promise.all([api.staffDirectory(), api.activeLpns(), api.listStockCounts()])
+      .then(([staff, lpns, counts]) => alive && setData({ staff, boxes: lpns.length, countSheets: counts.filter((c) => c.status === 'approved').length }))
+      .catch((e) => alive && setError(errorText(e)))
+    return () => {
+      alive = false
+    }
+  }, [api, master])
+  const items = data ? buildReadiness({ ...data, master, zones, mode: settings.mode }) : []
+  const must = items.filter((i) => i.required && i.ok !== null)
+  const done = must.filter((i) => i.ok).length
+  const allDone = data !== null && done === must.length
+
+  return (
+    <div className="flex flex-col gap-4">
+      {error && <Alert tone="bad">{error}</Alert>}
+      <Card title="พร้อมใช้งานจริง">
+        <p className="text-sm text-slate-600">ตรวจจากข้อมูลในระบบตอนนี้ · ทำข้อจำเป็นให้ครบก่อนเริ่มใช้จริง กดปุ่มของแต่ละข้อเพื่อไปหน้าที่ใช้ทำ</p>
+        {data ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <span className={`rounded-full px-3 py-1 text-sm font-semibold ring-1 ${allDone ? READY_TONE.ok.cls : READY_TONE.todo.cls}`}>
+              {allDone ? '✓ ข้อจำเป็นครบแล้ว' : `ข้อจำเป็น ${done}/${must.length}`}
+            </span>
+            <div className="h-2 min-w-[160px] flex-1 overflow-hidden rounded-full bg-slate-100" aria-hidden>
+              <div className="h-full rounded-full bg-emerald-500" style={{ width: `${must.length ? (done / must.length) * 100 : 0}%` }} />
+            </div>
+          </div>
+        ) : (
+          !error && <p className="text-sm text-slate-400">กำลังตรวจ…</p>
+        )}
+      </Card>
+      {data && (
+        <ol className="flex flex-col gap-2">
+          {items.map((i) => (
+            <ReadyRow key={i.id} item={i} onGo={onGo} />
+          ))}
+        </ol>
+      )}
+    </div>
+  )
+}
+
+function ReadyRow({ item, onGo }: { item: ReadyItem; onGo: (t: ReadyTarget) => void }) {
+  const tone = READY_TONE[item.ok === null ? 'manual' : item.ok ? 'ok' : 'todo']
+  return (
+    <li className="flex flex-wrap items-center gap-3 rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+      <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-bold ring-1 ${tone.cls}`} aria-hidden>
+        {tone.icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <b className="text-slate-800">{item.title}</b>
+          <Pill tone={item.required ? 'info' : 'muted'}>{item.required ? 'จำเป็น' : 'แนะนำ'}</Pill>
+          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ${tone.cls}`}>{tone.label}</span>
+        </div>
+        <p className="mt-0.5 text-sm text-slate-600">{item.detail}</p>
+        {item.progress && item.progress.total > 0 && (
+          <div className="mt-1.5 flex items-center gap-2 text-xs text-slate-500">
+            <div className="h-1.5 w-40 overflow-hidden rounded-full bg-slate-100" aria-hidden>
+              <div className={`h-full rounded-full ${item.ok ? 'bg-emerald-500' : 'bg-amber-400'}`} style={{ width: `${(item.progress.done / item.progress.total) * 100}%` }} />
+            </div>
+            {item.progress.done.toLocaleString('en-US')}/{item.progress.total.toLocaleString('en-US')}
+          </div>
+        )}
+      </div>
+      <BigButton tone={item.ok ? 'ghost' : 'secondary'} onClick={() => onGo(item.action.target)}>
+        {item.action.label} →
+      </BigButton>
+    </li>
   )
 }
 
