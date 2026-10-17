@@ -32,9 +32,9 @@ export interface WmsDeepLink {
   code: string
 }
 
-export function WarehousePage({ deepLink, zones }: { deepLink: WmsDeepLink | null; zones: Zone[] }) {
+export function WarehousePage({ deepLink, zones, initialTab }: { deepLink: WmsDeepLink | null; zones: Zone[]; /** เปิดแท็บนี้ก่อน (เช่น จากหน้าภาพรวม) */ initialTab?: WmsTab | null }) {
   const { api, ready, error, settings, can } = useWms()
-  const [tab, setTab] = useState<WmsTab>(deepLink?.kind === 'lpn' ? 'scan' : deepLink?.kind === 'grn' ? 'labels' : 'receive')
+  const [tab, setTab] = useState<WmsTab>(initialTab ?? (deepLink?.kind === 'lpn' ? 'scan' : deepLink?.kind === 'grn' ? 'labels' : 'receive'))
   const [grnId, setGrnId] = useState<string | null>(null)
 
   useEffect(() => {

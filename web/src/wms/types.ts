@@ -345,6 +345,33 @@ export interface StockClosing {
 }
 
 /** ใบตรวจนับจากไฟล์ Excel (รอผู้มีสิทธิ์อนุมัติก่อนปรับยอด) */
+/** รับเข้า 1 บรรทัดของใบรับสินค้า (ยอดนับได้จริง) สำหรับหน้าภาพรวม */
+export interface ReceiptRow {
+  /** วันที่ (เวลาไทย) YYYY-MM-DD */
+  day: string
+  grnNo: string
+  model: string | null
+  partNo: string
+  qty: number
+  /** รับของทดแทน NG */
+  replacement: boolean
+}
+
+/** ผลตรวจ MI3 1 รายการ (ดี / NG) พร้อม Model ของกล่อง */
+export interface QiRow {
+  day: string
+  model: string | null
+  partNo: string
+  pass: number
+  ng: number
+}
+
+/** ความเคลื่อนไหวย้อนหลังสำหรับหน้าภาพรวม (ใบเบิกดึงจาก listRequisitions) */
+export interface DashActivity {
+  receipts: ReceiptRow[]
+  qi: QiRow[]
+}
+
 export interface StockCountLine {
   lineNo: number
   /** รหัสช่องเก็บหรือรหัสโซนตามที่กรอก */

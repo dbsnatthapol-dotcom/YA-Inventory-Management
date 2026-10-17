@@ -1,4 +1,5 @@
 import type {
+  DashActivity,
   Grn,
   GrnDetail,
   InvoiceStatus,
@@ -88,6 +89,8 @@ export interface WmsApi {
   listRequisitions(from: string, to: string): Promise<Requisition[]>
   /** รายการเคลื่อนไหวของ part ก่อนเวลา to (ISO) สำหรับบัญชีคุม */
   ledgerRows(parts: string[], to: string): Promise<LedgerRow[]>
+  /** หน้าภาพรวม: รับเข้า (ต่อบรรทัดใบรับ ไม่รวมกล่องใหม่จากการตรวจนับ) และผลตรวจ MI3 ตั้งแต่วันที่ fromDay (เวลาไทย) */
+  dashboardActivity(fromDay: string): Promise<DashActivity>
   /** ปิดยอดทุก Model (ใช้ดูสถานะและงานรอรับทราบ) */
   listClosings(): Promise<StockClosing[]>
   /** ปิดยอดเดือนที่จบแล้ว (สิทธิ์ ledger.close) · ใบเบิกของเดือนนั้นแก้ไม่ได้จนกว่าจะเปิดเดือน */

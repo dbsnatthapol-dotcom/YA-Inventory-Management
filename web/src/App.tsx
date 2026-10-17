@@ -4,7 +4,8 @@ import { ChangePasswordScreen, LoadingScreen, LoginScreen } from './auth/AuthScr
 import { homePage, ROLE_LABEL } from './auth/staff'
 import { useAuth } from './auth/useAuth'
 import { BackofficePage } from './components/admin/BackofficePage'
-import { WarehousePage, type WmsDeepLink } from './components/wms/WarehousePage'
+import { WarehousePage, type WmsDeepLink, type WmsTab } from './components/wms/WarehousePage'
+import { DashboardPage, type PlanTarget } from './components/dashboard/DashboardPage'
 import { WmsProvider } from './wms/WmsProvider'
 import { useWms } from './wms/useWms'
 import { layoutSavePayload } from './lib/layoutSave'
@@ -69,7 +70,7 @@ function WmsApp() {
   )
 }
 
-type Page = 'plan' | 'map' | 'wms' | 'layout' | 'admin'
+type Page = 'dash' | 'plan' | 'map' | 'wms' | 'layout' | 'admin'
 
 /** ลิงก์จาก QR บนป้าย: /t/LPN-2610-000001 (กล่อง) หรือ /g/GRN-2610-0001 (ใบรับสินค้า) */
 function readDeepLink(): WmsDeepLink | null {
@@ -112,12 +113,24 @@ function FactoryApp() {
   const canAdmin = !auth.enabled || role === 'admin' || role === 'manager'
   // ของบนผัง / ช่องค้นหา / หน้าปรับผัง มาจากกล่องในระบบคลังชุดเดียวกับงานคลังและมือถือ
   const [searchAwake, setSearchAwake] = useState(false)
-  const mapData = useMapStock(page === 'map' || page === 'plan' || page === 'layout' || searchAwake, layout, page)
+  const mapData = useMapStock(page === 'dash' || page === 'map' || page === 'plan' || page === 'layout' || searchAwake, layout, page)
+  /** แท็บงานคลังที่จะเปิด (จากหน้าภาพรวม) */
+  const [wmsTab, setWmsTab] = useState<WmsTab | null>(null)
   /** สั่งผังคลัง 2D เปิดโซน/ช่อง (จากช่องค้นหา หรือปุ่มจากผัง 3D) */
   const [planFocus, setPlanFocus] = useState<PlanFocus | null>(null)
-  const showInPlan = (zoneId: string, pick: Pick<PlanFocus, 'lpnNo' | 'code'> = {}) => {
+  const showInPlan = (zoneId: string | null, pick: Pick<PlanFocus, 'lpnNo' | 'code' | 'floorId'> = {}) => {
     setPage('plan')
     setPlanFocus((f) => ({ zoneId, ...pick, n: (f?.n ?? 0) + 1 }))
+  }
+  /** จากหน้าภาพรวม: เปิดผังคลัง 2D ที่โซน/ชั้น และไฮไลต์กล่องที่เกี่ยวข้อง (ล้างได้ที่ช่องค้นหา) */
+  const planFromDash = (t: PlanTarget) => {
+    setHighlight(t.lpnNos.length ? new Set(t.lpnNos) : null)
+    setSearchZones(t.lpnNos.length && t.zoneId ? [t.zoneId] : [])
+    showInPlan(t.zoneId, { floorId: t.floorId ?? null, lpnNo: t.lpnNos.length === 1 ? t.lpnNos[0] : null })
+  }
+  const go = (p: Page) => {
+    setPage(p)
+    setWmsTab(null)
   }
 
   useEffect(() => {
@@ -288,6 +301,7 @@ function FactoryApp() {
     setSelectedPallet(null)
   }
   const navItems: [Page, string][] = [
+    ['dash', 'ภาพรวม'],
     ['plan', 'ผังคลัง 2D'],
     ['map', 'ผังโรงงาน 3D'],
     ['wms', 'งานคลัง'],
@@ -329,7 +343,7 @@ function FactoryApp() {
           {navItems.map(([value, label]) => (
             <button
               key={value}
-              onClick={() => setPage(value)}
+              onClick={() => go(value)}
               className={`rounded-md px-3 py-1 transition ${page === value ? 'font-semibold text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
               style={page === value ? { background: BRAND.primary } : undefined}
             >
@@ -346,7 +360,7 @@ function FactoryApp() {
             onPick={pickSearch}
             onClear={clearSearch}
             onWake={() => setSearchAwake(true)}
-            active={searchZones.length > 0}
+            active={searchZones.length > 0 || !!highlight}
           />
         </div>
 
@@ -396,9 +410,22 @@ function FactoryApp() {
           />
         </main>
       )}
+      {page === 'dash' && (
+        <main className="min-h-0 flex-1">
+          <DashboardPage
+            layout={layout}
+            lpns={mapData.loaded ? mapData.lpns : null}
+            onPlan={planFromDash}
+            onWms={(tab) => {
+              setWmsTab(tab)
+              setPage('wms')
+            }}
+          />
+        </main>
+      )}
       {page === 'wms' && (
         <main className="min-h-0 flex-1">
-          <WarehousePage deepLink={deepLink} zones={layout.zones} />
+          <WarehousePage deepLink={deepLink} zones={layout.zones} initialTab={wmsTab} />
         </main>
       )}
       {/* ผังคลัง 2D: ซ่อนแทนการ unmount เพื่อคงชั้น/โซนที่เลือกไว้ */}
