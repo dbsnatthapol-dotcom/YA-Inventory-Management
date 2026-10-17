@@ -407,10 +407,38 @@ export interface QiRow {
   ng: number
 }
 
+/** การนับหนึ่งครั้งของ part ในกล่อง (wms_tx kind COUNT) */
+export interface CountRow {
+  at: string
+  day: string
+  /** ช่องที่กล่องอยู่ตอนนับ */
+  loc: string | null
+  itemId: string | null
+  partNo: string
+  /** ยอดในระบบตอนนับ */
+  system: number
+  counted: number
+  code: string | null
+}
+
+/** ช่องที่มีของเข้า-ออก (จัดเก็บ ย้าย เบิก คืน) หนึ่งครั้ง */
+export interface MoveRow {
+  day: string
+  loc: string
+}
+
+/** ประวัติสำหรับวางแผนนับวน: การนับย้อนหลังและความเคลื่อนไหวของแต่ละช่อง */
+export interface CycleActivity {
+  counts: CountRow[]
+  moves: MoveRow[]
+}
+
 /** ความเคลื่อนไหวย้อนหลังสำหรับหน้าภาพรวม (ใบเบิกดึงจาก listRequisitions) */
 export interface DashActivity {
   receipts: ReceiptRow[]
   qi: QiRow[]
+  /** การนับวน (ความแม่นยำสต็อก) */
+  counts: CountRow[]
 }
 
 export interface StockCountLine {

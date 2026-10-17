@@ -36,6 +36,12 @@ export const ledgerDelta = (r: Pick<LedgerRow, 'col' | 'qty'>) => (IN_COLS.inclu
 
 export const bangkokDay = (iso: string) => new Date(iso).toLocaleDateString('sv-SE', { timeZone: 'Asia/Bangkok' })
 
+/** เลื่อนวัน 'YYYY-MM-DD' ไป n วัน */
+export const addDays = (day: string, n: number) => {
+  const [y, m, d] = day.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10)
+}
+
 /** ช่วงเดือน (เวลาไทย) ของ 'YYYY-MM' เป็น ISO สำหรับกรองรายการ */
 export function monthRange(month: string): { from: string; to: string } {
   const [y, m] = month.split('-').map(Number)

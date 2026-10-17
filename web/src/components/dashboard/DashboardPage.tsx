@@ -14,6 +14,7 @@ import {
   type DashPeriod,
   type ModelRow,
 } from '../../wms/dashboard'
+import { ACCURACY_TARGET } from '../../wms/cycleCount'
 import { fmt as fmtN } from '../../wms/logic'
 import type { Lpn, MasterData } from '../../wms/types'
 import { useDashboard, type DashSource } from '../../wms/useDashboard'
@@ -80,7 +81,23 @@ function Meter({ used, total }: { used: number; total: number }) {
   )
 }
 
-function Tile({ label, value, unit, sub, meter, onClick }: { label: string; value: string; unit?: string; sub?: ReactNode; meter?: ReactNode; onClick?: () => void }) {
+function Tile({
+  label,
+  value,
+  unit,
+  sub,
+  meter,
+  onClick,
+  link = 'ดูบนผังคลัง →',
+}: {
+  label: string
+  value: string
+  unit?: string
+  sub?: ReactNode
+  meter?: ReactNode
+  onClick?: () => void
+  link?: string
+}) {
   const body = (
     <>
       <div className="text-xs font-medium text-slate-500">{label}</div>
@@ -90,7 +107,7 @@ function Tile({ label, value, unit, sub, meter, onClick }: { label: string; valu
       </div>
       {meter && <div className="mt-1.5">{meter}</div>}
       {sub && <div className="mt-1 text-xs text-slate-500">{sub}</div>}
-      {onClick && <div className="mt-1 text-xs font-semibold text-sky-700">ดูบนผังคลัง →</div>}
+      {onClick && <div className="mt-1 text-xs font-semibold text-sky-700">{link}</div>}
     </>
   )
   const cls = 'rounded-xl bg-white p-4 text-left shadow-sm ring-1 ring-slate-200'
@@ -100,6 +117,20 @@ function Tile({ label, value, unit, sub, meter, onClick }: { label: string; valu
     </button>
   ) : (
     <div className={cls}>{body}</div>
+  )
+}
+
+/** สถานะเทียบเป้า: ไอคอน + ข้อความเสมอ (ไม่ใช้สีอย่างเดียว) */
+function AccuracyNote({ lines, matched, pct }: { lines: number; matched: number; pct: number | null }) {
+  if (pct === null) return <>ยังไม่มีการนับวน · เป้า ≥ {ACCURACY_TARGET}%</>
+  const ok = pct >= ACCURACY_TARGET
+  return (
+    <>
+      <span className={`font-semibold ${ok ? 'text-emerald-700' : 'text-amber-700'}`}>{ok ? `✓ ตามเป้า ${ACCURACY_TARGET}%` : `▲ ต่ำกว่าเป้า ${ACCURACY_TARGET}%`}</span>
+      <span className="block">
+        นับ {fmt(lines)} รายการ · ไม่ตรง {fmt(lines - matched)}
+      </span>
+    </>
   )
 }
 
@@ -120,7 +151,7 @@ const build = (src: DashSource | null, lpns: Lpn[] | null, period: DashPeriod, l
     ? buildDashboard({ today: src.today, period, model, layout, master, lpns, reqs: src.reqs, activity: src.activity, pending: src.pending, closings: src.closings })
     : null
 
-const ACTION_LABEL = (a: DashAction) => (a.kind === 'plan' ? 'ดูบนผัง →' : a.tab === 'count' ? 'ไปอนุมัติ →' : 'ไปบัญชีคุม →')
+const ACTION_LABEL = (a: DashAction) => (a.kind === 'plan' ? 'ดูบนผัง →' : a.tab === 'count' ? 'ไปตรวจนับ & อนุมัติ →' : 'ไปบัญชีคุม →')
 
 /**
  * ภาพรวมคลังสำหรับผู้บริหาร: ตัวเลขหลัก · ตาม Model (พอใช้กี่วัน) · รายการเตือน · รับเข้า vs เบิกออก · คุณภาพ MI3/NG · ความเต็มตามพื้นที่
@@ -200,13 +231,20 @@ export function DashboardPage({ layout, lpns, onPlan, onWms }: Props) {
         </div>
 
         <div className={`flex flex-col gap-4 transition-opacity ${dash.loading ? 'opacity-70' : ''}`}>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
             <Tile
               label={model ? `ของดีคงคลัง ${model}` : 'ของดีคงคลัง'}
               value={fmt(k.onHand)}
               unit="ชิ้น"
               sub={`${fmt(k.boxes)} กล่อง พร้อมเบิก`}
               onClick={model && modelLpns.length ? () => onPlan({ kind: 'plan', zoneId: data.models[0]?.topZone ?? null, lpnNos: modelLpns }) : undefined}
+            />
+            <Tile
+              label={`ความแม่นยำสต็อก ${label}`}
+              value={k.accuracy.pct === null ? '–' : `${k.accuracy.pct}%`}
+              sub={<AccuracyNote lines={k.accuracy.lines} matched={k.accuracy.matched} pct={k.accuracy.pct} />}
+              onClick={() => onWms('count')}
+              link="ดูการตรวจนับ →"
             />
             <Tile
               label={model ? `ช่องที่มี ${model}` : 'ช่องเก็บที่ใช้'}

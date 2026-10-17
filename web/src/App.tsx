@@ -434,7 +434,14 @@ function FactoryApp() {
       </main>
       {page === 'admin' && (
         <main className="min-h-0 flex-1">
-          <BackofficePage zones={layout.zones} />
+          <BackofficePage
+            zones={layout.zones}
+            onNavigate={(to) => {
+              if (to === 'layout') return go('layout')
+              setWmsTab('count')
+              setPage('wms')
+            }}
+          />
         </main>
       )}
 

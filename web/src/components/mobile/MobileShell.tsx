@@ -6,18 +6,20 @@ import { errorText } from '../../wms/api'
 import type { Lpn } from '../../wms/types'
 import { useWms } from '../../wms/useWms'
 import { IconBox, IconPin, IconScan, IconSearch, IconTag } from '../map/icons'
+import { MyWork } from '../wms/MyWork'
 import { LabelsTab } from '../wms/LabelsTab'
 import { ReceiveTab } from '../wms/ReceiveTab'
-import { ScanTab } from '../wms/ScanTab'
+import { ScanTab, type ScanMode } from '../wms/ScanTab'
 import { Alert } from '../wms/ui'
 import type { WmsDeepLink } from '../wms/WarehousePage'
 import { WarehousePlan, type PlanFocus } from '../plan/WarehousePlan'
 import { MobileSearch } from './MobileSearch'
 
-export type MobileTab = 'receive' | 'labels' | 'scan' | 'search' | 'map'
+export type MobileTab = 'work' | 'receive' | 'labels' | 'scan' | 'search' | 'map'
 
-// เรียงตามลำดับงานหน้างาน: รับของ → พิมพ์ป้าย → สแกน (จัดเก็บ/ย้าย/เบิก/ตรวจนับ/MI3) · ค้นหา · ผัง
+// งานวันนี้ก่อน แล้วเรียงตามลำดับงานหน้างาน: รับของ → พิมพ์ป้าย → สแกน (จัดเก็บ/ย้าย/เบิก/ตรวจนับ/MI3) · ค้นหา · ผัง
 const TABS: { k: MobileTab; label: string; icon: ReactNode }[] = [
+  { k: 'work', label: 'งาน', icon: <span className="text-base font-bold leading-none">✓</span> },
   { k: 'receive', label: 'รับของ', icon: <IconBox /> },
   { k: 'labels', label: 'ป้าย', icon: <IconTag /> },
   { k: 'scan', label: 'สแกน', icon: <IconScan /> },
@@ -34,13 +36,13 @@ interface Props {
 }
 
 /**
- * โหมดมือถือสำหรับหน้างาน: เมนูล่าง 5 อย่าง (รับของ ป้าย สแกน ค้นหา ผังคลัง 2D รายช่อง) ปุ่มใหญ่ ใช้มือเดียว
+ * โหมดมือถือสำหรับหน้างาน: เมนูล่าง 6 อย่าง (งานวันนี้ รับของ ป้าย สแกน ค้นหา ผังคลัง 2D รายช่อง) ปุ่มใหญ่ ใช้มือเดียว
  * ไม่โหลดผัง 3D (ประหยัดแบตและเน็ต) · ผัง 3D ปรับผัง หลังบ้าน ใช้บนจอคอม
  */
 export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Props) {
   const { api, ready, error, settings } = useWms()
-  const [tab, setTab] = useState<MobileTab>(deepLink?.kind === 'grn' ? 'labels' : 'scan')
-  const [scan, setScan] = useState<{ code: string | null; key: number }>({ code: deepLink?.kind === 'lpn' ? deepLink.code : null, key: 0 })
+  const [tab, setTab] = useState<MobileTab>(deepLink?.kind === 'grn' ? 'labels' : deepLink?.kind === 'lpn' ? 'scan' : 'work')
+  const [scan, setScan] = useState<{ code: string | null; mode?: ScanMode; key: number }>({ code: deepLink?.kind === 'lpn' ? deepLink.code : null, key: 0 })
   const [grnId, setGrnId] = useState<string | null>(null)
   // ผังคลัง: โซน/ช่องที่เปิดจากหน้าค้นหา และกล่องที่ไฮไลต์
   const [focus, setFocus] = useState<PlanFocus | null>(null)
@@ -83,13 +85,15 @@ export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Pr
   }, [api, needLpns, lpns])
 
   const go = (t: MobileTab) => {
+    // เปิดแท็บสแกนเอง = เริ่มสแกนใหม่ด้วยงานที่จำไว้
+    if (t === 'scan' && tab !== 'scan') setScan((s) => ({ code: null, key: s.key + 1 }))
     setTab(t)
     setMenu(false)
     if (t === 'map') setHighlight(null)
     if (t === 'search' || t === 'map') void loadLpns()
   }
-  const scanLpn = (code: string) => {
-    setScan((s) => ({ code, key: s.key + 1 }))
+  const scanLpn = (code: string, mode?: ScanMode) => {
+    setScan((s) => ({ code, mode, key: s.key + 1 }))
     setTab('scan')
   }
   const showZone = (zoneId: string, lpnNos: string[], code?: string) => {
@@ -104,7 +108,7 @@ export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Pr
         <img src={logoUrl} alt={BRAND.shortName} className="h-8 w-9 object-contain" />
         <div className="min-w-0 flex-1 leading-tight">
           <div className="truncate text-[13px] font-bold" style={{ color: BRAND.primary }}>
-            {TABS.find((t) => t.k === tab)?.label === 'ผัง' ? 'ผังคลัง' : `งานคลัง · ${TABS.find((t) => t.k === tab)?.label}`}
+            {tab === 'map' ? 'ผังคลัง' : tab === 'work' ? 'งานวันนี้' : `งานคลัง · ${TABS.find((t) => t.k === tab)?.label}`}
           </div>
           <div className="truncate text-[11px] text-slate-500">{user ? `${user.name} · ${user.code}` : 'โหมดสาธิต'}</div>
         </div>
@@ -153,7 +157,8 @@ export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Pr
             <p className="py-16 text-center text-slate-500">กำลังโหลด…</p>
           ) : (
             <>
-              {tab === 'scan' && <ScanTab key={scan.key} initialCode={scan.code} />}
+              {tab === 'work' && <MyWork onScan={scanLpn} />}
+              {tab === 'scan' && <ScanTab key={scan.key} initialCode={scan.code} initialMode={scan.mode} />}
               {tab === 'receive' && (
                 <ReceiveTab
                   onCreated={(id) => {
@@ -173,7 +178,7 @@ export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Pr
         )}
       </main>
 
-      <nav className="grid shrink-0 grid-cols-5 border-t border-slate-200 bg-white pb-[env(safe-area-inset-bottom)]" aria-label="เมนูหน้างาน">
+      <nav className="grid shrink-0 grid-cols-6 border-t border-slate-200 bg-white pb-[env(safe-area-inset-bottom)]" aria-label="เมนูหน้างาน">
         {TABS.map((t) => (
           <button
             key={t.k}

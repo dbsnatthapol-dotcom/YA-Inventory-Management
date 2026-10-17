@@ -4,6 +4,7 @@ import type { WmsApi } from './api'
 import { layoutLocations, zoneCodeOf } from './locations'
 import { bangkokDay, buildLedger, monthRange } from './ledger'
 import { canonPartNo, partRevision, partsOfModel, resolvePart } from './partCodes'
+import { HEAD_KINDS } from './readiness'
 import { countLocations, systemQty } from './stockImport'
 import type {
   Grn,
@@ -24,6 +25,7 @@ import type {
   StaffBrief,
   Tx,
   ZoneHead,
+  CountRow,
   EnvArchive,
   EnvCounts,
 } from './types'
@@ -59,8 +61,6 @@ interface DemoDb {
 const DATA_KEYS = ['invoices', 'grns', 'grnLines', 'lpns', 'tx', 'requisitions', 'closings', 'counts', 'printJobs'] as const
 type DemoData = Pick<DemoDb, (typeof DATA_KEYS)[number]>
 
-/** โซนที่มีหัวหน้าโซน (ตรงกับหน้าหลังบ้าน) */
-const HEAD_KINDS = new Set(['storage', 'tent', 'receiving', 'inspection', 'ng', 'assembly', 'utility'])
 const DEMO_HEAD = { id: 'demo-head', employeeCode: 'DEMO-WH', fullName: 'เต็มดวง (เจี๊ยบ)', role: 'warehouse' }
 
 // v2: รหัส part เป็นเลขฐาน (ข้อมูลสาธิตเก่าที่มี /A /B เริ่มใหม่)
@@ -183,6 +183,10 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
     print_jobs: d.printJobs.length,
   })
   const hasData = (c: EnvCounts) => Object.values(c).some((n) => n > 0)
+  const countRows = (fromDay: string): CountRow[] =>
+    db.tx
+      .filter((t) => t.kind === 'COUNT' && bangkokDay(t.createdAt) >= fromDay)
+      .map((t) => ({ at: t.createdAt, day: bangkokDay(t.createdAt), loc: t.fromLoc, itemId: t.lpnItemId, partNo: t.partNo ?? '', system: t.qty ?? 0, counted: t.newQty ?? 0, code: t.createdCode }))
   const log = (t: Partial<Tx> & Pick<Tx, 'kind'>) =>
     db.tx.unshift({
       id: uid(),
@@ -811,8 +815,15 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
             const grn = db.grns.find((g) => g.id === lpn?.grnId)
             return { day: bangkokDay(t.createdAt), model: grn?.modelCode ?? null, partNo: t.partNo ?? '', pass: t.passQty ?? 0, ng: t.ngQty ?? 0 }
           }),
+        counts: countRows(fromDay),
       }
     },
+    cycleActivity: async (countsFrom, movesFrom) => ({
+      counts: countRows(countsFrom),
+      moves: db.tx
+        .filter((t) => ['PUT', 'MOVE', 'ISSUE', 'RETURN'].includes(t.kind) && bangkokDay(t.createdAt) >= movesFrom)
+        .flatMap((t) => [t.fromLoc, t.toLoc].filter((loc): loc is string => !!loc).map((loc) => ({ day: bangkokDay(t.createdAt), loc }))),
+    }),
     ledgerRows: async (parts, to) => {
       const want = new Set(parts)
       const reqs = new Map(db.requisitions.map((r) => [r.id, r]))
@@ -1148,6 +1159,10 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
     }
     const bearing = item('150324')
     if (bearing) quiet(api.scanIssue({ itemId: bearing.id, qty: 10, kind: 'qc', toDept: 'QC ตรวจสอบ' }))
+    // ตรวจนับวนเมื่อ 2 วันก่อน: ตรง 5 รายการ ไม่ตรง 1 (ช่องนั้นขึ้นเป็น "ครั้งก่อนไม่ตรง" ในแผนนับวันนี้)
+    const shelved = db.lpns.filter((l) => l.status === 'active' && !l.hold && /^RK-/.test(l.locationCode) && (l.items[0]?.qty ?? 0) > 2).slice(0, 6)
+    shelved.forEach((l, i) => quiet(api.scanCountItem(l.items[0].id, l.items[0].qty - (i === 1 ? 2 : 0))))
+    for (const t of db.tx) if (t.kind === 'COUNT') t.createdAt = ago(2)
     db.sampled = true
     save()
   }

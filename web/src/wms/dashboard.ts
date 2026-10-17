@@ -1,6 +1,7 @@
 import type { FactoryLayout, Zone } from '../types/layout'
 import { buildingOf } from '../lib/geometry'
-import { bangkokDay } from './ledger'
+import { ACCURACY_TARGET, countAccuracy, type Accuracy } from './cycleCount'
+import { addDays, bangkokDay } from './ledger'
 import { zoneLocator } from './mapStock'
 import { buildSlotMap, SLOT_STATUS } from './slotMap'
 import type { DashActivity, Lpn, MasterData, Requisition, StockClosing } from './types'
@@ -19,11 +20,10 @@ export const AVG_WINDOW = 14
 export const MI3_WAIT_DAYS = 2
 /** กล่องค้างนานเกิน (วัน) ⇒ ควรเบิกก่อนตาม FIFO */
 export const AGING_DAYS = 30
+/** นับวนน้อยกว่านี้ยังไม่เตือนเรื่องความแม่นยำ (ตัวอย่างน้อยเกินไป) */
+export const ACCURACY_MIN_LINES = 5
 
-export const addDays = (day: string, n: number) => {
-  const [y, m, d] = day.split('-').map(Number)
-  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10)
-}
+export { addDays }
 const daysBetween = (from: string, to: string) => Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000)
 
 /** ช่วงที่นับยอด (from–to) และวันที่แสดงบนกราฟ (อย่างน้อย 7 วัน) */
@@ -133,6 +133,8 @@ export interface DashKpi {
   ngFound: number
   qiChecked: number
   pendingApprovals: number
+  /** ความแม่นยำสต็อกจากการนับวนในช่วงที่เลือก */
+  accuracy: Accuracy
 }
 
 export interface DashData {
@@ -391,6 +393,7 @@ export function buildDashboard(input: DashInput): DashData {
     ngFound: shown.reduce((s, r) => s + r.ngFound, 0),
     qiChecked: shown.reduce((s, r) => s + r.qiChecked, 0),
     pendingApprovals: input.pending.adjustments + input.pending.countSheets,
+    accuracy: countAccuracy(activity.counts, range.from, range.to, (r) => !only || (parts.get(r.partNo)?.models ?? []).includes(only)),
   }
 
   // ---- กราฟรายวัน
@@ -498,6 +501,16 @@ export function buildDashboard(input: DashInput): DashData {
       title: `NG รอส่งคืน ${fmt(ngBoxes.reduce((s, b) => s + b.qty, 0))} ชิ้น (${ngBoxes.length} กล่อง)`,
       detail: 'ตัดยอดด้วยการสแกนเบิก → NG / ส่งคืน',
       action: planAt(ngBoxes),
+    })
+  const acc = kpi.accuracy
+  if (acc.pct !== null && acc.lines >= ACCURACY_MIN_LINES && acc.pct < ACCURACY_TARGET)
+    alerts.push({
+      id: 'accuracy',
+      level: 'warning',
+      model: only,
+      title: `ความแม่นยำสต็อก ${acc.pct}% ต่ำกว่าเป้า ${ACCURACY_TARGET}%`,
+      detail: `นับวน ${fmt(acc.lines)} รายการ · ไม่ตรง ${fmt(acc.lines - acc.matched)} · ดูคำขอปรับยอดและเหตุผลที่ไม่ตรง`,
+      action: { kind: 'wms', tab: 'count' },
     })
   if (kpi.pendingApprovals)
     alerts.push({

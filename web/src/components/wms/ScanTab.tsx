@@ -6,10 +6,12 @@ import { useApprovals } from '../../wms/useApprovals'
 import { useWms } from '../../wms/useWms'
 import { zoneHeadOf } from '../../wms/labels'
 import { useIsMobile } from '../../lib/viewMode'
+import { cue, setSoundOn, soundOn } from '../../lib/scanFeedback'
 import { QrScanner } from './QrScanner'
 import { Alert, BigButton, Card, Field, inputCls, Pill, type Tone } from './ui'
 
-type Mode = 'PUT' | 'MOVE' | 'ISSUE' | 'COUNT' | 'QI' | 'VIEW'
+export type ScanMode = 'PUT' | 'MOVE' | 'ISSUE' | 'COUNT' | 'QI' | 'VIEW'
+type Mode = ScanMode
 
 // 1 งาน = 1 โหมด: เบิกทุกแบบเป็นใบเบิก (FM-P-005 นับรวม) · ตรวจนับกับแก้ไขยอดรวมเป็นโหมดเดียว
 const MODES: { k: Mode; name: string; hint: string; perm: Perm | null }[] = [
@@ -38,6 +40,13 @@ const loadMode = (): Mode => {
     return 'PUT'
   }
 }
+const saveMode = (m: Mode) => {
+  try {
+    localStorage.setItem(MODE_KEY, m)
+  } catch {
+    // ไม่มีที่เก็บ
+  }
+}
 const signed = (n: number) => (n > 0 ? `+${fmt(n)}` : n < 0 ? `−${fmt(-n)}` : '0')
 
 const TX_TONE: Record<Tx['kind'], Tone> = { RECEIVE: 'info', PUT: 'ok', MOVE: 'ok', ISSUE: 'info', ADJ: 'warn', COUNT: 'muted', QI: 'mi3', MERGE: 'muted', UNMERGE: 'muted', SPLIT: 'muted', RETURN: 'info' }
@@ -49,10 +58,25 @@ interface Current {
   homeLocation: string | null
 }
 
-export function ScanTab({ initialCode, onOpenApprovals, onChanged }: { initialCode: string | null; onOpenApprovals?: () => void; onChanged?: () => void }) {
+export function ScanTab({
+  initialCode,
+  initialMode,
+  onOpenApprovals,
+  onChanged,
+}: {
+  initialCode: string | null
+  /** เปิดมาที่งานนี้ (จากหน้างานวันนี้) แทนงานที่จำไว้ */
+  initialMode?: ScanMode
+  onOpenApprovals?: () => void
+  onChanged?: () => void
+}) {
   const { api, master, can } = useWms()
   const mobile = useIsMobile()
-  const [mode, setModeState] = useState<Mode>(loadMode)
+  const [mode, setModeState] = useState<Mode>(() => {
+    if (!initialMode) return loadMode()
+    saveMode(initialMode)
+    return initialMode
+  })
   const [cur, setCur] = useState<Current | null>(null)
   const [code, setCode] = useState('')
   const [camera, setCamera] = useState(false)
@@ -64,16 +88,16 @@ export function ScanTab({ initialCode, onOpenApprovals, onChanged }: { initialCo
   const [form, setForm] = useState({ item: '', qty: '', note: '', loc: '', reason: '', pass: '', ng: '0' })
   // ค่าการเบิกคงไว้ข้ามกล่อง: สแกนหลายกล่องของใบเบิกเดียวกันได้ต่อเนื่อง
   const [issue, setIssue] = useState<{ kind: ScanIssuePayload['kind']; model: string; doc: string; to: string }>({ kind: 'line', model: '', doc: '', to: '' })
+  // ตรวจนับแบบไม่เห็นยอด: ผลการนับล่าสุดที่ไม่ตรงกับระบบ (ใช้ส่งขอปรับยอด)
+  const [miss, setMiss] = useState<{ itemId: string; partNo: string; counted: number; system: number } | null>(null)
+  const [sound, setSound] = useState(soundOn)
   const scanInput = useRef<HTMLInputElement>(null)
 
   const setMode = (m: Mode) => {
     setModeState(m)
     setMsg(null)
-    try {
-      localStorage.setItem(MODE_KEY, m)
-    } catch {
-      // ไม่มีที่เก็บ
-    }
+    setMiss(null)
+    saveMode(m)
   }
 
   const refreshLists = useCallback(async () => {
@@ -81,8 +105,9 @@ export function ScanTab({ initialCode, onOpenApprovals, onChanged }: { initialCo
     setVer((v) => v + 1)
   }, [api])
 
+  /** quiet = โหลดกล่องเดิมซ้ำหลังบันทึก (ไม่มีเสียงสแกน คง part ที่เลือกไว้) */
   const lookup = useCallback(
-    async (raw: string) => {
+    async (raw: string, quiet = false) => {
       const no = lpnFromScan(raw)
       if (!no) return
       setCode(no)
@@ -91,12 +116,20 @@ export function ScanTab({ initialCode, onOpenApprovals, onChanged }: { initialCo
         if (!found) {
           setCur(null)
           setMsg({ tone: 'bad', text: `ไม่พบป้าย ${no} · ตรวจเลขบนป้าย หรือป้ายนี้อาจอยู่ในโหมดทดลองรอบก่อน` })
+          cue('bad')
           return
         }
         setCur(found)
         setMsg(null)
+        if (!quiet) cue('scan')
         const item = found.lpn.items[0]
-        setForm({ item: item?.id ?? '', qty: '', note: '', loc: found.lpn.hold ? '' : (found.homeLocation ?? ''), reason: '', pass: String(item?.qty ?? 0), ng: '0' })
+        const inBox = (id: string) => found.lpn.items.some((i) => i.id === id)
+        setForm((f) => {
+          const itemId = quiet && inBox(f.item) ? f.item : (item?.id ?? '')
+          const qty = found.lpn.items.find((i) => i.id === itemId)?.qty ?? 0
+          return { item: itemId, qty: '', note: '', loc: found.lpn.hold ? '' : (found.homeLocation ?? ''), reason: '', pass: String(qty), ng: '0' }
+        })
+        setMiss((m) => (quiet && m && inBox(m.itemId) ? m : null))
         // Model ของการเบิก: คงค่าเดิมถ้า part อยู่ใน Model นั้น ไม่งั้นใช้ Model ของใบรับสินค้า
         const pm = master.parts.find((p) => p.partNo === item?.partNo)?.models ?? []
         const fits = (m: string | null | undefined): m is string => !!m && (!pm.length || pm.includes(m))
@@ -104,6 +137,7 @@ export function ScanTab({ initialCode, onOpenApprovals, onChanged }: { initialCo
         setIssue((s) => (fits(s.model) ? s : { ...s, model: fits(grnModel) ? grnModel : pm.length === 1 ? pm[0] : '' }))
       } catch (e) {
         setMsg({ tone: 'bad', text: errorText(e) })
+        cue('bad')
       }
     },
     [api, master.parts],
@@ -134,24 +168,26 @@ export function ScanTab({ initialCode, onOpenApprovals, onChanged }: { initialCo
   const modelChoices = partModels.length ? [...partModels].sort() : master.models.map((m) => m.code)
   const issueModel = modelChoices.includes(issue.model) ? issue.model : ''
   const issueKind = ISSUE_KINDS.find((k) => k.k === issue.kind)!
-  // ตรวจนับ: ส่วนต่างระหว่างที่นับกับยอดในระบบ
-  const counted = form.qty === '' ? null : Math.floor(Number(form.qty))
-  const countDiff = counted === null || !item ? 0 : counted - item.qty
   const canAdjust = can('scan.adjust')
+  const missHere = miss && miss.itemId === item?.id ? miss : null
 
-  const run = async (fn: () => Promise<string>) => {
+  /** fn คืนข้อความยืนยัน (หรือ tone warn เมื่อต้องตรวจเพิ่ม) */
+  const run = async (fn: () => Promise<string | { tone: 'ok' | 'warn'; text: string }>) => {
     setBusy(true)
     setMsg(null)
     try {
-      const text = await fn()
+      const r = await fn()
+      const { tone, text } = typeof r === 'string' ? { tone: 'ok' as const, text: r } : r
       // โหลดกล่องใหม่ก่อน (lookup ล้างข้อความ) แล้วค่อยแสดงผล ไม่งั้นข้อความยืนยันหายทันที
-      if (cur) await lookup(cur.lpn.lpnNo)
+      if (cur) await lookup(cur.lpn.lpnNo, true)
       await refreshLists()
       onChanged?.()
-      setMsg({ tone: 'ok', text })
+      setMsg({ tone, text })
+      cue(tone)
       scanInput.current?.focus()
     } catch (e) {
       setMsg({ tone: 'bad', text: errorText(e) })
+      cue('bad')
     } finally {
       setBusy(false)
     }
@@ -175,19 +211,40 @@ export function ScanTab({ initialCode, onOpenApprovals, onChanged }: { initialCo
           return `${r.appended ? 'เพิ่มในใบเบิก' : 'ออกใบเบิก'} ${r.reqNo}${r.docNo ? ` (เลขใบเบิก ${r.docNo})` : ''} · ${item!.partNo} −${fmt(q)} · ${where}`
         })
       case 'COUNT':
+        // นับแบบไม่เห็นยอด: บันทึกก่อน แล้วระบบบอกผล · ไม่ตรง ⇒ นับซ้ำ แล้วค่อยส่งขอปรับยอด
         return run(async () => {
           const c = form.qty === '' ? NaN : n(form.qty)
           const diff = await api.scanCountItem(item!.id, c)
+          setMiss(diff === 0 ? null : { itemId: item!.id, partNo: item!.partNo, counted: c, system: c - diff })
           if (diff === 0) return `${item!.partNo} นับได้ ${fmt(c)} · ตรงกับระบบ`
-          if (!canAdjust) return `${item!.partNo} ต่างจากระบบ ${signed(diff)} · บันทึกการนับแล้ว · บัญชีนี้ส่งขอปรับยอดไม่ได้ แจ้งหัวหน้า`
-          const doc = await api.scanAdjustRequest(item!.id, c, form.reason)
-          return `${item!.partNo} ต่างจากระบบ ${signed(diff)} · ส่ง ${doc} ขออนุมัติแล้ว · ยอดเปลี่ยนหลังอนุมัติ (งานคลัง › 7 ตรวจนับ & อนุมัติ)`
+          return { tone: 'warn', text: `${item!.partNo} นับได้ ${fmt(c)} · ระบบมี ${fmt(c - diff)} (ต่าง ${signed(diff)}) · นับซ้ำอีกครั้ง ถ้าได้เท่าเดิม${canAdjust ? 'ให้ส่งขอปรับยอดด้านล่าง' : ' แจ้งหัวหน้าโซน'}` }
         })
       case 'QI':
         return run(async () => {
           const doc = await api.scanQi(lpn.id, n(form.pass), n(form.ng), form.note.trim())
           return `${doc} บันทึกแล้ว · ปลดล็อกให้เบิกได้${cur?.homeLocation ? ` · ใช้โหมด "จัดเก็บเข้าที่" ย้ายไป ${cur.homeLocation}` : ''}`
         })
+    }
+  }
+
+  const requestAdjust = (m: NonNullable<typeof miss>) =>
+    run(async () => {
+      const doc = await api.scanAdjustRequest(m.itemId, m.counted, form.reason)
+      setMiss(null)
+      return `${m.partNo} ส่ง ${doc} ขอปรับยอดเป็น ${fmt(m.counted)} แล้ว · ยอดเปลี่ยนหลังผู้มีสิทธิ์อนุมัติ (งานคลัง › 7 ตรวจนับ & อนุมัติ)`
+    })
+
+  /** กล้อง/เครื่องยิงอ่านได้ป้ายช่องเก็บ ⇒ ใส่เป็นช่องปลายทาง (จัดเก็บ / ย้าย) แทนการค้นกล่อง */
+  const onScanText = (raw: string) => {
+    const slot = master.locations.find((l) => l.code === raw.trim().toUpperCase())
+    if (!slot) return void lookup(raw)
+    if (lpn && (mode === 'PUT' || mode === 'MOVE')) {
+      setForm((f) => ({ ...f, loc: slot.code }))
+      setMsg({ tone: 'info', text: `ช่องปลายทาง ${slot.code} · ตรวจแล้วกดยืนยัน` })
+      cue('scan')
+    } else {
+      setMsg({ tone: 'warn', text: `${slot.code} เป็นป้ายช่องเก็บ · สแกนป้ายกล่องก่อน${mode === 'PUT' || mode === 'MOVE' ? ' แล้วค่อยสแกนป้ายช่อง' : ''}` })
+      cue('warn')
     }
   }
 
@@ -240,10 +297,7 @@ export function ScanTab({ initialCode, onOpenApprovals, onChanged }: { initialCo
 
         <Card eyebrow={mobile ? '2 · สแกน QR ที่กล่อง' : 'ขั้นที่ 2 · สแกน QR ที่กล่อง'}>
           {camera && (
-            <QrScanner
-              onCode={(t) => {
-                void lookup(t)
-              }}
+            <QrScanner onCode={onScanText}
               onClose={() => setCamera(false)}
             />
           )}
@@ -251,7 +305,7 @@ export function ScanTab({ initialCode, onOpenApprovals, onChanged }: { initialCo
             className="flex flex-wrap gap-2"
             onSubmit={(e) => {
               e.preventDefault()
-              void lookup(code)
+              onScanText(code)
             }}
           >
             {!camera && (
@@ -271,6 +325,19 @@ export function ScanTab({ initialCode, onOpenApprovals, onChanged }: { initialCo
             <BigButton type="submit" tone="secondary">
               ค้นหา
             </BigButton>
+            <button
+              type="button"
+              aria-pressed={sound}
+              title="เสียงและสั่นตอนสแกน (จำไว้ในเครื่องนี้)"
+              onClick={() => {
+                setSoundOn(!sound)
+                setSound(!sound)
+                if (!sound) queueMicrotask(() => cue('scan'))
+              }}
+              className="min-h-[44px] rounded-lg px-3 text-sm font-semibold text-slate-600 ring-1 ring-slate-300 hover:bg-slate-50"
+            >
+              {sound ? '🔊 เสียงเปิด' : '🔇 ปิดเสียง'}
+            </button>
           </form>
         </Card>
 
@@ -281,13 +348,17 @@ export function ScanTab({ initialCode, onOpenApprovals, onChanged }: { initialCo
             eyebrow={`โหมด ${mode} · ${modeInfo.name}`}
             title={<span className="font-mono text-xl">{lpn.lpnNo}</span>}
             action={
-              <div className="text-right">
-                <div className="font-mono text-2xl font-bold">{fmt(total)}</div>
-                <div className="text-xs text-slate-500">ชิ้นในกล่อง</div>
-              </div>
+              mode === 'COUNT' ? (
+                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">นับแบบไม่เห็นยอด</span>
+              ) : (
+                <div className="text-right">
+                  <div className="font-mono text-2xl font-bold">{fmt(total)}</div>
+                  <div className="text-xs text-slate-500">ชิ้นในกล่อง</div>
+                </div>
+              )
             }
           >
-            <div className="text-sm text-slate-600">{lpn.items.map((i) => `${i.partNo} × ${fmt(i.qty)}`).join(' · ') || 'กล่องว่าง'}</div>
+            <div className="text-sm text-slate-600">{lpn.items.map((i) => (mode === 'COUNT' ? i.partNo : `${i.partNo} × ${fmt(i.qty)}`)).join(' · ') || 'กล่องว่าง'}</div>
             <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
               <dt className="text-slate-500">อยู่ที่</dt>
               <dd className="font-mono font-semibold">{lpn.locationCode}</dd>
@@ -310,7 +381,7 @@ export function ScanTab({ initialCode, onOpenApprovals, onChanged }: { initialCo
                 <select id="scan-item" className={inputCls} value={form.item} onChange={(e) => setForm({ ...form, item: e.target.value })}>
                   {lpn.items.map((i) => (
                     <option key={i.id} value={i.id}>
-                      {i.partNo} · {fmt(i.qty)}
+                      {mode === 'COUNT' ? i.partNo : `${i.partNo} · ${fmt(i.qty)}`}
                     </option>
                   ))}
                 </select>
@@ -394,34 +465,39 @@ export function ScanTab({ initialCode, onOpenApprovals, onChanged }: { initialCo
 
             {allowed && mode === 'COUNT' && (
               <>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label={`นับได้ / ยอดที่ถูกต้อง (ระบบ ${fmt(item?.qty)})`}>
-                    <input id="scan-qty" type="number" min={0} inputMode="numeric" className={`${inputCls} font-mono`} value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} />
-                  </Field>
-                  {countDiff !== 0 && canAdjust && (
-                    <Field label="เหตุผลที่ไม่ตรง">
-                      <select id="scan-reason" className={inputCls} value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })}>
-                        <option value="">— เลือก —</option>
-                        <option>นับใหม่แล้วไม่ตรง</option>
-                        <option>ของเสียหาย</option>
-                        <option>บันทึกผิด</option>
-                        <option>อื่น ๆ</option>
-                      </select>
-                    </Field>
-                  )}
-                </div>
-                {counted !== null &&
-                  (countDiff === 0 ? (
-                    <Alert tone="ok">ตรงกับระบบ</Alert>
-                  ) : (
-                    <Alert tone="warn">
-                      ต่างจากระบบ {signed(countDiff)} ชิ้น ·{' '}
-                      {canAdjust ? 'กดปุ่มด้านล่างเพื่อบันทึกการนับและส่งขอปรับยอดในครั้งเดียว · ยอดเปลี่ยนหลังผู้มีสิทธิ์อนุมัติ (คนขอกับคนอนุมัติต้องเป็นคนละคน)' : 'บัญชีนี้ส่งขอปรับยอดไม่ได้ · บันทึกการนับไว้ แล้วแจ้งหัวหน้า'}
-                    </Alert>
-                  ))}
-                <BigButton disabled={busy || counted === null || (countDiff !== 0 && canAdjust && !form.reason)} onClick={submit}>
-                  {countDiff !== 0 && canAdjust ? 'บันทึกการนับ + ส่งขอปรับยอด' : 'บันทึกการนับ'}
+                <p className="text-xs text-slate-500">นับของจริงแล้วใส่จำนวน ระบบบอกผลหลังบันทึก · ไม่ตรง ⇒ นับซ้ำอีกครั้งก่อนส่งขอปรับยอด</p>
+                <Field label={lpn.items.length > 1 && item ? `${item.partNo} นับได้กี่ชิ้น` : 'นับได้กี่ชิ้น'}>
+                  <input id="scan-qty" type="number" min={0} inputMode="numeric" className={`${inputCls} font-mono`} value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} />
+                </Field>
+                <BigButton disabled={busy || form.qty === ''} onClick={submit}>
+                  บันทึกการนับ
                 </BigButton>
+                {missHere && (
+                  <div className="flex flex-col gap-2 rounded-lg bg-amber-50 p-3 ring-1 ring-amber-200">
+                    <p className="text-sm font-medium text-amber-900">
+                      นับได้ {fmt(missHere.counted)} · ระบบมี {fmt(missHere.system)} (ต่าง {signed(missHere.counted - missHere.system)})
+                    </p>
+                    {canAdjust ? (
+                      <>
+                        <Field label="นับซ้ำแล้วได้เท่าเดิม: เหตุผลที่ไม่ตรง">
+                          <select id="scan-reason" className={inputCls} value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })}>
+                            <option value="">— เลือก —</option>
+                            <option>นับใหม่แล้วไม่ตรง</option>
+                            <option>ของเสียหาย</option>
+                            <option>บันทึกผิด</option>
+                            <option>อื่น ๆ</option>
+                          </select>
+                        </Field>
+                        <BigButton disabled={busy || !form.reason} onClick={() => void requestAdjust(missHere)}>
+                          ส่งขอปรับยอดเป็น {fmt(missHere.counted)}
+                        </BigButton>
+                        <p className="text-xs text-amber-900">ยอดเปลี่ยนหลังผู้มีสิทธิ์อนุมัติ · คนขอกับคนอนุมัติต้องเป็นคนละคน</p>
+                      </>
+                    ) : (
+                      <p className="text-xs text-amber-900">บัญชีนี้ส่งขอปรับยอดไม่ได้ · บันทึกการนับไว้แล้ว แจ้งหัวหน้าโซน</p>
+                    )}
+                  </div>
+                )}
               </>
             )}
 
@@ -482,7 +558,8 @@ export function ScanTab({ initialCode, onOpenApprovals, onChanged }: { initialCo
               <button key={t.id} onClick={() => t.lpnNo && void lookup(t.lpnNo)} className="grid grid-cols-[auto_1fr] gap-x-2 border-b border-slate-100 py-2 text-left text-xs last:border-0 hover:bg-slate-50">
                 <Pill tone={TX_TONE[t.kind]}>{TX_LABEL[t.kind]}</Pill>
                 <span className="min-w-0">
-                  <span className="font-mono font-semibold">{t.lpnNo ?? ''}</span> {txSummary(t)}
+                  {/* ระหว่างตรวจนับไม่โชว์ยอดในระบบจากการนับครั้งก่อน (นับแบบไม่เห็นยอด) */}
+                  <span className="font-mono font-semibold">{t.lpnNo ?? ''}</span> {mode === 'COUNT' && (t.kind === 'COUNT' || t.kind === 'ADJ') ? `${t.partNo ?? ''} · ${t.kind === 'COUNT' ? 'นับแล้ว' : 'ขอปรับยอด'}` : txSummary(t)}
                   <span className="block text-slate-400">
                     {time(t.createdAt)} · {t.createdCode}
                     {t.docNo ? ` · ${t.docNo}` : ''}
