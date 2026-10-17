@@ -18,7 +18,9 @@ import { Alert } from '../wms/ui'
 
 /** สั่งเปิดโซนจากภายนอก (ช่องค้นหา / หน้าอื่น) — ทำงานทุกครั้งที่ n เปลี่ยน */
 export interface PlanFocus {
-  zoneId: string
+  /** โซนที่จะเปิด · null = เปิดชั้น (floorId) โดยไม่เลือกโซน */
+  zoneId: string | null
+  floorId?: string | null
   /** ป้ายกล่องที่จะเลือกช่องให้ (ผลค้นหาเลขป้าย) */
   lpnNo?: string | null
   /** รหัสช่องที่จะเลือก (ผลค้นหารหัสช่อง) */
@@ -103,9 +105,10 @@ export function WarehousePlan({ layout, lpns, error, focus, highlight, onOpenLpn
     setZoneId(focus.zoneId)
     setSlotCode(focus.code ?? null)
     setFocusLpn(focus.lpnNo ?? null)
-    setPickedFloor(null)
+    setPickedFloor(focus.zoneId ? null : (focus.floorId ?? null))
     setTab('slots')
-    setZoom((z) => ({ zoneId: focus.zoneId, n: (z?.n ?? 0) + 1 }))
+    const zoneId = focus.zoneId
+    setZoom((z) => (zoneId ? { zoneId, n: (z?.n ?? 0) + 1 } : null))
   }
 
   const zone = layout.zones.find((z) => z.id === zoneId) ?? null

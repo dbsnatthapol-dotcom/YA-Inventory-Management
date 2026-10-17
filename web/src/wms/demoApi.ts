@@ -2,7 +2,7 @@ import { sampleLayout } from '../data/factoryLayout'
 import { MODELS, PARTS, ZONE_RULES } from '../inventory/masterData'
 import type { WmsApi } from './api'
 import { layoutLocations, zoneCodeOf } from './locations'
-import { buildLedger, monthRange } from './ledger'
+import { bangkokDay, buildLedger, monthRange } from './ledger'
 import { canonPartNo, partRevision, partsOfModel, resolvePart } from './partCodes'
 import { countLocations, systemQty } from './stockImport'
 import type {
@@ -746,6 +746,24 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         r!.note = [r!.note, `ยกเลิก: ${reason.trim()}`].filter(Boolean).join(' · ')
       }),
     listRequisitions: async (from, to) => clone(db.requisitions.filter((r) => r.docDate >= from && r.docDate <= to)),
+    dashboardActivity: async (fromDay) => {
+      const grns = new Map(db.grns.filter((g) => bangkokDay(g.receivedAt) >= fromDay && !g.grnNo.startsWith('CNT-')).map((g) => [g.id, g]))
+      return {
+        receipts: db.grnLines
+          .filter((l) => grns.has(l.grnId) && l.countedQty > 0)
+          .map((l) => {
+            const g = grns.get(l.grnId)!
+            return { day: bangkokDay(g.receivedAt), grnNo: g.grnNo, model: g.modelCode, partNo: l.partNo, qty: l.countedQty, replacement: !!g.replacement }
+          }),
+        qi: db.tx
+          .filter((t) => t.kind === 'QI' && bangkokDay(t.createdAt) >= fromDay)
+          .map((t) => {
+            const lpn = db.lpns.find((l) => l.id === t.lpnId)
+            const grn = db.grns.find((g) => g.id === lpn?.grnId)
+            return { day: bangkokDay(t.createdAt), model: grn?.modelCode ?? null, partNo: t.partNo ?? '', pass: t.passQty ?? 0, ng: t.ngQty ?? 0 }
+          }),
+      }
+    },
     ledgerRows: async (parts, to) => {
       const want = new Set(parts)
       const reqs = new Map(db.requisitions.map((r) => [r.id, r]))
@@ -1051,13 +1069,32 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
     const ng = k1g.find((l) => l.items[0]?.partNo === 'RAT01088')
     if (ng) quiet(api.scanMove(ng.id, 'NG-HOLD', 'MOVE'))
     // เบิกวันนี้: สแกนเบิกเข้าไลน์ K1G (ใบเบิกเดียวกัน) + QC เบิก
-    const item = (part: string) => db.lpns.find((l) => l.status === 'active' && !l.hold && l.locationCode !== 'NG-HOLD' && l.items.some((i) => i.partNo === part && i.qty > 0))?.items.find((i) => i.partNo === part)
+    // กล่องที่มี part นี้พอเบิก (ไม่รอ MI3 ไม่อยู่ที่ NG)
+    const item = (part: string, qty = 1) =>
+      db.lpns.find((l) => l.status === 'active' && !l.hold && l.locationCode !== 'NG-HOLD' && l.items.some((i) => i.partNo === part && i.qty >= qty))?.items.find((i) => i.partNo === part && i.qty >= qty)
+    // เบิกเข้าไลน์ย้อนหลัง 3 วัน (หน้าภาพรวมมีแนวโน้มและค่าเฉลี่ยการใช้ให้ดู)
+    for (const [days, doc, lines] of [
+      [3, 'MRA-0098', [['RAT00586', 80], ['RAT00566', 600]]],
+      [2, 'MRA-0099', [['RAT00586', 120], ['RAT01088', 60], ['RAT00566', 700]]],
+      [1, 'MRA-0100', [['RAT00586', 100], ['RAT00566', 800]]],
+    ] as [number, string, [string, number][]][]) {
+      const before = new Set(db.requisitions.map((r) => r.id))
+      for (const [part, qty] of lines) {
+        const it = item(part, qty)
+        if (it) quiet(api.scanIssue({ itemId: it.id, qty, kind: 'line', modelCode: 'K1G', docNo: doc, toDept: 'ไลน์ประกอบ K1G' }))
+      }
+      const at = ago(days)
+      for (const r of db.requisitions.filter((x) => !before.has(x.id))) {
+        Object.assign(r, { docDate: bangkokDay(at), createdAt: at })
+        for (const t of db.tx) if (t.requisitionId === r.id) t.createdAt = at
+      }
+    }
     for (const [part, qty] of [
       ['RAT00586', 100],
       ['RAT01088', 100],
       ['RAT00566', 900],
     ] as [string, number][]) {
-      const it = item(part)
+      const it = item(part, qty)
       if (it) quiet(api.scanIssue({ itemId: it.id, qty, kind: 'line', modelCode: 'K1G', docNo: 'MRA-0001', toDept: 'ไลน์ประกอบ K1G' }))
     }
     const bearing = item('150324')

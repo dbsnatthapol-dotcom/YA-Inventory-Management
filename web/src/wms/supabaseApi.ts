@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { WmsApi } from './api'
+import { bangkokDay } from './ledger'
 import type {
   ClosingTotal,
   FgItem,
@@ -384,6 +385,47 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
           .limit(1000),
       )) as Row[]
       return rows.map(toRequisition)
+    },
+    async dashboardActivity(fromDay) {
+      const from = `${fromDay}T00:00:00+07:00`
+      const [grns, qi] = await Promise.all([
+        run(
+          sb
+            .from('grns')
+            .select('grn_no, model_code, received_at, replacement, grn_lines(part_no, counted_qty)')
+            .gte('received_at', from)
+            .not('grn_no', 'like', 'CNT-%')
+            .order('received_at')
+            .limit(3000),
+        ),
+        run(
+          sb
+            .from('wms_tx')
+            .select('part_no, pass_qty, ng_qty, created_at, lpns!wms_tx_lpn_id_fkey(grns!lpns_grn_id_fkey(model_code))')
+            .eq('kind', 'QI')
+            .gte('created_at', from)
+            .order('created_at')
+            .limit(5000),
+        ),
+      ])
+      return {
+        receipts: (grns as Row[]).flatMap((g) =>
+          ((g.grn_lines as Row[] | null) ?? [])
+            .map((l) => ({
+              day: bangkokDay(String(g.received_at)),
+              grnNo: String(g.grn_no),
+              model: str(g.model_code),
+              partNo: String(l.part_no),
+              qty: Number(l.counted_qty ?? 0),
+              replacement: Boolean(g.replacement),
+            }))
+            .filter((r) => r.qty > 0),
+        ),
+        qi: (qi as Row[]).map((t) => {
+          const grn = one(one(t.lpns as Row | Row[] | null)?.grns as Row | Row[] | null)
+          return { day: bangkokDay(String(t.created_at)), model: grn ? str(grn.model_code) : null, partNo: String(t.part_no ?? ''), pass: Number(t.pass_qty ?? 0), ng: Number(t.ng_qty ?? 0) }
+        }),
+      }
     },
     async ledgerRows(parts, to) {
       const rows = await rpc<Row[]>('stock_ledger_rows', { p_parts: parts, p_to: to })
