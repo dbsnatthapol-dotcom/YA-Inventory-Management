@@ -2,7 +2,7 @@ import { sampleLayout } from '../data/factoryLayout'
 import { MODELS, PARTS, ZONE_RULES } from '../inventory/masterData'
 import type { WmsApi } from './api'
 import { layoutLocations, zoneCodeOf } from './locations'
-import { bangkokDay, buildLedger, monthRange } from './ledger'
+import { addDays, bangkokDay, buildLedger, monthRange } from './ledger'
 import { canonPartNo, partRevision, partsOfModel, resolvePart } from './partCodes'
 import { HEAD_KINDS } from './readiness'
 import { countLocations, systemQty } from './stockImport'
@@ -1395,11 +1395,8 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
   /** กล่องตัวอย่างผ่านขั้นตอนจริง: รับของ → จัดเก็บ → MI3 → เบิก (ย้อนวันรับของเก่าให้ดูสมจริง) */
   function seedSamples() {
     const quiet = (p: Promise<unknown>) => void p.catch(() => undefined)
-    const ago = (days: number) => {
-      const d = new Date(Date.now() - days * 86_400_000)
-      d.setHours(9, 30, 0, 0)
-      return d.toISOString()
-    }
+    // 09:30 เวลาไทยของวันที่ย้อนไป (ไม่ขึ้นกับ timezone ของเครื่อง · ตี 0–7 เวลาไทยวันไทยนำวัน UTC อยู่ 1 วัน)
+    const ago = (days: number) => new Date(`${addDays(bangkokDay(new Date().toISOString()), -days)}T09:30:00+07:00`).toISOString()
     const name = (no: string) => db.master.parts.find((p) => p.partNo === canonPartNo(db.master.parts, no))?.name ?? ''
     const receive = (model: string, ref: string, lines: [string, number][], days: number) => {
       quiet(api.createGrn({ packingList: { refDoc: ref }, modelCode: model, lines: lines.map(([partNo, qty]) => ({ partNo, description: name(partNo), plQty: qty, countedQty: qty })) }))
