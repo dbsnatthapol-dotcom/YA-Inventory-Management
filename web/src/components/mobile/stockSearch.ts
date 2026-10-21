@@ -11,10 +11,11 @@ export interface StockBox {
   location: string
   zoneId: string | null
   hold: boolean
+  caseNo?: string | null
 }
 
 export interface StockHit {
-  kind: 'lpn' | 'part' | 'place'
+  kind: 'lpn' | 'part' | 'place' | 'doc'
   key: string
   title: string
   subtitle?: string
@@ -27,6 +28,9 @@ export interface StockHit {
 const MAX_PLACES = 10
 const MAX_PARTS = 20
 
+/** จำนวนกล่องจริง (กล่องรวมหลาย part มีหลายแถวใน boxes) */
+export const boxCount = (boxes: StockBox[]) => new Set(boxes.map((b) => b.lpnNo)).size
+
 /**
  * ค้นของในคลังจากกล่องที่ยัง active: เลขป้าย (หรือข้อความจาก QR) → กล่องนั้น,
  * รหัสช่อง/โซน → ของในที่นั้น, Part No./ชื่อ part → ทุกกล่องที่มี part นั้น
@@ -38,7 +42,7 @@ export function searchStock(query: string, lpns: Lpn[], master: Pick<MasterData,
   const zoneOf = zoneLocator(master, layout)
   const zoneName = (id: string | null) => layout.zones.find((z) => z.id === id)?.name
   const boxes: StockBox[] = lpns.flatMap((l) =>
-    l.items.filter((i) => i.qty > 0).map((i) => ({ lpnNo: l.lpnNo, partNo: i.partNo, qty: i.qty, location: l.locationCode, zoneId: zoneOf(l.locationCode), hold: l.hold })),
+    l.items.filter((i) => i.qty > 0).map((i) => ({ lpnNo: l.lpnNo, partNo: i.partNo, qty: i.qty, location: l.locationCode, zoneId: zoneOf(l.locationCode), hold: l.hold, caseNo: l.caseNo ?? null })),
   )
   const sum = (list: StockBox[]) => list.reduce((s, b) => s + b.qty, 0)
   const hits: StockHit[] = []
@@ -52,7 +56,30 @@ export function searchStock(query: string, lpns: Lpn[], master: Pick<MasterData,
     return hits
   }
 
-  // 2) ช่องเก็บ หรือโซน
+  // 2) เลข Packing List และ/หรือเลขเคส (ป้ายของผู้ส่งที่ติดมากับของ) เช่น "4957872317", "P-12", "4957872317 P-12"
+  const [first, second] = t.split(/\s+/)
+  const byDoc = lpns.filter((l) =>
+    second ? l.plRef?.toUpperCase() === first && l.caseNo?.toUpperCase() === second : l.plRef?.toUpperCase() === first || l.caseNo?.toUpperCase() === first,
+  )
+  if (byDoc.length) {
+    const nos = new Set(byDoc.map((l) => l.lpnNo))
+    const own = boxes.filter((b) => nos.has(b.lpnNo)).sort((a, b) => a.location.localeCompare(b.location))
+    const zones = new Set(own.map((b) => b.zoneId))
+    const isPl = !second && byDoc.some((l) => l.plRef?.toUpperCase() === first)
+    const cases = new Set(byDoc.map((l) => l.caseNo).filter(Boolean)).size
+    const refs = [...new Set(byDoc.map((l) => l.plRef).filter(Boolean))]
+    hits.push({
+      kind: 'doc',
+      key: t,
+      title: second ? `PL ${first} · เคส ${second}` : isPl ? `PL ${first}` : `เคส ${first}`,
+      subtitle: second ? undefined : isPl ? (cases ? `${cases} เคส` : undefined) : refs.length ? `PL ${refs.join(', ')}` : undefined,
+      zoneId: zones.size === 1 ? [...zones][0] : null,
+      qty: sum(own),
+      boxes: own,
+    })
+  }
+
+  // 3) ช่องเก็บ หรือโซน
   if (zoneByLoc.has(t) && !layout.zones.some((z) => z.code === t)) {
     const own = boxes.filter((b) => b.location === t)
     const zoneId = zoneOf(t)
@@ -65,7 +92,7 @@ export function searchStock(query: string, lpns: Lpn[], master: Pick<MasterData,
     }
   }
 
-  // 3) Part (มีของก่อน แล้วตามด้วย part ใน Master ที่ยังไม่มีของ)
+  // 4) Part (มีของก่อน แล้วตามด้วย part ใน Master ที่ยังไม่มีของ)
   const names = new Map(master.parts.map((p) => [p.partNo, p.name]))
   const uams = new Map(master.parts.map((p) => [p.partNo, p.uamCode ?? '']))
   const partNos = new Set([...boxes.map((b) => b.partNo), ...master.parts.map((p) => p.partNo)])

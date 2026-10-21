@@ -13,7 +13,8 @@ export interface ReadPackingList {
   soNo: string
   packages: string
   title: string
-  lines: { partNo: string; description: string; qty: number; invoiceLineNo: number | null }[]
+  /** caseNo = เลขเคส/พาเลทของบรรทัด (Case / Box / Pallet No.) · ว่าง = เอกสารไม่ระบุ */
+  lines: { caseNo?: string; partNo: string; description: string; qty: number; invoiceLineNo: number | null }[]
 }
 
 export const aiReaderAvailable = supabase !== null

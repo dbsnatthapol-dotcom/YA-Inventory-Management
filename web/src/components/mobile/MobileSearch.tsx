@@ -5,7 +5,7 @@ import type { Lpn } from '../../wms/types'
 import { useWms } from '../../wms/useWms'
 import { QrScanner } from '../wms/QrScanner'
 import { Alert, BigButton, Card, inputCls, Pill } from '../wms/ui'
-import { searchStock, type StockHit } from './stockSearch'
+import { boxCount, searchStock, type StockHit } from './stockSearch'
 
 interface Props {
   layout: FactoryLayout
@@ -46,7 +46,7 @@ export function MobileSearch({ layout, lpns, error, onRefresh, onScanLpn, onShow
         )}
         <input
           className={`${inputCls} font-mono text-base`}
-          placeholder="เลขป้าย / Part No. / ชื่อ part / ช่อง"
+          placeholder="เลขป้าย / Part / เลข PL / เคส / ช่อง"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           autoComplete="off"
@@ -78,7 +78,7 @@ export function MobileSearch({ layout, lpns, error, onRefresh, onScanLpn, onShow
 }
 
 function HitCard({ hit, onScanLpn, onShowZone }: { hit: StockHit; onScanLpn: (lpnNo: string) => void; onShowZone: Props['onShowZone'] }) {
-  const eyebrow = { lpn: 'ป้ายกล่อง', part: 'Part', place: 'ช่อง / โซน' }[hit.kind]
+  const eyebrow = { lpn: 'ป้ายกล่อง', part: 'Part', place: 'ช่อง / โซน', doc: 'Packing List / เคส' }[hit.kind]
   return (
     <Card
       eyebrow={eyebrow}
@@ -100,7 +100,7 @@ function HitCard({ hit, onScanLpn, onShowZone }: { hit: StockHit; onScanLpn: (lp
       {hit.subtitle && <p className="-mt-2 text-sm text-slate-600">{hit.subtitle}</p>}
       <div className="flex flex-wrap gap-1.5">
         <Pill tone="info">{fmt(hit.qty)} ชิ้น</Pill>
-        <Pill tone="muted">{hit.boxes.length} กล่อง</Pill>
+        <Pill tone="muted">{boxCount(hit.boxes)} กล่อง</Pill>
         {hit.boxes.some((b) => b.hold) && <Pill tone="mi3">มีของรอ MI3</Pill>}
       </div>
       <ul className="flex flex-col divide-y divide-slate-100 rounded-lg ring-1 ring-slate-200">
@@ -109,7 +109,7 @@ function HitCard({ hit, onScanLpn, onShowZone }: { hit: StockHit; onScanLpn: (lp
             <div className="min-w-0 flex-1">
               <div className="font-mono text-sm font-semibold text-slate-800">{hit.kind === 'part' ? b.location : b.partNo}</div>
               <div className="truncate text-xs text-slate-500">
-                {[b.lpnNo, `${fmt(b.qty)} ชิ้น`, hit.kind === 'place' ? b.location : null, b.hold ? 'รอ MI3' : null].filter(Boolean).join(' · ')}
+                {[b.caseNo ? `เคส ${b.caseNo}` : null, b.lpnNo, `${fmt(b.qty)} ชิ้น`, hit.kind === 'place' || hit.kind === 'doc' ? b.location : null, b.hold ? 'รอ MI3' : null].filter(Boolean).join(' · ')}
               </div>
             </div>
             {b.zoneId && hit.kind === 'part' && <MapButton small onClick={() => onShowZone(b.zoneId!, [b.lpnNo])} />}
@@ -119,7 +119,7 @@ function HitCard({ hit, onScanLpn, onShowZone }: { hit: StockHit; onScanLpn: (lp
           </li>
         ))}
         {hit.boxes.length === 0 && <li className="px-3 py-2.5 text-sm text-slate-500">ไม่มีของในคลังตอนนี้</li>}
-        {hit.boxes.length > 30 && <li className="px-3 py-2 text-xs text-slate-500">และอีก {hit.boxes.length - 30} กล่อง</li>}
+        {hit.boxes.length > 30 && <li className="px-3 py-2 text-xs text-slate-500">และอีก {hit.boxes.length - 30} รายการ</li>}
       </ul>
     </Card>
   )

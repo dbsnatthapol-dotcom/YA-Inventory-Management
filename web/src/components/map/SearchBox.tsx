@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FactoryLayout } from '../../types/layout'
 import type { Lpn, MasterData } from '../../wms/types'
-import { searchStock, type StockHit } from '../mobile/stockSearch'
+import { boxCount, searchStock, type StockHit } from '../mobile/stockSearch'
 import { IconBox, IconClose, IconPin, IconSearch } from './icons'
 
 const fmt = (n: number) => n.toLocaleString('th-TH')
-const KIND: Record<StockHit['kind'], string> = { lpn: 'กล่อง', part: 'Part', place: 'ที่เก็บ' }
+const KIND: Record<StockHit['kind'], string> = { lpn: 'กล่อง', part: 'Part', place: 'ที่เก็บ', doc: 'Packing List / เคส' }
 
 /**
  * ค้นหาของในคลังจากระบบคลัง (ชุดเดียวกับหน้ามือถือ): เลขป้าย / Part No. / ชื่อ part / รหัส UAM / ช่องเก็บ / โซน
@@ -105,7 +105,7 @@ export function SearchBox({
           {hits.length === 0 && <li className="px-3 py-2 text-slate-400">ไม่พบ "{query}"</li>}
           {hits.map((hit, i) => {
             const zones = new Set(hit.boxes.map((b) => b.zoneId).filter(Boolean))
-            const held = hit.boxes.filter((b) => b.hold).length
+            const held = boxCount(hit.boxes.filter((b) => b.hold))
             return (
               <li key={`${hit.kind}-${hit.key}`}>
                 <button
@@ -127,7 +127,7 @@ export function SearchBox({
                   <span className="shrink-0 text-right text-xs">
                     {hit.qty > 0 ? (
                       <span className="font-semibold tabular-nums text-slate-700">
-                        {fmt(hit.qty)} ชิ้น · {hit.boxes.length} กล่อง
+                        {fmt(hit.qty)} ชิ้น · {boxCount(hit.boxes)} กล่อง
                       </span>
                     ) : (
                       <span className="text-slate-400">ไม่มีของในคลัง</span>

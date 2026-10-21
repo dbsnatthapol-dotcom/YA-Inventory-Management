@@ -9,23 +9,25 @@ import { InvoiceTab } from './InvoiceTab'
 import { IssueTab } from './IssueTab'
 import { LabelsTab } from './LabelsTab'
 import { LedgerTab } from './LedgerTab'
+import { MoveBoxes } from './MoveBoxes'
 import { MyWork } from './MyWork'
-import { ReceiveTab } from './ReceiveTab'
+import { ReceivePage } from './ReceivePage'
 import { ScanTab, type ScanMode } from './ScanTab'
 import type { Zone } from '../../types/layout'
 import { Alert } from './ui'
 
-export type WmsTab = 'work' | 'receive' | 'labels' | 'scan' | 'invoice' | 'issue' | 'ledger' | 'count'
+export type WmsTab = 'work' | 'receive' | 'labels' | 'scan' | 'move' | 'invoice' | 'issue' | 'ledger' | 'count'
 
 const TABS: [WmsTab, string, string][] = [
   ['work', '✓', 'งานวันนี้'],
-  ['receive', '1', 'รับสินค้า'],
+  ['receive', '1', 'รับสินค้า / ตรวจรับ'],
   ['labels', '2', 'ป้าย QR & พิมพ์'],
   ['scan', '3', 'สแกนหน้างาน'],
-  ['invoice', '4', 'กระทบยอด Invoice'],
-  ['issue', '5', 'เบิกเข้าไลน์'],
-  ['ledger', '6', 'บัญชีคุม FM-P-537'],
-  ['count', '7', 'ตรวจนับ & อนุมัติ'],
+  ['move', '4', 'ย้าย / จัดเก็บ'],
+  ['invoice', '5', 'กระทบยอด Invoice'],
+  ['issue', '6', 'เบิกเข้าไลน์'],
+  ['ledger', '7', 'บัญชีคุม FM-P-537'],
+  ['count', '8', 'ตรวจนับ & อนุมัติ'],
 ]
 
 /** ลิงก์จาก QR: /t/LPN-… เปิดหน้าสแกน, /g/GRN-… เปิดหน้าป้ายของ GRN นั้น */
@@ -44,6 +46,9 @@ export function WarehousePage({ deepLink, zones, initialTab }: { deepLink: WmsDe
     setScan((s) => ({ code, mode, key: s.key + 1 }))
     setTab('scan')
   }
+  // ใบตรวจรับที่เปิดจากหน้างานวันนี้ (key ใหม่ = เปิดหน้ารับของใหม่ที่ใบนั้น) · ย้ายของ: เปิดที่กล่องในจุดรับของ
+  const [receive, setReceive] = useState<{ checkId: string | null; key: number }>({ checkId: null, key: 0 })
+  const [moveFrom, setMoveFrom] = useState<{ place: 'all' | 'staging'; key: number }>({ place: 'all', key: 0 })
 
   useEffect(() => {
     if (deepLink?.kind !== 'grn') return
@@ -90,6 +95,8 @@ export function WarehousePage({ deepLink, zones, initialTab }: { deepLink: WmsDe
                 onClick={() => {
                   // เปิดแท็บสแกนเอง = เริ่มสแกนใหม่ด้วยงานที่จำไว้ (ไม่ย้อนไปกล่อง/งานที่สั่งจากหน้างานวันนี้)
                   if (k === 'scan' && tab !== 'scan') setScan((s) => ({ code: null, key: s.key + 1 }))
+                  if (k === 'receive' && tab !== 'receive') setReceive((r) => ({ checkId: null, key: r.key + 1 }))
+                  if (k === 'move' && tab !== 'move') setMoveFrom((m) => ({ place: 'all', key: m.key + 1 }))
                   setTab(k)
                 }}
                 aria-current={tab === k ? 'page' : undefined}
@@ -131,8 +138,22 @@ export function WarehousePage({ deepLink, zones, initialTab }: { deepLink: WmsDe
           <p className="py-16 text-center text-slate-500">กำลังโหลด…</p>
         ) : (
           <>
-            {tab === 'work' && <MyWork onScan={scanBox} onTab={setTab} />}
-            {tab === 'receive' && <ReceiveTab onCreated={openGrn} />}
+            {tab === 'work' && (
+              <MyWork
+                onScan={scanBox}
+                onTab={setTab}
+                onOpenCheck={(id) => {
+                  setReceive((r) => ({ checkId: id, key: r.key + 1 }))
+                  setTab('receive')
+                }}
+                onMove={() => {
+                  setMoveFrom((m) => ({ place: 'staging', key: m.key + 1 }))
+                  setTab('move')
+                }}
+              />
+            )}
+            {tab === 'receive' && <ReceivePage key={receive.key} openCheckId={receive.checkId} onReceived={openGrn} />}
+            {tab === 'move' && <MoveBoxes key={moveFrom.key} initialPlace={moveFrom.place} />}
             {tab === 'labels' && <LabelsTab grnId={grnId} onSelectGrn={setGrnId} />}
             {tab === 'scan' && (
               <ScanTab key={scan.key} initialCode={scan.code} initialMode={scan.mode} onOpenApprovals={() => setTab('count')} onChanged={() => setApprovalsVer((v) => v + 1)} />

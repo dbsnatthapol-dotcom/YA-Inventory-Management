@@ -18,10 +18,12 @@ export type Perm =
   | 'ledger.close'
   | 'ledger.ack.planning'
   | 'ledger.ack.account'
+  | 'grn.void'
 
 export const PERMS: { key: Perm; label: string; group: string }[] = [
   { key: 'receive.create', label: 'รับของ / ออก GRN', group: 'รับของ' },
   { key: 'label.print', label: 'พิมพ์ป้าย / รวมกล่อง', group: 'รับของ' },
+  { key: 'grn.void', label: 'ยกเลิกใบรับ (GRN) ที่ของยังไม่ถูกใช้', group: 'รับของ' },
   { key: 'scan.put', label: 'จัดเก็บเข้าที่ (PUT)', group: 'สแกน' },
   { key: 'scan.move', label: 'ย้ายที่ (MOVE)', group: 'สแกน' },
   { key: 'scan.issue', label: 'เบิก (สแกนเบิก / ใบเบิก / FM-P-005)', group: 'สแกน' },
@@ -56,6 +58,7 @@ export const ENV_TABLES = [
   ['stock_counts', 'ใบตรวจนับ'],
   ['stock_closings', 'ปิดยอดเดือน'],
   ['print_jobs', 'คิวพิมพ์'],
+  ['receipt_checks', 'ใบตรวจรับ'],
 ] as const
 export type EnvTable = (typeof ENV_TABLES)[number][0]
 export type EnvCounts = Record<EnvTable, number>
@@ -124,6 +127,13 @@ export interface Grn {
   note: string | null
   /** รับของทดแทน (แทน NG ที่ส่งคืน) */
   replacement?: boolean
+  /** void = ยกเลิกแล้ว (กล่องของใบนี้ใช้ไม่ได้ · บัญชีคุมไม่นับ) */
+  status?: 'active' | 'void'
+  voidReason?: string | null
+  voidedCode?: string | null
+  voidedAt?: string | null
+  /** ใบตรวจรับที่ออกใบรับนี้ */
+  checkId?: string | null
 }
 
 export interface GrnLine {
@@ -138,6 +148,10 @@ export interface GrnLine {
   invoiceQty: number | null
   needsQi: boolean
   homeLocation: string | null
+  /** เลขเคส/พาเลทจาก Packing List */
+  caseNo?: string | null
+  /** เสียหายที่พบตอนตรวจรับ (รวมอยู่ใน countedQty · แยกเป็นกล่อง NG) */
+  damagedQty?: number
 }
 
 export interface LpnItem {
@@ -161,7 +175,10 @@ export interface Lpn {
   status: LpnStatus
   createdAt: string
   items: LpnItem[]
+  /** เลขเคส/พาเลทจาก Packing List (1 เคส = 1 กล่อง) */
+  caseNo?: string | null
   /** จากใบรับสินค้าของกล่อง (มีเมื่อโหลดรายการกล่อง) */
+  plRef?: string | null
   grnNo?: string | null
   modelCode?: string | null
   invoiceNo?: string | null
@@ -191,6 +208,8 @@ export interface Tx {
   decidedCode: string | null
   /** ใบเบิกที่ทำให้เกิดรายการนี้ (เบิก/คืน) */
   requisitionId?: string | null
+  /** ย้าย: scan = หน้าสแกน · list = เลือกจากรายการ */
+  via?: 'scan' | 'list' | null
 }
 
 export interface StorageLoc {
@@ -513,8 +532,117 @@ export interface ReceivePayload {
   note?: string
   /** รับของทดแทน */
   replacement?: boolean
-  /** zoneId = โซนเก็บที่ผู้รับเลือกเอง (ไม่ระบุ = ระบบแนะนำตามกฎลูกค้า + กลุ่ม part) */
-  lines: { partNo: string; description: string; plQty: number; countedQty: number; zoneId?: string }[]
+  /** zoneId = โซนเก็บที่ผู้รับเลือกเอง (ไม่ระบุ = ระบบแนะนำตามกฎลูกค้า + กลุ่ม part) · caseNo เดียวกัน = กล่องเดียวกัน
+   *  damagedQty = เสียหาย (อยู่ใน countedQty) แยกเป็นกล่องที่พื้นที่กัก NG */
+  lines: { partNo: string; description: string; plQty: number; countedQty: number; zoneId?: string; caseNo?: string; damagedQty?: number }[]
+}
+
+// ===== ใบตรวจรับ: แปลง Packing List เป็นรายการตรวจทีละเคส (มือถือ/คอม หลายคนพร้อมกัน) แล้วออก GRN จากยอดที่นับได้ =====
+export type CheckStatus = 'open' | 'done' | 'cancelled'
+
+export interface CheckLine {
+  id: string
+  checkId: string
+  lineNo: number
+  /** '' = Packing List ไม่ระบุเคส */
+  caseNo: string
+  partNo: string
+  description: string | null
+  plQty: number
+  invLine: number | null
+  zoneId: string | null
+  /** พบตอนตรวจ ไม่มีใน Packing List */
+  extra: boolean
+  /** null = ยังไม่ได้ตรวจ */
+  actualQty: number | null
+  damagedQty: number
+  note: string | null
+  photos: string[]
+  checkedCode: string | null
+  checkedAt: string | null
+  /** ต้องส่งกลับตอนบันทึก (กันบันทึกทับกัน) */
+  version: number
+}
+
+export interface ReceiptCheck {
+  id: string
+  checkNo: string
+  status: CheckStatus
+  modelCode: string | null
+  customerId: string | null
+  replacement: boolean
+  plRef: string
+  soNo: string | null
+  packages: string | null
+  title: string | null
+  invoiceNo: string | null
+  poNo: string | null
+  docDate: string | null
+  movementType: string | null
+  invoiceLines: InvoiceLine[]
+  plImages: string[]
+  invImages: string[]
+  note: string | null
+  grnId: string | null
+  grnNo: string | null
+  createdCode: string | null
+  createdAt: string
+  doneCode: string | null
+  doneAt: string | null
+  cancelReason: string | null
+  cancelledCode: string | null
+  cancelledAt: string | null
+  /** สรุปสำหรับรายการใบ (นับจากบรรทัด) */
+  lineCount: number
+  checkedCount: number
+}
+
+export interface CheckDetail {
+  check: ReceiptCheck
+  lines: CheckLine[]
+}
+
+export interface CheckPayload {
+  modelCode: string
+  replacement?: boolean
+  note?: string
+  packingList: { refDoc: string; soNo?: string; packages?: string; title?: string; imagePaths?: string[] }
+  invoice?: { invoiceNo: string; poNo?: string; docDate?: string; movementType?: string; lines: { lineNo: number; partNo: string; description: string; qty: number }[]; imagePaths?: string[] }
+  lines: { caseNo: string; partNo: string; description: string; plQty: number; invLine?: number | null; zoneId?: string | null }[]
+}
+
+/** ส่งเฉพาะช่องที่เปลี่ยน · actual: null = ยกเลิกการตรวจบรรทัดนี้ */
+export interface CheckLinePatch {
+  actual?: number | null
+  damaged?: number
+  note?: string
+  photos?: string[]
+  partNo?: string
+  description?: string
+  plQty?: number
+  caseNo?: string
+  zoneId?: string | null
+}
+
+export interface CheckHeaderPatch {
+  invoiceNo?: string
+  poNo?: string
+  docDate?: string
+  movementType?: string
+  invoiceLines?: InvoiceLine[]
+  note?: string
+  replacement?: boolean
+  plImages?: string[]
+  invImages?: string[]
+}
+
+export interface CheckLineAdd {
+  caseNo: string
+  partNo: string
+  description?: string
+  plQty?: number
+  actual?: number | null
+  note?: string
 }
 
 export interface GrnDetail {

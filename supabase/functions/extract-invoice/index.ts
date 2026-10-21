@@ -26,9 +26,12 @@ Return {"invoiceNo": string, "docDate": "YYYY-MM-DD", "poNo": string, "movementT
 lineNo is the SL No printed on the row. ${RULES}`,
   packing_list: `You read a PACKING LIST delivered with a truck to an auto-parts warehouse.
 Return {"refDoc": string, "soNo": string, "packages": string, "title": string,
- "lines": [{"partNo": string, "description": string, "qty": number, "invoiceLineNo": number | null}]}
+ "lines": [{"caseNo": string, "partNo": string, "description": string, "qty": number, "invoiceLineNo": number | null}]}
 refDoc is "REF. Document No.", soNo is "So.", packages is the packing type / package range (e.g. "F28-F40"),
-title is the heading line (e.g. "TWIN 36 SET (72 Wheels)"), qty is "Actual Quantity", invoiceLineNo is "No on Invoice". ${RULES}`,
+title is the heading line (e.g. "TWIN 36 SET (72 Wheels)"), qty is "Actual Quantity", invoiceLineNo is "No on Invoice".
+caseNo is the case / pallet / box / package number the row is packed in (a column such as "Case No.", "C/No.", "Pallet No.", "Box No." or "Package No.", e.g. "F28");
+when rows are grouped under one case heading or the case cell is merged across rows, repeat that number on every row of the group;
+use "" when the document shows no case for the row. ${RULES}`,
 }
 
 const s = (v: unknown) => String(v ?? '').trim()
@@ -44,7 +47,7 @@ function parse(text: string, docType: 'invoice' | 'packing_list') {
       soNo: s(raw.soNo),
       packages: s(raw.packages),
       title: s(raw.title),
-      lines: rows.map((l) => ({ partNo: s(l.partNo), description: s(l.description), qty: n(l.qty), invoiceLineNo: l.invoiceLineNo == null ? null : n(l.invoiceLineNo) })),
+      lines: rows.map((l) => ({ caseNo: s(l.caseNo), partNo: s(l.partNo), description: s(l.description), qty: n(l.qty), invoiceLineNo: l.invoiceLineNo == null ? null : n(l.invoiceLineNo) })),
     }
   }
   return {

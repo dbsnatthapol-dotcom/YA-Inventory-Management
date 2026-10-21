@@ -7,10 +7,12 @@ import { fmt, needsQi, suggestedZone } from '../../wms/logic'
 import { basePartNo, resolvePart } from '../../wms/partCodes'
 import { SAMPLE_INVOICE, SAMPLE_MODEL, SAMPLE_PACKING_LIST } from '../../wms/sampleDocs'
 import { useWms } from '../../wms/useWms'
-import { Alert, BigButton, Card, Field, inputCls, Pill, tdCls, thCls } from './ui'
+import { Alert, BigButton, Card, Field, inputCls, Pill, Segmented, tdCls, thCls } from './ui'
 
 interface Row {
   key: string
+  /** เลขเคส/พาเลทจาก Packing List (เคสเดียวกัน = กล่อง/ป้ายเดียวกัน) */
+  caseNo: string
   partNo: string
   description: string
   plQty: number
@@ -39,9 +41,12 @@ function PhotoPick({ id, label, file, onFile }: { id: string; label: string; fil
   )
 }
 
-export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }) {
+export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: string) => void; onCheckCreated: (checkId: string) => void }) {
   const { api, master, settings, can } = useWms()
   const mobile = useIsMobile()
+  /** check = สร้างใบตรวจรับแล้วตรวจทีละเคส (หลายคนช่วยกันได้) · direct = กรอกยอดนับที่นี่แล้วออก GRN เลย */
+  const [how, setHow] = useState<'check' | 'direct'>('check')
+  const direct = how === 'direct'
   const [modelCode, setModelCode] = useState('')
   const [replacement, setReplacement] = useState(false)
   const [pl, setPl] = useState({ refDoc: '', soNo: '', packages: '' })
@@ -88,7 +93,7 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
     setRows(
       SAMPLE_PACKING_LIST.lines.map((l) => {
         const il = SAMPLE_INVOICE.lines.find((x) => canon(x.partNo) === canon(l.partNo))
-        return { key: newKey(), partNo: canon(l.partNo), description: l.description, plQty: l.qty, counted: l.qty, invQty: il?.qty ?? null, invLine: il?.lineNo ?? null, zoneId: null }
+        return { key: newKey(), caseNo: '', partNo: canon(l.partNo), description: l.description, plQty: l.qty, counted: l.qty, invQty: il?.qty ?? null, invLine: il?.lineNo ?? null, zoneId: null }
       }),
     )
     setMsg({ tone: 'info', text: 'ใส่เอกสารตัวอย่าง RE TWIN แล้ว (Packing List 55035596 + Invoice 4957930126) · ยอดนับจริงตั้งต้นเท่ากับ Packing List แก้ได้ทุกช่อง' })
@@ -103,8 +108,9 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
     try {
       const d = await readPackingListPhoto(file)
       setPl({ refDoc: d.refDoc, soNo: d.soNo, packages: d.packages })
-      setRows(d.lines.map((l) => ({ key: newKey(), partNo: canon(l.partNo), description: l.description, plQty: l.qty, counted: l.qty, invQty: null, invLine: l.invoiceLineNo, zoneId: null })))
-      setMsg({ tone: 'ok', text: `AI อ่าน Packing List ได้ ${d.lines.length} รายการ · ตรวจทานกับเอกสารก่อนยืนยัน` })
+      setRows(d.lines.map((l) => ({ key: newKey(), caseNo: (l.caseNo ?? '').trim(), partNo: canon(l.partNo), description: l.description, plQty: l.qty, counted: l.qty, invQty: null, invLine: l.invoiceLineNo, zoneId: null })))
+      const cases = new Set(d.lines.map((l) => l.caseNo?.trim()).filter(Boolean)).size
+      setMsg({ tone: 'ok', text: `AI อ่าน Packing List ได้ ${d.lines.length} รายการ${cases ? ` ใน ${cases} เคส` : ' (ไม่พบเลขเคส · ใส่เองได้ในช่อง "เคส")'} · ตรวจทานกับเอกสารก่อน` })
     } catch (e) {
       setMsg({ tone: 'warn', text: `อ่านภาพอัตโนมัติไม่ได้ (${errorText(e)}) · กรอกเอง หรือถ่ายใหม่ให้ตรงและชัดขึ้น` })
     } finally {
@@ -126,10 +132,14 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
           return il ? { ...r, invQty: il.qty, invLine: il.lineNo } : r
         })
         // part ที่มีใน invoice แต่ไม่มีใน packing list → เพิ่มเป็นแถว (รับจริง 0)
-        for (const l of d.lines) if (!next.some((r) => canon(r.partNo) === canon(l.partNo))) next.push({ key: newKey(), partNo: canon(l.partNo), description: l.description, plQty: 0, counted: 0, invQty: l.qty, invLine: l.lineNo, zoneId: null })
+        for (const l of d.lines) if (!next.some((r) => canon(r.partNo) === canon(l.partNo))) next.push({ key: newKey(), caseNo: '', partNo: canon(l.partNo), description: l.description, plQty: 0, counted: 0, invQty: l.qty, invLine: l.lineNo, zoneId: null })
         return next
       })
-      setMsg({ tone: 'ok', text: `AI อ่าน Invoice ${d.invoiceNo} ได้ ${d.lines.length} รายการ` })
+      setMsg(
+        d.lines.length
+          ? { tone: 'ok', text: `AI อ่าน Invoice ${d.invoiceNo} ได้ ${d.lines.length} รายการ` }
+          : { tone: 'warn', text: `AI อ่าน Invoice ${d.invoiceNo} ได้แค่หัวเอกสาร ไม่มีรายการสินค้า · ถ่ายหน้าที่มีรายการเพิ่ม หรือใส่ยอด Invoice เองในช่อง "Invoice" (ใส่ทีหลังในใบตรวจรับก็ได้)` },
+      )
       void checkInvoice(d.invoiceNo)
     } catch (e) {
       setMsg({ tone: 'warn', text: `อ่านภาพอัตโนมัติไม่ได้ (${errorText(e)}) · กรอกเอง หรือถ่ายใหม่` })
@@ -146,11 +156,12 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
   // พิมพ์เสร็จ: เปลี่ยนเป็นรหัสหลัก (RAT00586/B → RAT00586)
   const settlePart = (key: string, partNo: string) => patch(key, { partNo: canon(partNo) })
 
-  const offPl = rows.filter((r) => r.counted !== r.plQty).length
+  const offPl = direct ? rows.filter((r) => r.counted !== r.plQty).length : 0
   const offInv = rows.filter((r) => r.invQty !== null && r.counted !== r.invQty).length
   const mi3 = rows.filter((r) => needsQi(master, settings.qiPartTypes, modelCode, canon(r.partNo))).length
   const unknown = rows.filter((r) => r.partNo && !resolvePart(master.parts, r.partNo)).length
-  const total = rows.reduce((s, r) => s + r.counted, 0)
+  const total = rows.reduce((s, r) => s + (direct ? r.counted : r.plQty), 0)
+  const caseCount = new Set(rows.filter((r) => r.plQty > 0 || r.invQty === null).map((r) => r.caseNo.trim().toUpperCase() || r.key)).size
   const problems = [
     !modelCode && 'เลือก Model',
     !pl.refDoc.trim() && 'ใส่เลข REF ของ Packing List',
@@ -176,12 +187,44 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
               lines: rows.filter((r) => r.invQty !== null).map((r, i) => ({ lineNo: r.invLine ?? i + 1, partNo: canon(r.partNo), description: r.description, qty: r.invQty ?? 0 })),
             }
           : undefined,
-        lines: rows.map((r) => ({ partNo: canon(r.partNo), description: r.description, plQty: r.plQty, countedQty: r.counted, ...(r.zoneId ? { zoneId: r.zoneId } : {}) })),
+        lines: rows.map((r) => ({ partNo: canon(r.partNo), description: r.description, plQty: r.plQty, countedQty: r.counted, ...(r.zoneId ? { zoneId: r.zoneId } : {}), ...(r.caseNo.trim() ? { caseNo: r.caseNo.trim() } : {}) })),
       })
       // ภาพเอกสารเป็นหลักฐาน: อัปโหลดหลังบันทึก GRN แล้ว (ถ้าเน็ตช้า/ล้ม การรับของยังสำเร็จ)
       const [plPath, invPath] = await Promise.all([plFile ? api.uploadDoc(plFile, 'pl') : null, invFile ? api.uploadDoc(invFile, 'invoice') : null])
       if (plPath || invPath) await api.attachImages(res.grnId, plPath ? [plPath] : [], invPath ? [invPath] : []).catch(() => undefined)
       onCreated(res.grnId)
+    } catch (e) {
+      setMsg({ tone: 'bad', text: errorText(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // ใบตรวจรับ: ภาพเอกสารอัปโหลดก่อน (เก็บไว้ที่ใบ แล้วติดไปกับ GRN ตอนตรวจครบ) · ภาพล้มก็สร้างใบได้
+  const submitCheck = async () => {
+    setBusy(true)
+    setMsg(null)
+    try {
+      const [plPath, invPath] = await Promise.all([plFile ? api.uploadDoc(plFile, 'pl') : null, invFile ? api.uploadDoc(invFile, 'invoice') : null])
+      // part ที่มีแต่ใน Invoice (ยอด PL 0) ไม่ต้องตรวจ แต่ยังใช้เทียบยอด Invoice
+      const toCheck = rows.filter((r) => r.plQty > 0 || r.invQty === null)
+      const res = await api.createCheck({
+        modelCode,
+        replacement,
+        packingList: { refDoc: pl.refDoc.trim(), soNo: pl.soNo.trim(), packages: pl.packages.trim(), imagePaths: plPath ? [plPath] : [] },
+        invoice: inv.invoiceNo.trim()
+          ? {
+              invoiceNo: inv.invoiceNo.trim(),
+              poNo: inv.poNo.trim(),
+              docDate: inv.docDate.trim(),
+              movementType: inv.movementType.trim(),
+              lines: rows.filter((r) => r.invQty !== null).map((r, i) => ({ lineNo: r.invLine ?? i + 1, partNo: canon(r.partNo), description: r.description, qty: r.invQty ?? 0 })),
+              imagePaths: invPath ? [invPath] : [],
+            }
+          : undefined,
+        lines: toCheck.map((r) => ({ caseNo: r.caseNo.trim(), partNo: canon(r.partNo), description: r.description, plQty: r.plQty, invLine: r.invLine, zoneId: r.zoneId })),
+      })
+      onCheckCreated(res.id)
     } catch (e) {
       setMsg({ tone: 'bad', text: errorText(e) })
     } finally {
@@ -195,10 +238,20 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
     const qi = needsQi(master, settings.qiPartTypes, modelCode, partNo)
     const known = !!resolvePart(master.parts, r.partNo)
     const zone = suggestedZone(master, customerId, partNo)
-    const bad = r.counted !== r.plQty || (r.invQty !== null && r.counted !== r.invQty)
+    const bad = direct && (r.counted !== r.plQty || (r.invQty !== null && r.counted !== r.invQty))
     const num = `rounded-md px-2 text-right font-mono ${wide ? 'w-full py-2.5 text-base' : 'w-24 py-1.5'}`
     return {
       bad,
+      caseNo: (
+        <input
+          id={`case-${r.key}`}
+          className={`rounded-md border border-slate-300 px-2 font-mono uppercase ${wide ? 'w-full py-2.5 text-base' : 'w-24 py-1.5 text-sm'}`}
+          value={r.caseNo}
+          onChange={(e) => patch(r.key, { caseNo: e.target.value })}
+          placeholder="–"
+          aria-label="เคส / พาเลท"
+        />
+      ),
       part: (
         <input
           id={`part-${r.key}`}
@@ -247,8 +300,10 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
       ),
       pills: (
         <>
-          {r.counted === r.plQty ? <Pill tone="ok">ตรง PL</Pill> : r.counted < r.plQty ? <Pill tone="bad">ขาด {fmt(r.plQty - r.counted)}</Pill> : <Pill tone="warn">เกิน {fmt(r.counted - r.plQty)}</Pill>}
-          {r.invQty !== null && r.counted !== r.invQty && <Pill tone="bad">ไม่ตรง Invoice</Pill>}
+          {direct && (r.counted === r.plQty ? <Pill tone="ok">ตรง PL</Pill> : r.counted < r.plQty ? <Pill tone="bad">ขาด {fmt(r.plQty - r.counted)}</Pill> : <Pill tone="warn">เกิน {fmt(r.counted - r.plQty)}</Pill>)}
+          {direct && r.invQty !== null && r.counted !== r.invQty && <Pill tone="bad">ไม่ตรง Invoice</Pill>}
+          {!direct && r.invQty !== null && r.plQty !== r.invQty && <Pill tone="warn">PL ไม่ตรง Invoice</Pill>}
+          {!direct && r.plQty === 0 && r.invQty !== null && <Pill tone="muted">มีแค่ใน Invoice</Pill>}
           {qi && <Pill tone="mi3">ส่ง MI3</Pill>}
           {r.partNo && !known && <Pill tone="warn">ไม่มีใน Master</Pill>}
         </>
@@ -267,15 +322,18 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
     <div className={`flex flex-col gap-4 ${mobile ? 'pb-4' : 'pb-28'}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-1.5 text-xs">
-          {['1 ถ่าย/กรอกเอกสาร', '2 นับจริง', '3 ยืนยัน → ออก GRN', '4 ติดป้าย'].map((s, i) => (
+          {(direct ? ['1 ถ่าย/กรอกเอกสาร', '2 นับจริง', '3 ยืนยัน → ออก GRN', '4 ติดป้าย'] : ['1 ถ่าย/กรอกเอกสาร', '2 สร้างใบตรวจรับ', '3 ตรวจทีละเคส', '4 ออก GRN']).map((s, i) => (
             <span key={s} className={`rounded-full px-3 py-1 font-medium ${i < (rows.length ? 2 : 1) ? 'bg-sky-100 text-sky-800' : 'bg-slate-100 text-slate-500'}`}>
               {s}
             </span>
           ))}
         </div>
-        <BigButton tone="secondary" onClick={useSample}>
-          ใช้เอกสารตัวอย่าง (RE TWIN)
-        </BigButton>
+        {/* เอกสารตัวอย่างใช้ได้เฉพาะหน้าสาธิตและโหมดทดลอง (กันใบรับปลอมเข้าระบบจริง) */}
+        {(api.kind === 'demo' || settings.mode === 'trial') && (
+          <BigButton tone="secondary" onClick={useSample}>
+            ใช้เอกสารตัวอย่าง (RE TWIN)
+          </BigButton>
+        )}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -333,14 +391,27 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
       {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
 
       <Card
-        title="นับจริงเทียบ Packing List และ Invoice"
+        title={direct ? 'นับจริงเทียบ Packing List และ Invoice' : 'รายการตาม Packing List (ตรวจนับในใบตรวจรับ)'}
         action={
-          <BigButton tone="secondary" onClick={() => setRows((rs) => [...rs, { key: newKey(), partNo: '', description: '', plQty: 0, counted: 0, invQty: null, invLine: null, zoneId: null }])}>
+          <BigButton tone="secondary" onClick={() => setRows((rs) => [...rs, { key: newKey(), caseNo: rs.at(-1)?.caseNo ?? '', partNo: '', description: '', plQty: 0, counted: 0, invQty: null, invLine: null, zoneId: null }])}>
             + เพิ่มรายการ
           </BigButton>
         }
       >
-        <p className="text-xs text-slate-500">จับคู่ด้วย Part No. ไม่ใช้ลำดับบรรทัด · ยอดที่เข้าสต็อกคือ "นับได้จริง" · ช่องเก็บจริงระบบเลือกให้ตอนยืนยัน</p>
+        <Segmented
+          label="วิธีตรวจรับ"
+          value={how}
+          onChange={setHow}
+          options={[
+            ['check', 'ตรวจทีละเคสในใบตรวจรับ (แนะนำ)'],
+            ['direct', 'กรอกยอดนับที่นี่แล้วรับเลย'],
+          ]}
+        />
+        <p className="text-xs text-slate-500">
+          {direct
+            ? 'จับคู่ด้วย Part No. ไม่ใช้ลำดับบรรทัด · ยอดที่เข้าสต็อกคือ "นับได้จริง" · ช่องเก็บจริงระบบเลือกให้ตอนยืนยัน'
+            : 'ใบตรวจรับเปิดได้ทั้งมือถือและคอม หลายคนแบ่งเคสกันตรวจได้ · ช่องนับเริ่มว่าง กด "ตรง" หรือใส่ยอดที่นับได้ · ตรวจครบแล้วออก GRN (1 เคส = 1 ป้าย)'}
+        </p>
         <div ref={tableRef} className={mobile ? 'flex flex-col gap-2' : 'overflow-x-auto rounded-lg ring-1 ring-slate-200'}>
           {mobile ? (
             <>
@@ -355,15 +426,21 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
                       {c.remove}
                     </div>
                     {r.description && <p className="text-sm text-slate-600">{r.description}</p>}
-                    <div className="grid grid-cols-3 gap-2 text-xs text-slate-500">
+                    <div className={`grid ${direct ? 'grid-cols-4' : 'grid-cols-3'} gap-2 text-xs text-slate-500`}>
+                      <label className="flex flex-col gap-1">
+                        เคส
+                        {c.caseNo}
+                      </label>
                       <label className="flex flex-col gap-1">
                         Packing List
                         {c.pl}
                       </label>
-                      <label className="flex flex-col gap-1 font-semibold text-sky-800">
-                        นับได้จริง
-                        {c.counted}
-                      </label>
+                      {direct && (
+                        <label className="flex flex-col gap-1 font-semibold text-sky-800">
+                          นับได้จริง
+                          {c.counted}
+                        </label>
+                      )}
                       <label className="flex flex-col gap-1">
                         Invoice
                         {c.inv}
@@ -383,10 +460,11 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
             <thead>
               <tr>
                 <th className={thCls}>#</th>
+                <th className={thCls}>เคส</th>
                 <th className={thCls}>Part No.</th>
                 <th className={thCls}>รายการ</th>
                 <th className={`${thCls} text-right`}>Packing List</th>
-                <th className={`${thCls} text-right`}>นับได้จริง</th>
+                {direct && <th className={`${thCls} text-right`}>นับได้จริง</th>}
                 <th className={`${thCls} text-right`}>Invoice</th>
                 <th className={thCls}>โซนเก็บ</th>
                 <th className={thCls}>ผล</th>
@@ -396,7 +474,7 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
             <tbody>
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={9} className={`${tdCls} py-8 text-center text-slate-500`}>
+                  <td colSpan={10} className={`${tdCls} py-8 text-center text-slate-500`}>
                     ถ่าย Packing List ให้ AI อ่าน, กด "+ เพิ่มรายการ" เพื่อกรอกเอง หรือกด "ใช้เอกสารตัวอย่าง"
                   </td>
                 </tr>
@@ -406,10 +484,11 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
                 return (
                   <tr key={r.key} className={c.bad ? 'bg-rose-50/60' : undefined}>
                     <td className={`${tdCls} text-right font-mono text-slate-400`}>{i + 1}</td>
+                    <td className={tdCls}>{c.caseNo}</td>
                     <td className={tdCls}>{c.part}</td>
                     <td className={`${tdCls} max-w-[260px] text-slate-600`}>{r.description}</td>
                     <td className={`${tdCls} text-right`}>{c.pl}</td>
-                    <td className={`${tdCls} text-right`}>{c.counted}</td>
+                    {direct && <td className={`${tdCls} text-right`}>{c.counted}</td>}
                     <td className={`${tdCls} text-right`}>{c.inv}</td>
                     <td className={tdCls}>{c.zone}</td>
                     <td className={`${tdCls} space-x-1 space-y-1`}>{c.pills}</td>
@@ -434,18 +513,18 @@ export function ReceiveTab({ onCreated }: { onCreated: (grnId: string) => void }
       <div className={`sticky bottom-2 z-20 flex flex-wrap items-center justify-between rounded-xl border-2 border-sky-700 bg-white shadow-lg ${mobile ? 'gap-2 px-3 py-2' : 'gap-3 px-4 py-3'}`}>
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <strong className="text-base">
-            {rows.length} รายการ · {fmt(total)} ชิ้น
+            {rows.length} รายการ{direct ? '' : ` · ${caseCount} เคส`} · {fmt(total)} ชิ้น
           </strong>
-          <Pill tone={offPl ? 'bad' : 'ok'}>{offPl ? `ต่างจาก PL ${offPl}` : 'ตรง PL ทุกรายการ'}</Pill>
-          {(inv.invoiceNo || existing) && <Pill tone={offInv ? 'bad' : 'ok'}>{offInv ? `ไม่ตรง Invoice ${offInv}` : 'ตรง Invoice'}</Pill>}
+          {direct && <Pill tone={offPl ? 'bad' : 'ok'}>{offPl ? `ต่างจาก PL ${offPl}` : 'ตรง PL ทุกรายการ'}</Pill>}
+          {direct && (inv.invoiceNo || existing) && <Pill tone={offInv ? 'bad' : 'ok'}>{offInv ? `ไม่ตรง Invoice ${offInv}` : 'ตรง Invoice'}</Pill>}
           {mi3 > 0 && <Pill tone="mi3">ส่ง MI3 {mi3} รายการ</Pill>}
           {unknown > 0 && <Pill tone="warn">ไม่มีใน Master {unknown}</Pill>}
           {settings.mode === 'trial' && <Pill tone="warn">โหมดทดลอง</Pill>}
         </div>
         <div className={`flex items-center gap-3 ${mobile ? 'w-full flex-col items-stretch gap-1' : ''}`}>
           {problems.length > 0 && <span className="text-xs text-rose-600">{problems[0]}</span>}
-          <BigButton disabled={busy || problems.length > 0} onClick={submit} className={`!py-3 text-base ${mobile ? 'w-full' : ''}`}>
-            {busy ? 'กำลังบันทึก…' : 'ยืนยันรับเข้า → ออก GRN'}
+          <BigButton disabled={busy || problems.length > 0} onClick={direct ? submit : submitCheck} className={`!py-3 text-base ${mobile ? 'w-full' : ''}`}>
+            {busy ? 'กำลังบันทึก…' : direct ? 'ยืนยันรับเข้า → ออก GRN' : 'สร้างใบตรวจรับ → ตรวจทีละเคส'}
           </BigButton>
         </div>
       </div>

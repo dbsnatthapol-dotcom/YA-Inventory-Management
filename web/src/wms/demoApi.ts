@@ -7,6 +7,9 @@ import { canonPartNo, partRevision, partsOfModel, resolvePart } from './partCode
 import { HEAD_KINDS } from './readiness'
 import { countLocations, systemQty } from './stockImport'
 import type {
+  CheckLine,
+  CheckPayload,
+  ReceiptCheck,
   Grn,
   GrnLine,
   Invoice,
@@ -50,6 +53,8 @@ interface DemoDb {
   closings: StockClosing[]
   counts: StockCount[]
   printJobs: PrintJob[]
+  /** ใบตรวจรับ (บรรทัดอยู่ในใบ) */
+  checks: DemoCheck[]
   /** ชุดที่ล้างเก็บไว้ (ฐานข้อมูลจริงย้ายแถวไป env archive-<เลขชุด>) */
   archives: Omit<EnvArchive, 'restorable'>[]
   archiveData: Record<string, DemoData>
@@ -57,8 +62,10 @@ interface DemoDb {
   sampled?: boolean
 }
 
+type DemoCheck = Omit<ReceiptCheck, 'grnNo' | 'lineCount' | 'checkedCount'> & { lines: CheckLine[] }
+
 /** ข้อมูลรายการ (ล้างเก็บได้) · ที่เหลือใน DemoDb เป็นข้อมูลหลัก ค่าตั้ง และเลขเอกสาร */
-const DATA_KEYS = ['invoices', 'grns', 'grnLines', 'lpns', 'tx', 'requisitions', 'closings', 'counts', 'printJobs'] as const
+const DATA_KEYS = ['invoices', 'grns', 'grnLines', 'lpns', 'tx', 'requisitions', 'closings', 'counts', 'printJobs', 'checks'] as const
 type DemoData = Pick<DemoDb, (typeof DATA_KEYS)[number]>
 
 const DEMO_HEAD = { id: 'demo-head', employeeCode: 'DEMO-WH', fullName: 'เต็มดวง (เจี๊ยบ)', role: 'warehouse' }
@@ -75,6 +82,7 @@ function seed(): DemoDb {
     closings: [],
     counts: [],
     printJobs: [],
+    checks: [],
     archives: [],
     archiveData: {},
     invoices: [],
@@ -181,6 +189,7 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
     stock_counts: d.counts.length,
     stock_closings: d.closings.length,
     print_jobs: d.printJobs.length,
+    receipt_checks: (d.checks ?? []).length,
   })
   const hasData = (c: EnvCounts) => Object.values(c).some((n) => n > 0)
   const countRows = (fromDay: string): CountRow[] =>
@@ -230,17 +239,66 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
   }
   const lpnOf = (lpn: Lpn): Lpn => {
     const grn = db.grns.find((g) => g.id === lpn.grnId)
-    return { ...clone(lpn), grnNo: grn?.grnNo ?? null, modelCode: grn?.modelCode ?? null, invoiceNo: grn?.invoiceNo ?? null }
+    return { ...clone(lpn), grnNo: grn?.grnNo ?? null, modelCode: grn?.modelCode ?? null, invoiceNo: grn?.invoiceNo ?? null, plRef: grn?.plRef ?? null }
   }
 
-  // ===== ใบเบิก: กติกาเดียวกับ wms_issue_fifo / wms_return_lifo ใน 0014 =====
+  // ===== ช่องแนะนำตามกฎโซนตอนนี้ (เหมือน suggest_slots ใน 0020): หลายกล่องได้ช่องว่างไม่ซ้ำกัน =====
+  const suggestFor = (ids: string[]) => {
+    const busy = new Set(db.lpns.filter((l) => l.status === 'active').map((l) => l.locationCode))
+    const taken = new Set<string>()
+    const out: { lpnId: string; code: string | null }[] = []
+    for (const id of ids) {
+      const lpn = db.lpns.find((l) => l.id === id)
+      if (!lpn) continue
+      const grn = db.grns.find((g) => g.id === lpn.grnId)
+      const customer = grn?.customerId ?? db.master.models.find((m) => m.code === grn?.modelCode)?.customerId ?? null
+      const item = [...lpn.items].filter((i) => i.qty > 0).sort((a, b) => b.qty - a.qty || a.partNo.localeCompare(b.partNo))[0]
+      const type = db.master.parts.find((p) => p.partNo === item?.partNo)?.type ?? null
+      const zones = db.master.rules
+        .filter((r) => r.customerId === customer && (r.partType === type || r.partType === null))
+        .sort((a, b) => Number(a.partType === null) - Number(b.partType === null))
+        .map((r) => r.zoneId)
+      const free = (zoneId: string) =>
+        db.master.locations
+          .filter((l) => l.zoneId === zoneId && l.active && !l.blocked && (l.kind === 'bin' || l.kind === 'floor') && !busy.has(l.code) && !taken.has(l.code))
+          .sort((a, b) => a.code.localeCompare(b.code))[0]?.code ?? null
+      const code = zones.map(free).find((c) => c !== null) ?? null
+      if (code) taken.add(code)
+      out.push({ lpnId: id, code })
+    }
+    return out
+  }
+
+  // ===== ใบตรวจรับ =====
+  const checkOf = ({ lines, ...c }: DemoCheck): ReceiptCheck => ({
+    ...c,
+    grnNo: db.grns.find((g) => g.id === c.grnId)?.grnNo ?? null,
+    lineCount: lines.length,
+    checkedCount: lines.filter((l) => l.actualQty !== null).length,
+  })
+  const openCheck = (id: string) => {
+    const c = db.checks.find((x) => x.id === id)
+    if (!c || c.status !== 'open') return fail('ไม่พบใบตรวจรับที่ยังเปิดอยู่')
+    return c
+  }
+  const wholeQty = (n: number) => Number.isInteger(n) && n >= 0
+  const invLines = (lines: { lineNo?: number; partNo: string; description?: string | null; qty: number }[]) =>
+    lines
+      .filter((l) => l.partNo.trim())
+      .map((l, i) => ({ lineNo: l.lineNo || i + 1, partNo: canonPartNo(db.master.parts, l.partNo), description: l.description ?? '', qty: Math.max(0, Number(l.qty) || 0) }))
+  const partName = (partNo: string) => db.master.parts.find((p) => p.partNo === canonPartNo(db.master.parts, partNo))?.name ?? null
+
+  // ===== ใบเบิก: กติกาเดียวกับ wms_issue_fifo (0021) / wms_return_lifo (0014) =====
+  const inNgArea = (l: Lpn) => db.master.locations.find((x) => x.code === l.locationCode)?.kind === 'ng'
   const onHand = (part: string) =>
     db.lpns.filter((l) => l.status === 'active').reduce((s, l) => s + l.items.filter((i) => i.partNo === part).reduce((t, i) => t + i.qty, 0), 0)
   const issueFifo = (reqId: string, doc: string, ref: string, part: string, qty: number) => {
     if (!(qty > 0)) return
+    // ใบเบิก NG ตัดจากพื้นที่กัก NG ก่อน · ใบอื่น (เข้าไลน์ / QC / FM-P-005) ไม่แตะของในพื้นที่ NG
+    const ng = db.requisitions.find((r) => r.id === reqId)?.kind === 'ng'
     const boxes = db.lpns
-      .filter((l) => l.status === 'active' && !l.hold && l.items.some((i) => i.partNo === part && i.qty > 0))
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.lpnNo.localeCompare(b.lpnNo))
+      .filter((l) => l.status === 'active' && !l.hold && (ng || !inNgArea(l)) && l.items.some((i) => i.partNo === part && i.qty > 0))
+      .sort((a, b) => Number(!inNgArea(a)) - Number(!inNgArea(b)) || a.createdAt.localeCompare(b.createdAt) || a.lpnNo.localeCompare(b.lpnNo))
     const have = boxes.reduce((s, l) => s + l.items.filter((i) => i.partNo === part).reduce((t, i) => t + i.qty, 0), 0)
     if (have < qty) fail(`สต็อก ${part} ไม่พอ · พร้อมเบิก ${have} ขอเบิก ${qty}`)
     let left = qty
@@ -275,6 +333,107 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
   }
   const today = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Bangkok' })
 
+  // ===== รับของ: เหมือน create_grn (0020) · caseNo เดียวกัน = กล่องเดียวกัน (part ที่ต้องตรวจ MI3 แยกกล่องตาม part) =====
+  const receive = (input: ReceivePayload, checkId: string | null = null) => {
+    // รหัสหลัก (เลขฐาน) เหมือน trigger part_canon ฝั่งฐานข้อมูล
+    const canon = (c: string) => canonPartNo(db.master.parts, c)
+    const p: ReceivePayload = {
+      ...input,
+      lines: input.lines.map((l) => ({ ...l, partNo: canon(l.partNo) })),
+      invoice: input.invoice && { ...input.invoice, lines: input.invoice.lines.map((l) => ({ ...l, partNo: canon(l.partNo) })) },
+    }
+    if (!p.lines.length) fail('ไม่มีรายการรับเข้า')
+    if (!p.packingList.refDoc.trim()) fail('ต้องมีเลขอ้างอิงของ Packing List')
+    const model = db.master.models.find((m) => m.code === p.modelCode)
+    const customer = model?.customerId ?? p.invoice?.customerId ?? null
+    let invoice = p.invoice?.invoiceNo ? db.invoices.find((i) => i.invoiceNo === p.invoice!.invoiceNo) : undefined
+    if (p.invoice?.invoiceNo && !invoice) {
+      invoice = {
+        id: uid(),
+        invoiceNo: p.invoice.invoiceNo,
+        customerId: customer,
+        poNo: p.invoice.poNo || null,
+        docDate: p.invoice.docDate || null,
+        movementType: p.invoice.movementType || null,
+        status: 'open',
+        statusNote: null,
+        statusAt: null,
+        imagePaths: p.invoice.imagePaths ?? [],
+        createdAt: nowIso(),
+        lines: p.invoice.lines.map((l) => ({ lineNo: l.lineNo, partNo: l.partNo, description: l.description, qty: l.qty })),
+      }
+      db.invoices.unshift(invoice)
+    }
+    const grn: Grn = {
+      id: uid(),
+      grnNo: nextDoc('GRN'),
+      invoiceId: invoice?.id ?? null,
+      invoiceNo: invoice?.invoiceNo ?? null,
+      plRef: p.packingList.refDoc,
+      soNo: p.packingList.soNo || null,
+      packages: p.packingList.packages || null,
+      modelCode: p.modelCode || null,
+      customerId: customer,
+      receivedAt: nowIso(),
+      receiverCode: ME,
+      note: p.note || null,
+      replacement: !!p.replacement,
+      status: 'active',
+      checkId,
+    }
+    db.grns.unshift(grn)
+    const used = new Set(db.lpns.filter((l) => l.status === 'active').map((l) => l.locationCode))
+    // พื้นที่กัก NG: ของเสียหายแยกเป็นกล่องของตัวเอง (เหมือน create_grn 0021) · ไม่มี ⇒ อยู่กล่องเดียวกับของดี
+    const ngLoc = db.master.locations.filter((l) => l.kind === 'ng' && l.active && !l.blocked).map((l) => l.code).sort()[0] ?? null
+    p.lines.forEach((line, i) => {
+      const damaged = line.damagedQty ?? 0
+      if (damaged < 0 || !Number.isInteger(damaged) || damaged > line.countedQty) fail(`จำนวนเสียหายของรายการที่ ${i + 1} ต้องเป็นจำนวนเต็ม 0 ถึง ${line.countedQty}`)
+      const good = ngLoc ? line.countedQty - damaged : line.countedQty
+      const part = db.master.parts.find((x) => x.partNo === line.partNo)
+      const type = part?.type ?? null
+      const needs = !!type && (model?.requiresInspection ?? true) && db.settings.qiPartTypes.includes(type)
+      const rule = db.master.rules.find((r) => r.customerId === customer && r.partType === type) ?? db.master.rules.find((r) => r.customerId === customer && r.partType === null)
+      const zoneId = line.zoneId || rule?.zoneId
+      const home =
+        db.master.locations.find((l) => l.zoneId === zoneId && l.active && (l.kind === 'bin' || l.kind === 'floor') && !used.has(l.code))?.code ??
+        (line.zoneId ? zoneCodeOf(db.master.locations.find((l) => l.zoneId === line.zoneId)?.code ?? line.zoneId) : 'RCV-01')
+      used.add(home)
+      const caseNo = (line.caseNo ?? '').trim().toUpperCase() || null
+      const gl: GrnLine = {
+        id: uid(),
+        grnId: grn.id,
+        lineNo: i + 1,
+        partNo: line.partNo,
+        description: line.description,
+        partType: type,
+        plQty: line.plQty,
+        countedQty: line.countedQty,
+        invoiceQty: invoice?.lines.find((l) => l.partNo === line.partNo)?.qty ?? null,
+        needsQi: needs,
+        homeLocation: home,
+        caseNo,
+        damagedQty: damaged,
+      }
+      db.grnLines.push(gl)
+      if (good > 0) {
+        // กล่องของเคสนี้ที่จุดรับของ (ไม่ใช่กล่อง NG ของเคสเดียวกัน)
+        const same = caseNo && !needs ? db.lpns.find((l) => l.grnId === grn.id && l.caseNo === caseNo && !l.hold && l.status === 'active' && l.locationCode === 'RCV-01') : undefined
+        const lpn: Lpn = same ?? { id: uid(), lpnNo: nextDoc('LPN'), grnId: grn.id, locationCode: needs ? 'MI3-QC' : 'RCV-01', hold: needs, status: 'active', createdAt: nowIso(), items: [], caseNo }
+        lpn.items.push({ id: uid(), lpnId: lpn.id, grnLineId: gl.id, partNo: line.partNo, qty: good })
+        if (!same) db.lpns.push(lpn)
+        log({ kind: 'RECEIVE', docNo: grn.grnNo, lpnId: lpn.id, lpnNo: lpn.lpnNo, partNo: line.partNo, qty: good, toLoc: lpn.locationCode, ref: grn.plRef })
+      }
+      // ของเสียหาย: กล่อง NG แยก 1 กล่องต่อรายการ → คิว "NG รอส่งคืน"
+      if (ngLoc && damaged > 0) {
+        const box: Lpn = { id: uid(), lpnNo: nextDoc('LPN'), grnId: grn.id, locationCode: ngLoc, hold: false, status: 'active', createdAt: nowIso(), items: [], caseNo }
+        box.items.push({ id: uid(), lpnId: box.id, grnLineId: gl.id, partNo: line.partNo, qty: damaged })
+        db.lpns.push(box)
+        log({ kind: 'RECEIVE', docNo: grn.grnNo, lpnId: box.id, lpnNo: box.lpnNo, partNo: line.partNo, qty: damaged, toLoc: ngLoc, ref: grn.plRef, reason: 'เสียหายจากการตรวจรับ → NG' })
+      }
+    })
+    return { grnId: grn.id, grnNo: grn.grnNo }
+  }
+
   const api: WmsApi = {
     kind: 'demo',
     myPermissions: async () => ['*'],
@@ -283,94 +442,16 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
 
     async findInvoiceNo(no) {
       const inv = db.invoices.find((i) => i.invoiceNo === no.trim())
-      return inv ? { id: inv.id, grnCount: db.grns.filter((g) => g.invoiceId === inv.id).length } : null
+      return inv ? { id: inv.id, grnCount: db.grns.filter((g) => g.invoiceId === inv.id && g.status !== 'void').length } : null
     },
 
-    createGrn: (input: ReceivePayload) =>
-      commit(() => {
-        // รหัสหลัก (เลขฐาน) เหมือน trigger part_canon ฝั่งฐานข้อมูล
-        const canon = (c: string) => canonPartNo(db.master.parts, c)
-        const p: ReceivePayload = {
-          ...input,
-          lines: input.lines.map((l) => ({ ...l, partNo: canon(l.partNo) })),
-          invoice: input.invoice && { ...input.invoice, lines: input.invoice.lines.map((l) => ({ ...l, partNo: canon(l.partNo) })) },
-        }
-        if (!p.lines.length) fail('ไม่มีรายการรับเข้า')
-        if (!p.packingList.refDoc.trim()) fail('ต้องมีเลขอ้างอิงของ Packing List')
-        const model = db.master.models.find((m) => m.code === p.modelCode)
-        const customer = model?.customerId ?? p.invoice?.customerId ?? null
-        let invoice = p.invoice?.invoiceNo ? db.invoices.find((i) => i.invoiceNo === p.invoice!.invoiceNo) : undefined
-        if (p.invoice?.invoiceNo && !invoice) {
-          invoice = {
-            id: uid(),
-            invoiceNo: p.invoice.invoiceNo,
-            customerId: customer,
-            poNo: p.invoice.poNo || null,
-            docDate: p.invoice.docDate || null,
-            movementType: p.invoice.movementType || null,
-            status: 'open',
-            statusNote: null,
-            statusAt: null,
-            imagePaths: p.invoice.imagePaths ?? [],
-            createdAt: nowIso(),
-            lines: p.invoice.lines.map((l) => ({ lineNo: l.lineNo, partNo: l.partNo, description: l.description, qty: l.qty })),
-          }
-          db.invoices.unshift(invoice)
-        }
-        const grn: Grn = {
-          id: uid(),
-          grnNo: nextDoc('GRN'),
-          invoiceId: invoice?.id ?? null,
-          invoiceNo: invoice?.invoiceNo ?? null,
-          plRef: p.packingList.refDoc,
-          soNo: p.packingList.soNo || null,
-          packages: p.packingList.packages || null,
-          modelCode: p.modelCode || null,
-          customerId: customer,
-          receivedAt: nowIso(),
-          receiverCode: ME,
-          note: p.note || null,
-          replacement: !!p.replacement,
-        }
-        db.grns.unshift(grn)
-        const used = new Set(db.lpns.filter((l) => l.status === 'active').map((l) => l.locationCode))
-        p.lines.forEach((line, i) => {
-          const part = db.master.parts.find((x) => x.partNo === line.partNo)
-          const type = part?.type ?? null
-          const needs = !!type && (model?.requiresInspection ?? true) && db.settings.qiPartTypes.includes(type)
-          const rule = db.master.rules.find((r) => r.customerId === customer && r.partType === type) ?? db.master.rules.find((r) => r.customerId === customer && r.partType === null)
-          const zoneId = line.zoneId || rule?.zoneId
-          const home =
-            db.master.locations.find((l) => l.zoneId === zoneId && l.active && (l.kind === 'bin' || l.kind === 'floor') && !used.has(l.code))?.code ??
-            (line.zoneId ? zoneCodeOf(db.master.locations.find((l) => l.zoneId === line.zoneId)?.code ?? line.zoneId) : 'RCV-01')
-          used.add(home)
-          const gl: GrnLine = {
-            id: uid(),
-            grnId: grn.id,
-            lineNo: i + 1,
-            partNo: line.partNo,
-            description: line.description,
-            partType: type,
-            plQty: line.plQty,
-            countedQty: line.countedQty,
-            invoiceQty: invoice?.lines.find((l) => l.partNo === line.partNo)?.qty ?? null,
-            needsQi: needs,
-            homeLocation: home,
-          }
-          db.grnLines.push(gl)
-          if (line.countedQty > 0) {
-            const lpn: Lpn = { id: uid(), lpnNo: nextDoc('LPN'), grnId: grn.id, locationCode: needs ? 'MI3-QC' : 'RCV-01', hold: needs, status: 'active', createdAt: nowIso(), items: [] }
-            lpn.items.push({ id: uid(), lpnId: lpn.id, grnLineId: gl.id, partNo: line.partNo, qty: line.countedQty })
-            db.lpns.push(lpn)
-            log({ kind: 'RECEIVE', docNo: grn.grnNo, lpnId: lpn.id, lpnNo: lpn.lpnNo, partNo: line.partNo, qty: line.countedQty, toLoc: lpn.locationCode, ref: grn.plRef })
-          }
-        })
-        return { grnId: grn.id, grnNo: grn.grnNo }
-      }),
+    createGrn: (input: ReceivePayload) => commit(() => receive(input)),
 
     uploadDoc: async () => null,
+    docUrl: async () => null,
     attachImages: async () => undefined,
     listGrns: async (limit = 30) => clone(db.grns.slice(0, limit)),
+
 
     async grnDetail(grnId) {
       const grn = db.grns.find((g) => g.id === grnId)
@@ -383,6 +464,236 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
     },
 
     findGrnId: async (grnNo) => db.grns.find((g) => g.grnNo === grnNo.trim().toUpperCase())?.id ?? null,
+
+    // เหมือน grn_void (0020)
+    voidGrn: (grnId, reason) =>
+      commit(() => {
+        if (!reason.trim()) fail('ใส่เหตุผลที่ยกเลิก')
+        const g = db.grns.find((x) => x.id === grnId) ?? fail('ไม่พบใบรับสินค้า')
+        if (g.status === 'void') fail('ใบรับนี้ยกเลิกไปแล้ว')
+        assertOpen(g.modelCode, bangkokDay(g.receivedAt))
+        const mine = new Set(db.grnLines.filter((l) => l.grnId === grnId).map((l) => l.id))
+        const boxes = db.lpns.filter((l) => l.grnId === grnId || l.items.some((i) => mine.has(i.grnLineId)))
+        const ids = new Set(boxes.map((b) => b.id))
+        const used = new Set<string>()
+        for (const t of db.tx)
+          if (t.lpnId && ids.has(t.lpnId) && ['ISSUE', 'RETURN', 'QI', 'ADJ'].includes(t.kind) && t.status !== 'rejected')
+            used.add(t.kind === 'QI' ? 'ตรวจ MI3' : t.kind === 'ADJ' ? 'แก้ยอด' : 'เบิก')
+        if (boxes.some((b) => b.items.some((i) => !mine.has(i.grnLineId)))) used.add('รวมอยู่กับของใบอื่น')
+        if (used.size) fail(`ยกเลิกใบรับไม่ได้ · ของจากใบนี้มีรายการต่อแล้ว: ${[...used].join(', ')}`)
+        let n = 0
+        for (const b of boxes)
+          if (b.status === 'active') {
+            b.status = 'void'
+            n++
+          }
+        Object.assign(g, { status: 'void', voidReason: reason.trim(), voidedCode: ME, voidedAt: nowIso() })
+        for (const j of db.printJobs) if (j.grnId === grnId && j.status === 'queued') Object.assign(j, { status: 'cancelled', doneCode: ME, doneAt: nowIso() })
+        const c = db.checks.find((x) => x.grnId === grnId)
+        if (c) Object.assign(c, { status: 'open', grnId: null, doneCode: null, doneAt: null, note: [c.note, `ยกเลิก ${g.grnNo}: ${reason.trim()}`].filter(Boolean).join(' · ') })
+        return { grnNo: g.grnNo, boxes: n, checkId: c?.id ?? null }
+      }),
+
+    // ===== ใบตรวจรับ (กติกาเดียวกับ check_* ใน 0020) =====
+    createCheck: (p: CheckPayload) =>
+      commit(() => {
+        const model = db.master.models.find((m) => m.code === p.modelCode)
+        if (!model) fail('เลือก Model')
+        if (!p.packingList.refDoc.trim()) fail('ต้องมีเลขอ้างอิงของ Packing List')
+        if (!p.lines.length) fail('ไม่มีรายการให้ตรวจ')
+        const id = uid()
+        const lines: CheckLine[] = p.lines.map((l, i) => {
+          if (!l.partNo.trim()) fail(`รายการที่ ${i + 1} ยังไม่มี Part No.`)
+          const partNo = canonPartNo(db.master.parts, l.partNo)
+          return {
+            id: uid(),
+            checkId: id,
+            lineNo: i + 1,
+            caseNo: (l.caseNo ?? '').trim().toUpperCase(),
+            partNo,
+            description: l.description?.trim() || partName(partNo),
+            plQty: Math.max(0, l.plQty || 0),
+            invLine: l.invLine ?? null,
+            zoneId: l.zoneId ?? null,
+            extra: false,
+            actualQty: null,
+            damagedQty: 0,
+            note: null,
+            photos: [],
+            checkedCode: null,
+            checkedAt: null,
+            version: 0,
+          }
+        })
+        const checkNo = nextDoc('CHK')
+        db.checks.unshift({
+          id,
+          checkNo,
+          status: 'open',
+          modelCode: model!.code,
+          customerId: model!.customerId,
+          replacement: !!p.replacement,
+          plRef: p.packingList.refDoc.trim(),
+          soNo: p.packingList.soNo?.trim() || null,
+          packages: p.packingList.packages?.trim() || null,
+          title: p.packingList.title?.trim() || null,
+          invoiceNo: p.invoice?.invoiceNo.trim() || null,
+          poNo: p.invoice?.poNo?.trim() || null,
+          docDate: p.invoice?.docDate || null,
+          movementType: p.invoice?.movementType?.trim() || null,
+          invoiceLines: invLines(p.invoice?.lines ?? []),
+          plImages: p.packingList.imagePaths ?? [],
+          invImages: p.invoice?.imagePaths ?? [],
+          note: p.note?.trim() || null,
+          grnId: null,
+          createdCode: ME,
+          createdAt: nowIso(),
+          doneCode: null,
+          doneAt: null,
+          cancelReason: null,
+          cancelledCode: null,
+          cancelledAt: null,
+          lines,
+        })
+        return { id, checkNo }
+      }),
+    listChecks: async () => {
+      const all = db.checks.map(checkOf)
+      return clone([...all.filter((c) => c.status === 'open'), ...all.filter((c) => c.status !== 'open')].slice(0, 80))
+    },
+    checkDetail: async (id) => {
+      const c = db.checks.find((x) => x.id === id)
+      return c ? clone({ check: checkOf(c), lines: [...c.lines].sort((a, b) => a.lineNo - b.lineNo) }) : null
+    },
+    saveCheckLine: (lineId, version, patch) =>
+      commit(() => {
+        const c = db.checks.find((x) => x.lines.some((l) => l.id === lineId)) ?? fail('ไม่พบรายการตรวจรับ')
+        if (c.status !== 'open') fail('ใบตรวจรับนี้ปิดแล้ว')
+        const l = c.lines.find((x) => x.id === lineId)!
+        if (l.version !== version) fail('รายการนี้มีคนบันทึกไปก่อนแล้ว · โหลดใหม่แล้วตรวจอีกครั้ง')
+        const actual = patch.actual !== undefined ? patch.actual : l.actualQty
+        let damaged = patch.damaged !== undefined ? patch.damaged : l.damagedQty
+        const pl = patch.plQty !== undefined ? patch.plQty : l.plQty
+        if (actual !== null && !wholeQty(actual)) fail('จำนวนที่นับได้ต้องเป็นจำนวนเต็มไม่ติดลบ')
+        if (!wholeQty(damaged)) fail('จำนวนเสียหายต้องเป็นจำนวนเต็มไม่ติดลบ')
+        if (!wholeQty(pl)) fail('จำนวนใน Packing List ต้องเป็นจำนวนเต็มไม่ติดลบ')
+        if (actual === null) damaged = 0
+        if (damaged > (actual ?? 0)) fail('จำนวนเสียหายมากกว่าที่นับได้')
+        if (patch.partNo !== undefined && !patch.partNo.trim()) fail('ใส่ Part No.')
+        const counted = patch.actual !== undefined
+        Object.assign(l, {
+          actualQty: actual,
+          damagedQty: damaged,
+          plQty: pl,
+          zoneId: patch.zoneId !== undefined ? patch.zoneId : l.zoneId,
+          note: patch.note !== undefined ? patch.note.trim() || null : l.note,
+          photos: patch.photos ?? l.photos,
+          partNo: patch.partNo !== undefined ? canonPartNo(db.master.parts, patch.partNo) : l.partNo,
+          description: patch.description !== undefined ? patch.description.trim() || null : patch.partNo !== undefined ? (partName(patch.partNo) ?? l.description) : l.description,
+          caseNo: patch.caseNo !== undefined ? patch.caseNo.trim().toUpperCase() : l.caseNo,
+          checkedCode: counted ? (actual === null ? null : ME) : l.checkedCode,
+          checkedAt: counted ? (actual === null ? null : nowIso()) : l.checkedAt,
+          version: l.version + 1,
+        })
+        return l
+      }),
+    saveCheckCase: (checkId, caseNo, mode) =>
+      commit(() => {
+        if (mode !== 'ok' && mode !== 'missing') fail('คำสั่งไม่ถูกต้อง')
+        const c = openCheck(checkId)
+        const want = caseNo.trim().toUpperCase()
+        let n = 0
+        for (const l of c.lines.filter((x) => x.caseNo === want && x.actualQty === null && !x.extra)) {
+          Object.assign(l, {
+            actualQty: mode === 'ok' ? l.plQty : 0,
+            damagedQty: 0,
+            note: mode === 'missing' ? (l.note ?? 'ไม่มีเคสนี้มากับรถ') : l.note,
+            checkedCode: ME,
+            checkedAt: nowIso(),
+            version: l.version + 1,
+          })
+          n++
+        }
+        return n
+      }),
+    addCheckLine: (checkId, line) =>
+      commit(() => {
+        const c = openCheck(checkId)
+        if (!line.partNo.trim()) fail('ใส่ Part No.')
+        const actual = line.actual ?? null
+        if (actual !== null && !wholeQty(actual)) fail('จำนวนที่นับได้ต้องเป็นจำนวนเต็มไม่ติดลบ')
+        const pl = Math.max(0, line.plQty ?? 0)
+        if (!Number.isInteger(pl)) fail('จำนวนใน Packing List ต้องเป็นจำนวนเต็มไม่ติดลบ')
+        const partNo = canonPartNo(db.master.parts, line.partNo)
+        const l: CheckLine = {
+          id: uid(),
+          checkId,
+          lineNo: c.lines.reduce((m, x) => Math.max(m, x.lineNo), 0) + 1,
+          caseNo: line.caseNo.trim().toUpperCase(),
+          partNo,
+          description: line.description?.trim() || partName(partNo),
+          plQty: pl,
+          invLine: null,
+          zoneId: null,
+          extra: pl === 0,
+          actualQty: actual,
+          damagedQty: 0,
+          note: line.note?.trim() || null,
+          photos: [],
+          checkedCode: actual === null ? null : ME,
+          checkedAt: actual === null ? null : nowIso(),
+          version: 0,
+        }
+        c.lines.push(l)
+        return l
+      }),
+    saveCheckHeader: (checkId, patch) =>
+      commit(() => {
+        const c = openCheck(checkId)
+        if (patch.invoiceNo !== undefined) c.invoiceNo = patch.invoiceNo.trim() || null
+        if (patch.poNo !== undefined) c.poNo = patch.poNo.trim() || null
+        if (patch.docDate !== undefined) c.docDate = patch.docDate || null
+        if (patch.movementType !== undefined) c.movementType = patch.movementType.trim() || null
+        if (patch.invoiceLines !== undefined) c.invoiceLines = invLines(patch.invoiceLines)
+        if (patch.note !== undefined) c.note = patch.note.trim() || null
+        if (patch.replacement !== undefined) c.replacement = patch.replacement
+        if (patch.plImages) c.plImages = patch.plImages
+        if (patch.invImages) c.invImages = patch.invImages
+      }),
+    cancelCheck: (checkId, reason) =>
+      commit(() => {
+        if (!reason.trim()) fail('ใส่เหตุผลที่ยกเลิก')
+        const c = openCheck(checkId)
+        Object.assign(c, { status: 'cancelled', cancelReason: reason.trim(), cancelledCode: ME, cancelledAt: nowIso() })
+      }),
+    completeCheck: (checkId) =>
+      commit(() => {
+        const c = db.checks.find((x) => x.id === checkId) ?? fail('ไม่พบใบตรวจรับ')
+        if (c.status !== 'open') fail('ใบตรวจรับนี้ปิดแล้ว')
+        const left = c.lines.filter((l) => l.actualQty === null).length
+        if (left) fail(`ยังตรวจไม่ครบ ${left} รายการ`)
+        if (!c.lines.some((l) => (l.actualQty ?? 0) > 0)) fail('ไม่มีของที่นับได้เลย · ถ้าของไม่มาทั้งเที่ยวให้ยกเลิกใบตรวจรับ')
+        // Invoice ที่มีอยู่แล้วแต่ยังไม่มีรายการ: เติมจากใบตรวจรับ
+        const inv = c.invoiceNo ? db.invoices.find((i) => i.invoiceNo === c.invoiceNo) : undefined
+        if (inv && !inv.lines.length && c.invoiceLines.length) inv.lines = clone(c.invoiceLines).map((l) => ({ ...l, description: l.description ?? '' }))
+        const res = receive(
+          {
+            modelCode: c.modelCode ?? '',
+            replacement: c.replacement,
+            note: c.note ?? undefined,
+            packingList: { refDoc: c.plRef, soNo: c.soNo ?? undefined, packages: c.packages ?? undefined },
+            invoice: c.invoiceNo
+              ? { invoiceNo: c.invoiceNo, customerId: c.customerId ?? undefined, poNo: c.poNo ?? undefined, docDate: c.docDate ?? undefined, movementType: c.movementType ?? undefined, lines: c.invoiceLines.map((l) => ({ ...l, description: l.description ?? '' })) }
+              : undefined,
+            lines: [...c.lines]
+              .sort((a, b) => a.lineNo - b.lineNo)
+              .map((l) => ({ caseNo: l.caseNo, partNo: l.partNo, description: l.description ?? '', plQty: l.plQty, countedQty: l.actualQty ?? 0, damagedQty: l.damagedQty, ...(l.zoneId ? { zoneId: l.zoneId } : {}) })),
+          },
+          c.id,
+        )
+        Object.assign(c, { status: 'done', grnId: res.grnId, doneCode: ME, doneAt: nowIso() })
+        return res
+      }),
 
     mergeLpns: (ids, location) =>
       commit(() => {
@@ -470,8 +781,9 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
       const lpn = db.lpns.find((l) => l.lpnNo === no.trim().toUpperCase())
       if (!lpn) return null
       const grn = db.grns.find((g) => g.id === lpn.grnId) ?? null
-      const home = db.grnLines.find((g) => g.id === lpn.items[0]?.grnLineId)?.homeLocation ?? null
-      return clone({ lpn: lpnOf(lpn), grn, homeLocation: home })
+      const stored = db.grnLines.find((g) => g.id === lpn.items[0]?.grnLineId)?.homeLocation ?? null
+      const now = lpn.status === 'active' ? suggestFor([lpn.id])[0]?.code : null
+      return clone({ lpn: lpnOf(lpn), grn, homeLocation: now ?? stored })
     },
 
     scanMove: (lpnId, to, kind) =>
@@ -481,9 +793,32 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         if (lpn.status !== 'active') fail('ไม่พบป้าย หรือป้ายนี้ใช้หมดแล้ว')
         if (!dest) fail('เลือกช่องปลายทาง')
         if (dest === lpn.locationCode) fail('กล่องอยู่ที่ช่องนี้แล้ว')
-        log({ kind, lpnId, lpnNo: lpn.lpnNo, fromLoc: lpn.locationCode, toLoc: dest })
+        log({ kind, lpnId, lpnNo: lpn.lpnNo, fromLoc: lpn.locationCode, toLoc: dest, via: 'scan' })
         lpn.locationCode = dest
       }),
+
+    // เหมือน move_lpns (0020): ปลายทางต้องเป็นช่องที่มีและเปิดใช้ · จากจุดรับของ/จุดพัก = PUT
+    moveLpns: (lpnIds, to) =>
+      commit(() => {
+        const ids = [...new Set(lpnIds)]
+        if (!ids.length) fail('เลือกกล่องที่จะย้าย')
+        if (ids.length > 200) fail('ย้ายได้ครั้งละไม่เกิน 200 กล่อง')
+        const dest = to.trim().toUpperCase()
+        const loc = db.master.locations.find((l) => l.code === dest)
+        if (!loc || !loc.active || loc.blocked) fail(`ไม่พบช่อง ${dest} หรือช่องนี้ปิดใช้อยู่`)
+        const boxes = ids.map((id) => db.lpns.find((l) => l.id === id) ?? fail('ไม่พบบางกล่อง · โหลดรายการใหม่')).sort((a, b) => a.lpnNo.localeCompare(b.lpnNo))
+        let moved = 0
+        for (const lpn of boxes) {
+          if (lpn.status !== 'active') fail(`ป้าย ${lpn.lpnNo} ใช้งานไม่ได้แล้ว · โหลดรายการใหม่`)
+          if (lpn.locationCode === dest) continue
+          const from = db.master.locations.find((l) => l.code === lpn.locationCode)?.kind
+          log({ kind: from === 'staging' || from === 'hold' ? 'PUT' : 'MOVE', lpnId: lpn.id, lpnNo: lpn.lpnNo, fromLoc: lpn.locationCode, toLoc: dest, via: 'list' })
+          lpn.locationCode = dest
+          moved++
+        }
+        return { moved, same: boxes.length - moved }
+      }),
+    suggestSlots: async (lpnIds) => clone(suggestFor(lpnIds)),
 
     // เหมือน scan_issue_req (0018): ใบเบิกจากกล่องที่สแกน · เลขใบเบิกเดียวกันวันเดียวกัน ⇒ ใบเดิม
     scanIssue: (p) =>
@@ -495,6 +830,7 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         const { lpn, item } = itemById(p.itemId)
         if (lpn.status !== 'active') fail('ไม่พบป้าย หรือป้ายนี้ใช้หมดแล้ว')
         if (lpn.hold) fail('เบิกไม่ได้ · กล่องนี้ยังไม่ผ่านการตรวจ MI3')
+        if (p.kind === 'line' && inNgArea(lpn)) fail('เบิกเข้าไลน์ไม่ได้ · กล่องนี้อยู่พื้นที่กัก NG (เบิกได้เฉพาะ NG / ส่งคืน หรือ QC)')
         if (!(p.qty > 0)) fail('ใส่จำนวนที่เบิก')
         if (p.qty > item.qty) fail(`เบิกได้ไม่เกิน ${item.qty} ชิ้น`)
         const day = today()
@@ -600,7 +936,7 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
       const pl = db.grns.find((g) => g.plRef === q)
       const inv = db.invoices.find((i) => i.invoiceNo === q || i.poNo === q || (pl && i.id === pl.invoiceId))
       if (!inv) return null
-      const grns = db.grns.filter((g) => g.invoiceId === inv.id).sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
+      const grns = db.grns.filter((g) => g.invoiceId === inv.id && g.status !== 'void').sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
       const received = new Map<string, number>()
       for (const l of db.grnLines) if (grns.some((g) => g.id === l.grnId)) received.set(l.partNo, (received.get(l.partNo) ?? 0) + l.countedQty)
       const { lines, ...invoice } = inv
@@ -800,7 +1136,7 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
       }),
     listRequisitions: async (from, to) => clone(db.requisitions.filter((r) => r.docDate >= from && r.docDate <= to)),
     dashboardActivity: async (fromDay) => {
-      const grns = new Map(db.grns.filter((g) => bangkokDay(g.receivedAt) >= fromDay && !g.grnNo.startsWith('CNT-')).map((g) => [g.id, g]))
+      const grns = new Map(db.grns.filter((g) => bangkokDay(g.receivedAt) >= fromDay && !g.grnNo.startsWith('CNT-') && g.status !== 'void').map((g) => [g.id, g]))
       return {
         receipts: db.grnLines
           .filter((l) => grns.has(l.grnId) && l.countedQty > 0)
@@ -834,6 +1170,8 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         if (!ok) continue
         const lpn = db.lpns.find((l) => l.id === t.lpnId)
         const grn = db.grns.find((g) => g.id === lpn?.grnId)
+        // ใบรับที่ยกเลิก: ไม่นับรับเข้า (เหมือน stock_ledger_rows 0020)
+        if (t.kind === 'RECEIVE' && grn?.status === 'void') continue
         const inv = db.invoices.find((i) => i.id === grn?.invoiceId)
         const req = reqs.get(t.requisitionId ?? '')
         const reqCol = req?.kind === 'qc' ? 'qc' : req?.kind === 'ng' ? 'ng' : 'issue'

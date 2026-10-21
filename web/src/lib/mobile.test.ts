@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { searchStock } from '../components/mobile/stockSearch'
+import { boxCount, searchStock } from '../components/mobile/stockSearch'
 import { sampleLayout } from '../data/factoryLayout'
 import type { Lpn, MasterData } from '../wms/types'
 import { layoutLocations } from '../wms/locations'
@@ -50,6 +50,19 @@ describe('mobile stock search', () => {
     expect(searchStock('rk-a', lpns, master, sampleLayout)[0]).toMatchObject({ kind: 'place', title: 'RK-A', qty: 100 })
     expect(searchStock('bearing', [], master, sampleLayout)[0]).toMatchObject({ kind: 'part', qty: 0, boxes: [] })
     expect(searchStock('r', lpns, master, sampleLayout)).toEqual([])
+  })
+
+  it('finds the boxes of a packing list or one case and counts a mixed case box once', () => {
+    const cased = [
+      { ...lpn('LPN-2610-000010', 'RCV-01', [['148537/A', 10], ['150324/A', 30]]), plRef: '55035596', caseNo: 'F28' },
+      { ...lpn('LPN-2610-000011', 'RK-A-01-1', [['148537/A', 5]]), plRef: '55035596', caseNo: 'F29' },
+    ]
+    const [pl] = searchStock('55035596', cased, master, sampleLayout)
+    expect(pl).toMatchObject({ kind: 'doc', title: 'PL 55035596', subtitle: '2 เคส', qty: 45 })
+    expect(pl.boxes).toHaveLength(3)
+    expect(boxCount(pl.boxes)).toBe(2)
+    expect(searchStock('f29', cased, master, sampleLayout)[0]).toMatchObject({ kind: 'doc', title: 'เคส F29', subtitle: 'PL 55035596', qty: 5 })
+    expect(searchStock('55035596 F28', cased, master, sampleLayout)[0]).toMatchObject({ kind: 'doc', title: 'PL 55035596 · เคส F28', qty: 40 })
   })
 })
 

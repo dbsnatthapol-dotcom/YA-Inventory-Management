@@ -92,6 +92,8 @@ export function ScanTab({
   const [miss, setMiss] = useState<{ itemId: string; partNo: string; counted: number; system: number } | null>(null)
   const [sound, setSound] = useState(soundOn)
   const scanInput = useRef<HTMLInputElement>(null)
+  // กล่องในพื้นที่กัก NG: ไม่แนะนำช่องเก็บของดี และเบิกเข้าไลน์ไม่ได้
+  const inNg = useCallback((code: string | undefined) => master.locations.find((l) => l.code === code)?.kind === 'ng', [master.locations])
 
   const setMode = (m: Mode) => {
     setModeState(m)
@@ -127,7 +129,7 @@ export function ScanTab({
         setForm((f) => {
           const itemId = quiet && inBox(f.item) ? f.item : (item?.id ?? '')
           const qty = found.lpn.items.find((i) => i.id === itemId)?.qty ?? 0
-          return { item: itemId, qty: '', note: '', loc: found.lpn.hold ? '' : (found.homeLocation ?? ''), reason: '', pass: String(qty), ng: '0' }
+          return { item: itemId, qty: '', note: '', loc: found.lpn.hold || inNg(found.lpn.locationCode) ? '' : (found.homeLocation ?? ''), reason: '', pass: String(qty), ng: '0' }
         })
         setMiss((m) => (quiet && m && inBox(m.itemId) ? m : null))
         // Model ของการเบิก: คงค่าเดิมถ้า part อยู่ใน Model นั้น ไม่งั้นใช้ Model ของใบรับสินค้า
@@ -140,7 +142,7 @@ export function ScanTab({
         cue('bad')
       }
     },
-    [api, master.parts],
+    [api, master.parts, inNg],
   )
 
   useEffect(() => {
@@ -248,7 +250,8 @@ export function ScanTab({
     }
   }
 
-  const locChoices = [cur?.homeLocation, 'MI3-QC', 'NG-HOLD', 'RCV-01'].filter((x, i, a): x is string => !!x && a.indexOf(x) === i && x !== lpn?.locationCode)
+  const home = inNg(lpn?.locationCode) ? null : (cur?.homeLocation ?? null)
+  const locChoices = [home, 'MI3-QC', 'NG-HOLD', 'RCV-01'].filter((x, i, a): x is string => !!x && a.indexOf(x) === i && x !== lpn?.locationCode)
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
@@ -363,14 +366,14 @@ export function ScanTab({
               <dt className="text-slate-500">อยู่ที่</dt>
               <dd className="font-mono font-semibold">{lpn.locationCode}</dd>
               <dt className="text-slate-500">ช่องเก็บแนะนำ</dt>
-              <dd className="font-mono">{cur?.homeLocation ?? '–'}</dd>
+              <dd className="font-mono">{home ?? '–'}</dd>
               <dt className="text-slate-500">หัวหน้าโซน</dt>
               <dd>{zoneHeadOf(master, lpn.locationCode)}</dd>
               <dt className="text-slate-500">สถานะ</dt>
-              <dd>{lpn.status === 'merged' ? <Pill tone="muted">ถูกรวมเข้ากล่องอื่นแล้ว</Pill> : lpn.status === 'void' ? <Pill tone="muted">ยกเลิกแล้ว (ใช้ป้ายเดิมก่อนรวม)</Pill> : lpn.status === 'empty' ? <Pill tone="muted">ใช้หมดแล้ว</Pill> : lpn.hold ? <Pill tone="mi3">รอตรวจ MI3 · ห้ามเบิก</Pill> : <Pill tone="ok">พร้อมใช้</Pill>}</dd>
+              <dd>{lpn.status === 'merged' ? <Pill tone="muted">ถูกรวมเข้ากล่องอื่นแล้ว</Pill> : lpn.status === 'void' ? <Pill tone="muted">{cur?.grn?.status === 'void' ? `ใบรับ ${cur.grn.grnNo} ถูกยกเลิก · แกะป้ายนี้ออก` : 'ยกเลิกแล้ว (ใช้ป้ายเดิมก่อนรวม)'}</Pill> : lpn.status === 'empty' ? <Pill tone="muted">ใช้หมดแล้ว</Pill> : lpn.hold ? <Pill tone="mi3">รอตรวจ MI3 · ห้ามเบิก</Pill> : inNg(lpn.locationCode) ? <Pill tone="bad">พื้นที่กัก NG · ห้ามเข้าไลน์</Pill> : <Pill tone="ok">พร้อมใช้</Pill>}</dd>
               <dt className="text-slate-500">ที่มา</dt>
               <dd className="font-mono text-xs">
-                {cur?.grn ? `${cur.grn.grnNo} · PL ${cur.grn.plRef}${cur.grn.invoiceNo ? ` · INV ${cur.grn.invoiceNo}` : ''}` : '–'}
+                {cur?.grn ? `${cur.grn.grnNo} · PL ${cur.grn.plRef}${lpn.caseNo ? ` · เคส ${lpn.caseNo}` : ''}${cur.grn.invoiceNo ? ` · INV ${cur.grn.invoiceNo}` : ''}` : '–'}
               </dd>
             </dl>
 
@@ -396,7 +399,7 @@ export function ScanTab({
                 <div className="flex flex-wrap gap-2">
                   {locChoices.map((l) => (
                     <button key={l} type="button" onClick={() => setForm({ ...form, loc: l })} className="rounded-full bg-slate-100 px-3 py-1.5 font-mono text-xs font-semibold text-slate-700 ring-1 ring-slate-200 hover:bg-sky-50">
-                      {l === cur?.homeLocation ? `แนะนำ ${l}` : l}
+                      {l === home ? `แนะนำ ${l}` : l}
                     </button>
                   ))}
                 </div>
@@ -457,7 +460,8 @@ export function ScanTab({
                   <p className="text-xs text-slate-500">
                     {issue.kind === 'line' ? 'บันทึกเป็นใบเบิกย่อยของ Model นี้ · ตอนเย็น FM-P-005 นับรวม ไม่ตัดซ้ำ' : `ลงช่อง "${issueKind.col}" ในบัญชีคุม FM-P-537`} · สแกนกล่องถัดไปด้วยเลขใบเบิกเดิม = ต่อท้ายใบเดียวกัน
                   </p>
-                  <BigButton disabled={busy || !(Number(form.qty) > 0) || (issue.kind === 'line' && !issueModel)} onClick={submit}>
+                  {issue.kind === 'line' && inNg(lpn.locationCode) && <Alert tone="warn">กล่องนี้อยู่พื้นที่กัก NG · เบิกเข้าไลน์ไม่ได้ เลือก "NG / ส่งคืน" หรือ "QC เบิก"</Alert>}
+                  <BigButton disabled={busy || !(Number(form.qty) > 0) || (issue.kind === 'line' && (!issueModel || inNg(lpn.locationCode)))} onClick={submit}>
                     ยืนยันเบิก
                   </BigButton>
                 </>

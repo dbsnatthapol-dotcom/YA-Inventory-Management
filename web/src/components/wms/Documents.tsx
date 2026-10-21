@@ -16,7 +16,9 @@ export function LabelCard({ lpn, ctx, heightMm = 150, mono = false }: { lpn: Lpn
   const single = lpn.items.length === 1 ? lpn.items[0] : null
   const total = lpn.items.reduce((s, i) => s + i.qty, 0)
   const home = (single && line(single.grnLineId)?.homeLocation) || lpn.locationCode
-  const dest = lpn.hold ? 'MI3-QC' : home
+  // กล่องในพื้นที่กัก NG (ของเสียหายจากการตรวจรับ): อยู่ที่นั่นจนส่งคืน ห้ามเข้าไลน์
+  const ng = ctx.master.locations.find((l) => l.code === lpn.locationCode)?.kind === 'ng'
+  const dest = lpn.hold ? 'MI3-QC' : ng ? lpn.locationCode : home
   const desc = single ? (line(single.grnLineId)?.description ?? ctx.master.parts.find((p) => p.partNo === single.partNo)?.name ?? '') : ''
   return (
     <div className="print-page flex flex-col gap-[2mm] border border-black p-[4mm] font-sans" style={{ width: '100mm', height: `${heightMm}mm`, boxSizing: 'border-box' }}>
@@ -36,13 +38,14 @@ export function LabelCard({ lpn, ctx, heightMm = 150, mono = false }: { lpn: Lpn
       <div className="grid grid-cols-[34mm_1fr] items-center gap-[3mm]">
         <QrCode text={lpnUrl(lpn.lpnNo)} size="34mm" title={lpn.lpnNo} />
         <div className="flex min-w-0 flex-col gap-[1mm]">
+          {lpn.caseNo && <div className="w-fit border-2 border-black px-[1.5mm] font-mono text-[11pt] font-bold leading-tight">เคส {lpn.caseNo}</div>}
           {single ? (
             <>
               <div className="font-mono text-[12pt] font-bold leading-tight">{single.partNo}</div>
               <div className="text-[8pt] leading-snug">{desc}</div>
             </>
           ) : (
-            <div className="text-[10pt] font-bold">กล่องรวม {lpn.items.length} part</div>
+            <div className="text-[10pt] font-bold">{lpn.caseNo ? '' : 'กล่องรวม '}{lpn.items.length} part</div>
           )}
           <div className="font-mono text-[22pt] font-bold leading-none">
             {fmt(total)} <span className="text-[9pt]">PCS</span>
@@ -62,7 +65,11 @@ export function LabelCard({ lpn, ctx, heightMm = 150, mono = false }: { lpn: Lpn
       )}
       {single && <div className="flex-1" />}
 
-      <div className="border-2 border-black py-[1mm] text-center text-[9pt] font-bold">{lpn.hold ? 'รอตรวจ MI3 · ห้ามเบิก' : 'พร้อมใช้ · BOI'}</div>
+      {ng ? (
+        <div className="border-2 border-black bg-black py-[1mm] text-center text-[10pt] font-bold text-white">NG · ของเสียหาย · ห้ามเข้าไลน์</div>
+      ) : (
+        <div className="border-2 border-black py-[1mm] text-center text-[9pt] font-bold">{lpn.hold ? 'รอตรวจ MI3 · ห้ามเบิก' : 'พร้อมใช้ · BOI'}</div>
+      )}
 
       <div className="grid grid-cols-[1.25fr_1fr] gap-[2mm] border-2 border-black px-[2mm] py-[1.2mm]">
         <div className="min-w-0">
@@ -116,7 +123,10 @@ export function GrnSheet({ ctx }: { ctx: LabelContext }) {
       <div className="flex items-start justify-between gap-[6mm] border-b-2 border-black pb-[3mm]">
         <div>
           <BrandMark logo="14mm" name="13pt" />
-          <div className="mt-[2mm] text-[11pt] font-semibold">ใบรับสินค้า / GOODS RECEIPT NOTE {ctx.trial && <span className="ml-2 border border-black px-1 text-[8pt]">ทดลอง</span>}</div>
+          <div className="mt-[2mm] text-[11pt] font-semibold">
+            ใบรับสินค้า / GOODS RECEIPT NOTE {ctx.trial && <span className="ml-2 border border-black px-1 text-[8pt]">ทดลอง</span>}
+            {g.status === 'void' && <span className="ml-2 border-2 border-black px-1 text-[10pt] font-bold">ยกเลิกแล้ว</span>}
+          </div>
           <div className="mt-[2mm] font-mono text-[15pt] font-bold">{g.grnNo}</div>
         </div>
         <QrCode text={`${typeof window !== 'undefined' ? window.location.origin : ''}/g/${g.grnNo}`} size="26mm" title={g.grnNo} />
@@ -134,7 +144,7 @@ export function GrnSheet({ ctx }: { ctx: LabelContext }) {
       <table className="w-full border-collapse text-[8pt]">
         <thead>
           <tr>
-            {['#', 'Part No.', 'รายการ', 'PL', 'รับจริง', 'Invoice', 'ที่เก็บ', 'MI3'].map((h) => (
+            {['#', 'เคส', 'Part No.', 'รายการ', 'PL', 'รับจริง', 'Invoice', 'ที่เก็บ', 'MI3'].map((h) => (
               <th key={h} className="border border-neutral-500 bg-neutral-100 px-[1.5mm] py-[1mm] text-left">
                 {h}
               </th>
@@ -145,10 +155,14 @@ export function GrnSheet({ ctx }: { ctx: LabelContext }) {
           {ctx.lines.map((l) => (
             <tr key={l.id}>
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm]">{l.lineNo}</td>
+              <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] font-mono">{l.caseNo ?? ''}</td>
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] font-mono">{l.partNo}</td>
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm]">{l.description}</td>
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] text-right font-mono">{fmt(l.plQty)}</td>
-              <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] text-right font-mono font-bold">{fmt(l.countedQty)}</td>
+              <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] text-right font-mono font-bold">
+                {fmt(l.countedQty)}
+                {l.damagedQty ? <div className="text-[7pt] font-normal">เสียหาย→NG {fmt(l.damagedQty)}</div> : null}
+              </td>
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] text-right font-mono">{fmt(l.invoiceQty)}</td>
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] font-mono">{l.needsQi ? 'MI3-QC' : (l.homeLocation ?? '-')}</td>
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm]">{l.needsQi ? 'ตรวจ' : ''}</td>
@@ -158,6 +172,7 @@ export function GrnSheet({ ctx }: { ctx: LabelContext }) {
       </table>
       <div className="text-[8pt]">
         รวม {ctx.lines.length} รายการ · {fmt(ctx.lines.reduce((s, l) => s + l.countedQty, 0))} ชิ้น
+        {ctx.lines.some((l) => l.damagedQty) && ` · เสียหายแยกกล่อง NG ${fmt(ctx.lines.reduce((s, l) => s + (l.damagedQty ?? 0), 0))} ชิ้น`}
         {off > 0 && ` · ไม่ตรง Invoice ${off} รายการ (ดูหน้ากระทบยอด Invoice)`}
       </div>
       <div className="mt-auto grid grid-cols-3 gap-[8mm] pt-[14mm] text-center">

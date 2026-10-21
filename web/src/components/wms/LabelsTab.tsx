@@ -113,6 +113,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
   }
 
   const lpns = detail?.lpns ?? []
+  const isVoid = detail?.grn.status === 'void'
   const chosen = lpns.filter((l) => selected.has(l.id))
   const ctx: LabelContext = { grn: detail?.grn ?? null, lines: detail?.lines ?? [], master, trial: settings.mode === 'trial' }
   const count = format === 'a4' ? 1 : chosen.length
@@ -128,6 +129,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
 
   const merge = async () => {
     if (!detail) return
+    if (!window.confirm(`รวม ${chosen.length} ป้ายเป็นกล่องเดียว (ป้ายใหม่ 1 ใบ)?${chosen.length > 5 ? `\n\n⚠ เลือกไว้ถึง ${chosen.length} กล่อง — ปกติรวมเฉพาะของที่อยู่บนพาเลท/ในกล่องเดียวกันจริง` : ''}`)) return
     setBusy(true)
     setMsg(null)
     try {
@@ -136,6 +138,28 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
       setMsg({ tone: 'ok', text: `รวม ${chosen.length} ป้ายเป็นกล่องเดียวแล้ว · ป้ายใหม่ ${r.lpnNo} (ป้ายเดิมใช้ไม่ได้แล้ว พิมพ์ป้ายใหม่ไปแปะแทน · ถ้ารวมผิด กด "ยกเลิกการรวม" ที่กล่องนี้)` })
       setDetail(d)
       setSelected(new Set(d?.lpns.filter((l) => l.lpnNo === r.lpnNo).map((l) => l.id) ?? []))
+    } catch (e) {
+      setMsg({ tone: 'bad', text: errorText(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // ยกเลิกใบรับ: ป้ายของใบนี้ใช้ไม่ได้ · ใบตรวจรับที่ออกใบนี้เปิดกลับมาแก้ได้
+  const voidGrn = async () => {
+    if (!detail) return
+    const reason = window.prompt(
+      `ยกเลิกใบรับ ${detail.grn.grnNo}?\n\n• กล่องทุกกล่องของใบนี้ออกจากสต็อก ป้ายที่พิมพ์แล้วใช้ไม่ได้ (แกะออก)\n• บัญชีคุมไม่นับรับเข้าของใบนี้\n• ${detail.grn.checkId ? 'ใบตรวจรับจะเปิดกลับมาให้แก้แล้วยืนยันใหม่' : 'รับใหม่ได้ที่หน้ารับสินค้า'}\n\nใส่เหตุผลที่ยกเลิก:`,
+    )
+    if (!reason?.trim()) return
+    setBusy(true)
+    setMsg(null)
+    try {
+      const r = await api.voidGrn(detail.grn.id, reason)
+      const d = await api.grnDetail(detail.grn.id)
+      setDetail(d)
+      setSelected(new Set())
+      setMsg({ tone: 'ok', text: `ยกเลิก ${r.grnNo} แล้ว · ป้ายใช้ไม่ได้ ${r.boxes} กล่อง${r.checkId ? ' · ใบตรวจรับเปิดกลับมาให้แก้ที่หน้ารับสินค้า › ใบตรวจรับ' : ''}` })
     } catch (e) {
       setMsg({ tone: 'bad', text: errorText(e) })
     } finally {
@@ -195,6 +219,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
             {grns.map((g) => (
               <option key={g.id} value={g.id}>
                 {g.grnNo} · {g.modelCode ?? '-'} · {dateTime(g.receivedAt)}
+                {g.status === 'void' ? ' · ยกเลิกแล้ว' : ''}
               </option>
             ))}
           </select>
@@ -209,7 +234,10 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
               onClick={() => onSelectGrn(g.id)}
               className={`rounded-lg border px-3 py-2 text-left text-sm transition ${detail?.grn.id === g.id ? 'border-sky-600 bg-sky-50 ring-1 ring-sky-600' : 'border-slate-200 hover:bg-slate-50'}`}
             >
-              <div className="font-mono font-semibold">{g.grnNo}</div>
+              <div className="flex items-center gap-2 font-mono font-semibold">
+                {g.grnNo}
+                {g.status === 'void' && <Pill tone="muted">ยกเลิกแล้ว</Pill>}
+              </div>
               <div className="text-xs text-slate-500">
                 {dateTime(g.receivedAt)} · {g.modelCode ?? '-'} · PL {g.plRef}
               </div>
@@ -222,6 +250,11 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
 
       <div className="flex min-w-0 flex-col gap-4">
         {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
+        {isVoid && detail && (
+          <Alert tone="warn">
+            ใบรับนี้ยกเลิกแล้ว {detail.grn.voidedAt ? dateTime(detail.grn.voidedAt) : ''} โดย {detail.grn.voidedCode ?? '-'}: {detail.grn.voidReason} · ป้ายของใบนี้ใช้ไม่ได้
+          </Alert>
+        )}
         {!detail ? (
           <Card>
             <p className="py-10 text-center text-slate-500">{mobile ? 'เลือก GRN ด้านบนเพื่อพิมพ์ป้ายกล่อง' : 'เลือก GRN ทางซ้ายเพื่อพิมพ์ป้ายกล่อง'}</p>
@@ -229,7 +262,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
         ) : (
           <>
             <Card
-              eyebrow="ขั้นที่ 1 · เลือกป้ายที่จะพิมพ์ (ทำหลังย้ายของเข้ากล่อง/พาเลท)"
+              eyebrow={isVoid ? 'ใบรับที่ยกเลิกแล้ว · ไม่มีป้ายให้พิมพ์' : 'ขั้นที่ 1 · เลือกป้ายที่จะพิมพ์ (ทำหลังย้ายของเข้ากล่อง/พาเลท)'}
               title={
                 <span>
                   <span className="font-mono">{detail.grn.grnNo}</span>
@@ -241,10 +274,17 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
               }
               action={
                 <div className="flex flex-wrap gap-2">
-                  <BigButton tone="secondary" onClick={() => setSelected(new Set(selected.size === lpns.filter((l) => l.status === 'active').length ? [] : lpns.filter((l) => l.status === 'active').map((l) => l.id)))}>
-                    {selected.size ? 'ล้างที่เลือก' : 'เลือกทั้งหมด'}
-                  </BigButton>
-                  {can('label.print') && (
+                  {can('grn.void') && !isVoid && (
+                    <BigButton tone="ghost" disabled={busy} onClick={() => void voidGrn()} title="ยกเลิกใบรับที่ของยังไม่ถูกเบิก/ตรวจ/แก้ยอด">
+                      ยกเลิกใบรับ
+                    </BigButton>
+                  )}
+                  {!isVoid && (
+                    <BigButton tone="secondary" onClick={() => setSelected(new Set(selected.size === lpns.filter((l) => l.status === 'active').length ? [] : lpns.filter((l) => l.status === 'active').map((l) => l.id)))}>
+                      {selected.size ? 'ล้างที่เลือก' : 'เลือกทั้งหมด'}
+                    </BigButton>
+                  )}
+                  {can('label.print') && !isVoid && (
                     <BigButton tone="secondary" disabled={busy || chosen.length < 2} onClick={merge} title="ย้ายของหลาย part มารวมในกล่องเดียว แล้วออกป้ายใหม่ 1 ใบ">
                       รวม {chosen.length > 1 ? chosen.length : ''} ป้ายเป็นกล่องเดียว
                     </BigButton>
@@ -261,11 +301,15 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
                     <label htmlFor={`lpn-${l.id}`} className="flex cursor-pointer items-start gap-3 p-3">
                       <input id={`lpn-${l.id}`} type="checkbox" className="mt-1 h-5 w-5" checked={selected.has(l.id)} onChange={() => toggle(l.id)} />
                       <span className="min-w-0 flex-1">
-                        <span className="block font-mono font-semibold">{single ? single.partNo : `กล่องรวม ${l.items.length} part`}</span>
+                        <span className="block font-mono font-semibold">
+                          {l.caseNo ? `เคส ${l.caseNo} · ` : ''}
+                          {single ? single.partNo : `${l.items.length} part`}
+                        </span>
                         <span className="block truncate text-xs text-slate-500">{single ? (detail.lines.find((x) => x.id === single.grnLineId)?.description ?? '') : l.items.map((i) => i.partNo).join(', ')}</span>
                         <span className="mt-1 flex flex-wrap gap-1">
                           <Pill tone="muted">{l.lpnNo}</Pill>
                           {l.hold ? <Pill tone="mi3">รอ MI3</Pill> : l.status === 'empty' ? <Pill tone="muted">ใช้หมดแล้ว</Pill> : null}
+                          {master.locations.find((x) => x.code === l.locationCode)?.kind === 'ng' && <Pill tone="bad">NG · เสียหาย → {l.locationCode}</Pill>}
                         </span>
                       </span>
                       <span className="font-mono font-semibold">{fmt(qty)}</span>
@@ -288,26 +332,28 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
               </div>
             </Card>
 
-            <Card eyebrow="ขั้นที่ 2 · เลือกรูปแบบพิมพ์">
-              <Segmented label="รูปแบบพิมพ์" value={format} onChange={setFormat} options={[['label', FORMAT_NAME.label], ['sheet', FORMAT_NAME.sheet], ['a4', FORMAT_NAME.a4]]} />
-              <p className="text-sm text-slate-500">
-                {format === 'label' && 'ขนาดเดียวกับใบปะหน้าพัสดุ ใช้กับเครื่องพิมพ์ฉลาก 4 นิ้ว (รวมเครื่องพกพา) 1 ป้ายต่อ 1 กล่อง'}
-                {format === 'sheet' && 'ใช้เครื่องพิมพ์ A4 ธรรมดา ตัดแบ่ง 4 ป้ายต่อแผ่น'}
-                {format === 'a4' && 'ใบรับสินค้าทั้งเที่ยว พร้อม QR และช่องเซ็น ใช้แนบ Packing List เก็บแฟ้ม'}
-              </p>
-              <div className="overflow-x-auto rounded-xl bg-slate-100 p-4">
-                {/* มือถือ: ย่อตัวอย่างให้ป้าย 100 มม. พอดีจอ (ตอนพิมพ์ใช้ขนาดจริง) */}
-                <div className="flex w-max gap-4" style={mobile ? { zoom: 0.78 } : undefined}>
-                  {format === 'a4' ? <div className="origin-top-left scale-[0.6]" style={{ height: '180mm' }}><GrnSheet ctx={ctx} /></div> : chosen.slice(0, 2).map((l) => <LabelCard key={l.id} lpn={l} ctx={ctx} mono={format === 'label'} />)}
-                  {format !== 'a4' && chosen.length === 0 && <p className="text-sm text-slate-500">ยังไม่ได้เลือกป้าย</p>}
+            {!isVoid && (
+              <Card eyebrow="ขั้นที่ 2 · เลือกรูปแบบพิมพ์">
+                <Segmented label="รูปแบบพิมพ์" value={format} onChange={setFormat} options={[['label', FORMAT_NAME.label], ['sheet', FORMAT_NAME.sheet], ['a4', FORMAT_NAME.a4]]} />
+                <p className="text-sm text-slate-500">
+                  {format === 'label' && 'ขนาดเดียวกับใบปะหน้าพัสดุ ใช้กับเครื่องพิมพ์ฉลาก 4 นิ้ว (รวมเครื่องพกพา) 1 ป้ายต่อ 1 กล่อง'}
+                  {format === 'sheet' && 'ใช้เครื่องพิมพ์ A4 ธรรมดา ตัดแบ่ง 4 ป้ายต่อแผ่น'}
+                  {format === 'a4' && 'ใบรับสินค้าทั้งเที่ยว พร้อม QR และช่องเซ็น ใช้แนบ Packing List เก็บแฟ้ม'}
+                </p>
+                <div className="overflow-x-auto rounded-xl bg-slate-100 p-4">
+                  {/* มือถือ: ย่อตัวอย่างให้ป้าย 100 มม. พอดีจอ (ตอนพิมพ์ใช้ขนาดจริง) */}
+                  <div className="flex w-max gap-4" style={mobile ? { zoom: 0.78 } : undefined}>
+                    {format === 'a4' ? <div className="origin-top-left scale-[0.6]" style={{ height: '180mm' }}><GrnSheet ctx={ctx} /></div> : chosen.slice(0, 2).map((l) => <LabelCard key={l.id} lpn={l} ctx={ctx} mono={format === 'label'} />)}
+                    {format !== 'a4' && chosen.length === 0 && <p className="text-sm text-slate-500">ยังไม่ได้เลือกป้าย</p>}
+                  </div>
                 </div>
-              </div>
-            </Card>
+              </Card>
+            )}
           </>
         )}
       </div>
 
-      {detail && (
+      {detail && !isVoid && (
         <div className="sticky bottom-2 z-20 flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-sky-700 bg-white px-4 py-3 shadow-lg lg:col-span-2">
           <div>
             <strong className="text-base">{format === 'a4' ? 'ใบ GRN 1 ใบ' : `เลือกแล้ว ${chosen.length} ป้าย`}</strong>
