@@ -2,6 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { WmsApi } from './api'
 import { bangkokDay } from './ledger'
 import type {
+  CheckLine,
+  ReceiptCheck,
   ClosingTotal,
   CountRow,
   EnvArchive,
@@ -42,7 +44,23 @@ function friendly(msg: string): string {
 
 const one = <T>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null))
 
-const GRN_SELECT = 'id, grn_no, invoice_id, model_code, customer_id, received_at, receiver_code, note, replacement, packing_lists(ref_doc, so_no, packages), invoices(invoice_no)'
+/**
+ * PostgREST ส่งได้ครั้งละไม่เกิน Max rows ของโปรเจกต์ (ค่าเริ่มต้น 1,000 แถว) เกินแล้วตัดทิ้งโดยไม่แจ้ง
+ * ⇒ ดึงทีละหน้าจนได้ไม่เต็มหน้า · query ต้องเรียงด้วยคีย์ที่ไม่ซ้ำ ไม่งั้นรอยต่อระหว่างหน้าอาจซ้ำ/ตกหล่น
+ */
+const PAGE = 1000
+export async function fetchAll(page: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<Row[]> {
+  const out: Row[] = []
+  for (let from = 0; from < 500_000; from += PAGE) {
+    const rows = await run<Row[]>(page(from, from + PAGE - 1))
+    out.push(...rows)
+    if (rows.length < PAGE) break
+  }
+  return out
+}
+
+const GRN_SELECT =
+  'id, grn_no, invoice_id, model_code, customer_id, received_at, receiver_code, note, replacement, status, void_reason, voided_code, voided_at, check_id, packing_lists(ref_doc, so_no, packages), invoices(invoice_no)'
 
 function toGrn(r: Row): Grn {
   const pl = one(r.packing_lists as Row | Row[] | null)
@@ -61,6 +79,11 @@ function toGrn(r: Row): Grn {
     receiverCode: str(r.receiver_code),
     note: str(r.note),
     replacement: Boolean(r.replacement),
+    status: r.status === 'void' ? 'void' : 'active',
+    voidReason: str(r.void_reason),
+    voidedCode: str(r.voided_code),
+    voidedAt: str(r.voided_at),
+    checkId: str(r.check_id),
   }
 }
 
@@ -97,6 +120,7 @@ const toGrnLine = (r: Row): GrnLine => ({
   invoiceQty: num(r.invoice_qty),
   needsQi: Boolean(r.needs_qi),
   homeLocation: str(r.home_location),
+  caseNo: str(r.case_no),
 })
 
 const toItem = (r: Row): LpnItem => ({ id: String(r.id), lpnId: String(r.lpn_id), grnLineId: String(r.grn_line_id), partNo: String(r.part_no), qty: Number(r.qty), prevLpnId: str(r.prev_lpn_id) })
@@ -104,7 +128,7 @@ const toItem = (r: Row): LpnItem => ({ id: String(r.id), lpnId: String(r.lpn_id)
 // lpn_items อ้างถึง lpns สองทาง (lpn_id = กล่องปัจจุบัน, prev_lpn_id = กล่องก่อนรวม) ต้องระบุ FK ไม่งั้น PostgREST ไม่รู้ว่าจะ join ทางไหน
 // grns ระบุ FK ด้วย เพราะ lpns อ้างตัวเอง (merged_into) อาจถูกมองเป็นตารางเชื่อม
 const LPN_SELECT =
-  'id, lpn_no, grn_id, location_code, hold, status, created_at, lpn_items!lpn_items_lpn_id_fkey(id, lpn_id, grn_line_id, part_no, qty, prev_lpn_id), grns!lpns_grn_id_fkey(grn_no, model_code, invoices(invoice_no))'
+  'id, lpn_no, grn_id, location_code, hold, status, created_at, case_no, lpn_items!lpn_items_lpn_id_fkey(id, lpn_id, grn_line_id, part_no, qty, prev_lpn_id), grns!lpns_grn_id_fkey(grn_no, model_code, invoices(invoice_no), packing_lists(ref_doc))'
 const toLpn = (r: Row): Lpn => {
   const g = one(r.grns as Row | Row[] | null)
   return {
@@ -116,6 +140,8 @@ const toLpn = (r: Row): Lpn => {
     status: r.status as Lpn['status'],
     createdAt: String(r.created_at),
     items: ((r.lpn_items as Row[] | null) ?? []).map(toItem),
+    caseNo: str(r.case_no),
+    plRef: str(one(g?.packing_lists as Row | Row[] | null)?.ref_doc),
     grnNo: str(g?.grn_no),
     modelCode: str(g?.model_code),
     invoiceNo: str(one(g?.invoices as Row | Row[] | null)?.invoice_no),
@@ -123,7 +149,7 @@ const toLpn = (r: Row): Lpn => {
 }
 
 const TX_SELECT =
-  'id, kind, doc_no, lpn_id, lpn_item_id, part_no, qty, new_qty, pass_qty, ng_qty, from_loc, to_loc, ref, reason, status, created_code, created_at, decided_code, lpns(lpn_no)'
+  'id, kind, doc_no, lpn_id, lpn_item_id, part_no, qty, new_qty, pass_qty, ng_qty, from_loc, to_loc, ref, reason, status, created_code, created_at, decided_code, via, lpns(lpn_no)'
 const toTx = (r: Row): Tx => ({
   id: String(r.id),
   kind: r.kind as Tx['kind'],
@@ -144,7 +170,67 @@ const toTx = (r: Row): Tx => ({
   createdCode: str(r.created_code),
   createdAt: String(r.created_at),
   decidedCode: str(r.decided_code),
+  via: r.via === 'scan' || r.via === 'list' ? r.via : null,
 })
+
+const toInvoiceLine = (l: Row): InvoiceLine => ({ lineNo: Number(l.line_no ?? l.lineNo), partNo: String(l.part_no ?? l.partNo), description: str(l.description), qty: Number(l.qty ?? 0) })
+
+// ใช้ได้ทั้งแถวจากตาราง และผลจาก check_line_save / check_line_add (to_jsonb ของแถว)
+const toCheckLine = (r: Row): CheckLine => ({
+  id: String(r.id),
+  checkId: String(r.check_id),
+  lineNo: Number(r.line_no),
+  caseNo: String(r.case_no ?? ''),
+  partNo: String(r.part_no),
+  description: str(r.description),
+  plQty: Number(r.pl_qty ?? 0),
+  invLine: num(r.inv_line),
+  zoneId: str(r.zone_id),
+  extra: Boolean(r.extra),
+  actualQty: num(r.actual_qty),
+  damagedQty: Number(r.damaged_qty ?? 0),
+  note: str(r.note),
+  photos: ((r.photos as string[] | null) ?? []).map(String),
+  checkedCode: str(r.checked_code),
+  checkedAt: str(r.checked_at),
+  version: Number(r.version ?? 0),
+})
+
+const CHECK_SELECT = '*, grns!receipt_checks_grn_id_fkey(grn_no), receipt_check_lines(actual_qty)'
+const toCheck = (r: Row): ReceiptCheck => {
+  const lines = (r.receipt_check_lines as Row[] | null) ?? []
+  return {
+    id: String(r.id),
+    checkNo: String(r.check_no),
+    status: r.status === 'done' || r.status === 'cancelled' ? r.status : 'open',
+    modelCode: str(r.model_code),
+    customerId: str(r.customer_id),
+    replacement: Boolean(r.replacement),
+    plRef: String(r.pl_ref ?? ''),
+    soNo: str(r.so_no),
+    packages: str(r.packages),
+    title: str(r.title),
+    invoiceNo: str(r.invoice_no),
+    poNo: str(r.po_no),
+    docDate: str(r.doc_date),
+    movementType: str(r.movement_type),
+    invoiceLines: ((r.invoice_lines as Row[] | null) ?? []).map(toInvoiceLine),
+    plImages: ((r.pl_images as string[] | null) ?? []).map(String),
+    invImages: ((r.inv_images as string[] | null) ?? []).map(String),
+    note: str(r.note),
+    grnId: str(r.grn_id),
+    grnNo: str(one(r.grns as Row | Row[] | null)?.grn_no),
+    createdCode: str(r.created_code),
+    createdAt: String(r.created_at),
+    doneCode: str(r.done_code),
+    doneAt: str(r.done_at),
+    cancelReason: str(r.cancel_reason),
+    cancelledCode: str(r.cancelled_code),
+    cancelledAt: str(r.cancelled_at),
+    lineCount: lines.length,
+    checkedCount: lines.filter((l) => l.actual_qty !== null && l.actual_qty !== undefined).length,
+  }
+}
 
 const toInvoice = (r: Row): Invoice => ({
   id: String(r.id),
@@ -176,15 +262,18 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
   const rpc = <T>(fn: string, args?: Record<string, unknown>) => run<T>(sb.rpc(fn, args))
   // ใหม่สุดก่อน: ถ้าเกินจำนวนที่ดึงได้ ส่วนที่ตกไปคือรายการเก่า
   const countRows = async (fromDay: string): Promise<CountRow[]> =>
-    ((await run(
-      sb
-        .from('wms_tx')
-        .select('created_at, from_loc, lpn_item_id, part_no, qty, new_qty, created_code')
-        .eq('kind', 'COUNT')
-        .gte('created_at', `${fromDay}T00:00:00+07:00`)
-        .order('created_at', { ascending: false })
-        .limit(5000),
-    )) as Row[]).map((t) => ({
+    (
+      await fetchAll((a, b) =>
+        sb
+          .from('wms_tx')
+          .select('id, created_at, from_loc, lpn_item_id, part_no, qty, new_qty, created_code')
+          .eq('kind', 'COUNT')
+          .gte('created_at', `${fromDay}T00:00:00+07:00`)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(a, b),
+      )
+    ).map((t) => ({
       at: String(t.created_at),
       day: bangkokDay(String(t.created_at)),
       loc: str(t.from_loc),
@@ -211,11 +300,11 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
 
     async master() {
       const [parts, models, rules, locs, heads, fgs] = await Promise.all([
-        run(sb.from('parts').select('part_no, name, part_type, customer_id, uam_code, revision, part_models(model_code)').order('part_no').limit(5000)),
+        fetchAll((a, b) => sb.from('parts').select('part_no, name, part_type, customer_id, uam_code, revision, part_models(model_code)').order('part_no').range(a, b)),
         run(sb.from('product_models').select('code, customer_id, requires_inspection').order('code')),
         run(sb.from('zone_rules').select('customer_id, part_type, zone_id')),
         // select * : ใช้ได้ทั้งก่อนและหลังเพิ่มคอลัมน์ blocked / manual (0018)
-        run(sb.from('locations').select('*').order('code').limit(5000)),
+        fetchAll((a, b) => sb.from('locations').select('*').order('code').range(a, b)),
         rpc<Row[]>('zone_head_list'),
         run(sb.from('fg_items').select('code, name, model_code, active, fg_bom(part_no, qty_per)').order('code')),
       ])
@@ -253,12 +342,17 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
     },
 
     async findInvoiceNo(invoiceNo) {
-      const r = one(await run(sb.from('invoices').select('id, grns(id)').eq('invoice_no', invoiceNo.trim()).limit(1)))
-      return r ? { id: String((r as Row).id), grnCount: (((r as Row).grns as Row[] | null) ?? []).length } : null
+      const r = one(await run(sb.from('invoices').select('id, grns!grns_invoice_id_fkey(id, status)').eq('invoice_no', invoiceNo.trim()).limit(1)))
+      return r ? { id: String((r as Row).id), grnCount: (((r as Row).grns as Row[] | null) ?? []).filter((g) => g.status !== 'void').length } : null
     },
 
     async createGrn(p) {
       return rpc<{ grnId: string; grnNo: string }>('create_grn', { p })
+    },
+
+    async docUrl(path) {
+      const { data, error } = await sb.storage.from('wms-docs').createSignedUrl(path, 3600)
+      return error ? null : data.signedUrl
     },
 
     async uploadDoc(file, kind) {
@@ -297,6 +391,30 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
     },
 
     mergeLpns: (lpnIds, location) => rpc('merge_lpns', { p_lpn_ids: lpnIds, p_location: location ?? null }),
+    voidGrn: (grnId, reason) => rpc('grn_void', { p_grn: grnId, p_reason: reason }),
+
+    createCheck: (p) => rpc<{ id: string; checkNo: string }>('check_create', { p }),
+    async listChecks() {
+      const rows = ((await run(sb.from('receipt_checks').select(CHECK_SELECT).order('created_at', { ascending: false }).limit(80))) as Row[]).map(toCheck)
+      return [...rows.filter((c) => c.status === 'open'), ...rows.filter((c) => c.status !== 'open')]
+    },
+    async checkDetail(id) {
+      const [c, lines] = await Promise.all([
+        run(sb.from('receipt_checks').select(CHECK_SELECT).eq('id', id).maybeSingle()),
+        fetchAll((a, b) => sb.from('receipt_check_lines').select('*').eq('check_id', id).order('line_no').range(a, b)),
+      ])
+      return c ? { check: toCheck(c as Row), lines: lines.map(toCheckLine) } : null
+    },
+    saveCheckLine: async (lineId, version, patch) => toCheckLine(await rpc<Row>('check_line_save', { p_line: lineId, p_version: version, p: patch })),
+    saveCheckCase: async (checkId, caseNo, mode) => Number(await rpc('check_case_save', { p_check: checkId, p_case: caseNo, p_mode: mode })),
+    addCheckLine: async (checkId, line) => toCheckLine(await rpc<Row>('check_line_add', { p_check: checkId, p: line })),
+    saveCheckHeader: async (checkId, patch) => {
+      await rpc('check_header_save', { p_check: checkId, p: patch })
+    },
+    cancelCheck: async (checkId, reason) => {
+      await rpc('check_cancel', { p_check: checkId, p_reason: reason })
+    },
+    completeCheck: (checkId) => rpc<{ grnId: string; grnNo: string }>('check_complete', { p_check: checkId }),
     unmergeLpn: (lpnId) => rpc('unmerge_lpn', { p_lpn: lpnId }),
     splitLpn: (lpnId, items) => rpc('split_lpn', { p_lpn: lpnId, p_items: items }),
 
@@ -304,14 +422,18 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
       const r = await run(sb.from('lpns').select(LPN_SELECT).eq('lpn_no', lpnNo.trim().toUpperCase()).maybeSingle())
       if (!r) return null
       const lpn = toLpn(r as Row)
-      const [g, home] = await Promise.all([
+      const [g, home, now] = await Promise.all([
         lpn.grnId ? run(sb.from('grns').select(GRN_SELECT).eq('id', lpn.grnId).maybeSingle()) : Promise.resolve(null),
         lpn.items[0] ? run(sb.from('grn_lines').select('home_location').eq('id', lpn.items[0].grnLineId).maybeSingle()) : Promise.resolve(null),
+        // ช่องแนะนำตามกฎโซนตอนนี้ (กฎอาจเปลี่ยนหลังรับของ) · ไม่ได้ ⇒ ใช้ช่องที่จดไว้ตอนรับ
+        lpn.status === 'active' ? api.suggestSlots([lpn.id]).catch(() => []) : Promise.resolve([]),
       ])
-      return { lpn, grn: g ? toGrn(g as Row) : null, homeLocation: str((home as Row | null)?.home_location) }
+      return { lpn, grn: g ? toGrn(g as Row) : null, homeLocation: now[0]?.code ?? str((home as Row | null)?.home_location) }
     },
 
     scanMove: (lpnId, to, kind) => rpc('scan_move', { p_lpn: lpnId, p_to: to, p_kind: kind }),
+    moveLpns: (lpnIds, to) => rpc<{ moved: number; same: number }>('move_lpns', { p_ids: lpnIds, p_to: to }),
+    suggestSlots: async (lpnIds) => (lpnIds.length ? rpc<{ lpnId: string; code: string | null }[]>('suggest_slots', { p_ids: lpnIds }) : []),
     scanIssue: (p) => rpc<ScanIssueResult>('scan_issue_req', { p }),
     scanAdjustRequest: (itemId, newQty, reason) => rpc('scan_adjust_request', { p_item: itemId, p_new_qty: newQty, p_reason: reason }),
     scanAdjustDecide: (txId, approve) => rpc('scan_adjust_decide', { p_tx: txId, p_approve: approve }),
@@ -329,7 +451,7 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
     },
 
     async activeLpns() {
-      return ((await run(sb.from('lpns').select(LPN_SELECT).eq('status', 'active').limit(5000))) as Row[]).map(toLpn)
+      return (await fetchAll((a, b) => sb.from('lpns').select(LPN_SELECT).eq('status', 'active').order('lpn_no').range(a, b))).map(toLpn)
     },
 
     async invoiceView(query) {
@@ -344,7 +466,7 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
       const id = String(inv.id)
       const [lines, grns] = await Promise.all([
         run(sb.from('invoice_lines').select('line_no, part_no, description, qty').eq('invoice_id', id).order('line_no')),
-        run(sb.from('grns').select(GRN_SELECT).eq('invoice_id', id).order('received_at')),
+        run(sb.from('grns').select(GRN_SELECT).eq('invoice_id', id).eq('status', 'active').order('received_at')),
       ])
       const grnIds = (grns as Row[]).map((g) => String(g.id))
       const glines = grnIds.length ? ((await run(sb.from('grn_lines').select('part_no, counted_qty').in('grn_id', grnIds))) as Row[]) : []
@@ -405,42 +527,46 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
       await rpc('requisition_void', { p_id: id, p_reason: reason })
     },
     async listRequisitions(from, to) {
-      const rows = (await run(
+      const rows = await fetchAll((a, b) =>
         sb
           .from('requisitions')
           .select('id, kind, req_no, doc_no, doc_date, model_code, fg_code, fg_qty, from_dept, to_dept, note, status, reconciled_by, created_code, created_at, requisition_lines(line_no, part_no, req_qty, qty, balance)')
           .gte('doc_date', from)
           .lte('doc_date', to)
           .order('created_at', { ascending: false })
-          .limit(1000),
-      )) as Row[]
+          .order('id', { ascending: false })
+          .range(a, b),
+      )
       return rows.map(toRequisition)
     },
     async dashboardActivity(fromDay) {
       const from = `${fromDay}T00:00:00+07:00`
       const [grns, qi, counts] = await Promise.all([
-        run(
+        fetchAll((a, b) =>
           sb
             .from('grns')
-            .select('grn_no, model_code, received_at, replacement, grn_lines(part_no, counted_qty)')
+            .select('id, grn_no, model_code, received_at, replacement, grn_lines(part_no, counted_qty)')
             .gte('received_at', from)
             .not('grn_no', 'like', 'CNT-%')
+            .eq('status', 'active')
             .order('received_at')
-            .limit(3000),
+            .order('id')
+            .range(a, b),
         ),
-        run(
+        fetchAll((a, b) =>
           sb
             .from('wms_tx')
-            .select('part_no, pass_qty, ng_qty, created_at, lpns!wms_tx_lpn_id_fkey(grns!lpns_grn_id_fkey(model_code))')
+            .select('id, part_no, pass_qty, ng_qty, created_at, lpns!wms_tx_lpn_id_fkey(grns!lpns_grn_id_fkey(model_code))')
             .eq('kind', 'QI')
             .gte('created_at', from)
             .order('created_at')
-            .limit(5000),
+            .order('id')
+            .range(a, b),
         ),
         countRows(fromDay),
       ])
       return {
-        receipts: (grns as Row[]).flatMap((g) =>
+        receipts: grns.flatMap((g) =>
           ((g.grn_lines as Row[] | null) ?? [])
             .map((l) => ({
               day: bangkokDay(String(g.received_at)),
@@ -452,7 +578,7 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
             }))
             .filter((r) => r.qty > 0),
         ),
-        qi: (qi as Row[]).map((t) => {
+        qi: qi.map((t) => {
           const grn = one(one(t.lpns as Row | Row[] | null)?.grns as Row | Row[] | null)
           return { day: bangkokDay(String(t.created_at)), model: grn ? str(grn.model_code) : null, partNo: String(t.part_no ?? ''), pass: Number(t.pass_qty ?? 0), ng: Number(t.ng_qty ?? 0) }
         }),
@@ -462,23 +588,25 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
     async cycleActivity(countsFrom, movesFrom) {
       const [counts, moves] = await Promise.all([
         countRows(countsFrom),
-        run(
+        fetchAll((a, b) =>
           sb
             .from('wms_tx')
-            .select('created_at, from_loc, to_loc')
+            .select('id, created_at, from_loc, to_loc')
             .in('kind', ['PUT', 'MOVE', 'ISSUE', 'RETURN'])
             .gte('created_at', `${movesFrom}T00:00:00+07:00`)
             .order('created_at', { ascending: false })
-            .limit(10000),
+            .order('id', { ascending: false })
+            .range(a, b),
         ),
       ])
       return {
         counts,
-        moves: (moves as Row[]).flatMap((t) => [str(t.from_loc), str(t.to_loc)].filter((loc): loc is string => !!loc).map((loc) => ({ day: bangkokDay(String(t.created_at)), loc }))),
+        moves: moves.flatMap((t) => [str(t.from_loc), str(t.to_loc)].filter((loc): loc is string => !!loc).map((loc) => ({ day: bangkokDay(String(t.created_at)), loc }))),
       }
     },
     async ledgerRows(parts, to) {
-      const rows = await rpc<Row[]>('stock_ledger_rows', { p_parts: parts, p_to: to })
+      // ก้อนเดียว (jsonb) ไม่ถูกตัดที่ Max rows เหมือนผลแบบตาราง
+      const rows = await rpc<Row[]>('stock_ledger_json', { p_parts: parts, p_to: to })
       return rows.map(
         (r): LedgerRow => ({
           at: String(r.at),

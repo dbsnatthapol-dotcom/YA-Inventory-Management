@@ -8,9 +8,10 @@ import { useWms } from '../../wms/useWms'
 import { IconBox, IconPin, IconScan, IconSearch, IconTag } from '../map/icons'
 import { MyWork } from '../wms/MyWork'
 import { LabelsTab } from '../wms/LabelsTab'
-import { ReceiveTab } from '../wms/ReceiveTab'
+import { MoveBoxes } from '../wms/MoveBoxes'
+import { ReceivePage } from '../wms/ReceivePage'
 import { ScanTab, type ScanMode } from '../wms/ScanTab'
-import { Alert } from '../wms/ui'
+import { Alert, Segmented } from '../wms/ui'
 import type { WmsDeepLink } from '../wms/WarehousePage'
 import { WarehousePlan, type PlanFocus } from '../plan/WarehousePlan'
 import { MobileSearch } from './MobileSearch'
@@ -23,7 +24,7 @@ const TABS: { k: MobileTab; label: string; icon: ReactNode }[] = [
   { k: 'receive', label: 'รับของ', icon: <IconBox /> },
   { k: 'labels', label: 'ป้าย', icon: <IconTag /> },
   { k: 'scan', label: 'สแกน', icon: <IconScan /> },
-  { k: 'search', label: 'ค้นหา', icon: <IconSearch size={18} /> },
+  { k: 'search', label: 'ค้นหา/ย้าย', icon: <IconSearch size={18} /> },
   { k: 'map', label: 'ผัง', icon: <IconPin size={18} /> },
 ]
 
@@ -51,6 +52,10 @@ export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Pr
   // กล่องที่อยู่ในคลัง ใช้ร่วมกันระหว่างหน้าค้นหาและผัง
   const [lpns, setLpns] = useState<Lpn[] | null>(null)
   const [lpnError, setLpnError] = useState<string | null>(null)
+  // รับของ: ใบตรวจรับที่เปิดจากหน้างาน · ค้นหา/ย้าย: โหมดย้ายของ (เลือกจากรายการ ไม่ต้องสแกน)
+  const [receive, setReceive] = useState<{ checkId: string | null; key: number }>({ checkId: null, key: 0 })
+  const [findMode, setFindMode] = useState<'find' | 'move'>('find')
+  const [moveFrom, setMoveFrom] = useState<{ place: 'all' | 'staging'; key: number }>({ place: 'all', key: 0 })
 
   const loadLpns = useCallback(async () => {
     try {
@@ -87,6 +92,7 @@ export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Pr
   const go = (t: MobileTab) => {
     // เปิดแท็บสแกนเอง = เริ่มสแกนใหม่ด้วยงานที่จำไว้
     if (t === 'scan' && tab !== 'scan') setScan((s) => ({ code: null, key: s.key + 1 }))
+    if (t === 'receive' && tab !== 'receive') setReceive((r) => ({ checkId: null, key: r.key + 1 }))
     setTab(t)
     setMenu(false)
     if (t === 'map') setHighlight(null)
@@ -157,11 +163,26 @@ export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Pr
             <p className="py-16 text-center text-slate-500">กำลังโหลด…</p>
           ) : (
             <>
-              {tab === 'work' && <MyWork onScan={scanLpn} />}
+              {tab === 'work' && (
+                <MyWork
+                  onScan={scanLpn}
+                  onOpenCheck={(id) => {
+                    setReceive((r) => ({ checkId: id, key: r.key + 1 }))
+                    setTab('receive')
+                  }}
+                  onMove={() => {
+                    setFindMode('move')
+                    setMoveFrom((m) => ({ place: 'staging', key: m.key + 1 }))
+                    setTab('search')
+                  }}
+                />
+              )}
               {tab === 'scan' && <ScanTab key={scan.key} initialCode={scan.code} initialMode={scan.mode} />}
               {tab === 'receive' && (
-                <ReceiveTab
-                  onCreated={(id) => {
+                <ReceivePage
+                  key={receive.key}
+                  openCheckId={receive.checkId}
+                  onReceived={(id) => {
                     // รับเสร็จ ⇒ ไปหน้าป้ายของ GRN นี้ทันที
                     setGrnId(id)
                     setTab('labels')
@@ -170,7 +191,22 @@ export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Pr
               )}
               {tab === 'labels' && <LabelsTab grnId={grnId} onSelectGrn={setGrnId} />}
               {tab === 'search' && (
-                <MobileSearch layout={layout} lpns={lpns} error={lpnError} onRefresh={loadLpns} onScanLpn={scanLpn} onShowZone={showZone} />
+                <>
+                  <Segmented
+                    label="ค้นหาหรือย้ายของ"
+                    value={findMode}
+                    onChange={setFindMode}
+                    options={[
+                      ['find', 'ค้นหา'],
+                      ['move', 'ย้ายของ (ไม่ต้องสแกน)'],
+                    ]}
+                  />
+                  {findMode === 'find' ? (
+                    <MobileSearch layout={layout} lpns={lpns} error={lpnError} onRefresh={loadLpns} onScanLpn={scanLpn} onShowZone={showZone} />
+                  ) : (
+                    <MoveBoxes key={moveFrom.key} initialPlace={moveFrom.place} />
+                  )}
+                </>
               )}
             </>
           )}

@@ -1,4 +1,11 @@
 import type {
+  CheckDetail,
+  CheckHeaderPatch,
+  CheckLine,
+  CheckLineAdd,
+  CheckLinePatch,
+  CheckPayload,
+  ReceiptCheck,
   CycleActivity,
   DashActivity,
   EnvSummary,
@@ -40,7 +47,10 @@ export interface WmsApi {
 
   findInvoiceNo(invoiceNo: string): Promise<{ id: string; grnCount: number } | null>
   createGrn(p: ReceivePayload): Promise<{ grnId: string; grnNo: string }>
-  uploadDoc(file: File, kind: 'pl' | 'invoice'): Promise<string | null>
+  /** เก็บภาพเป็นหลักฐาน · หน้าสาธิตไม่เก็บ (คืน null) */
+  uploadDoc(file: File, kind: 'pl' | 'invoice' | 'check'): Promise<string | null>
+  /** ลิงก์ชั่วคราวสำหรับเปิดภาพที่เก็บไว้ */
+  docUrl(path: string): Promise<string | null>
   attachImages(grnId: string, plPaths: string[], invoicePaths: string[]): Promise<void>
   listGrns(limit?: number): Promise<Grn[]>
   grnDetail(grnId: string): Promise<GrnDetail | null>
@@ -50,9 +60,30 @@ export interface WmsApi {
   unmergeLpn(lpnId: string): Promise<{ lpnNos: string }>
   /** ย้าย part/จำนวนที่เลือกออกไปกล่องใหม่ (เลข LPN ใหม่) */
   splitLpn(lpnId: string, items: { itemId: string; qty: number }[]): Promise<{ lpnId: string; lpnNo: string }>
+  /** ยกเลิกใบรับ (สิทธิ์ grn.void): ได้เมื่อของยังไม่ถูกเบิก/ตรวจ/แก้ยอด และเดือนยังไม่ปิด · ใบตรวจรับที่ออกใบนี้เปิดกลับมาแก้ได้ */
+  voidGrn(grnId: string, reason: string): Promise<{ grnNo: string; boxes: number; checkId: string | null }>
+
+  // ใบตรวจรับ: Packing List → ตรวจทีละเคส (หลายคนพร้อมกัน) → ออก GRN จากยอดที่นับได้
+  createCheck(p: CheckPayload): Promise<{ id: string; checkNo: string }>
+  /** ใบที่ยังเปิดก่อน แล้วตามด้วยใบที่ปิด/ยกเลิกล่าสุด */
+  listChecks(): Promise<ReceiptCheck[]>
+  checkDetail(id: string): Promise<CheckDetail | null>
+  /** version ต้องตรงกับที่เห็น ไม่งั้นแปลว่ามีคนบันทึกไปก่อน (error) */
+  saveCheckLine(lineId: string, version: number, patch: CheckLinePatch): Promise<CheckLine>
+  /** ok = ทั้งเคสตรงตาม PL · missing = ไม่มีเคสนี้มา · แตะเฉพาะบรรทัดที่ยังไม่ได้ตรวจ · คืนจำนวนบรรทัด */
+  saveCheckCase(checkId: string, caseNo: string, mode: 'ok' | 'missing'): Promise<number>
+  addCheckLine(checkId: string, line: CheckLineAdd): Promise<CheckLine>
+  saveCheckHeader(checkId: string, patch: CheckHeaderPatch): Promise<void>
+  cancelCheck(checkId: string, reason: string): Promise<void>
+  /** ตรวจครบทุกบรรทัดแล้ว → ออก GRN (1 เคส = 1 กล่อง) */
+  completeCheck(checkId: string): Promise<{ grnId: string; grnNo: string }>
 
   findLpn(lpnNo: string): Promise<{ lpn: Lpn; grn: Grn | null; homeLocation: string | null } | null>
   scanMove(lpnId: string, to: string, kind: 'PUT' | 'MOVE'): Promise<void>
+  /** ย้ายหลายกล่องไปช่องเดียว (เลือกจากรายการ ไม่ต้องสแกน) · จากจุดรับของ/จุดพัก = จัดเก็บ (PUT) */
+  moveLpns(lpnIds: string[], to: string): Promise<{ moved: number; same: number }>
+  /** ช่องว่างที่แนะนำตามกฎโซนตอนนี้ (หลายกล่องได้ช่องไม่ซ้ำ) · code null = ไม่มีกฎหรือโซนเต็ม */
+  suggestSlots(lpnIds: string[]): Promise<{ lpnId: string; code: string | null }[]>
   /** เบิกจากกล่องที่สแกน = ใบเบิก (เข้าไลน์ / QC เบิก / NG) · FM-P-005 นับรวม ไม่ตัดซ้ำ */
   scanIssue(p: ScanIssuePayload): Promise<ScanIssueResult>
   scanAdjustRequest(itemId: string, newQty: number, reason: string): Promise<string>

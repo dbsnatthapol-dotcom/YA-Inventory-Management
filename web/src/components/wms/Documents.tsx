@@ -36,13 +36,14 @@ export function LabelCard({ lpn, ctx, heightMm = 150, mono = false }: { lpn: Lpn
       <div className="grid grid-cols-[34mm_1fr] items-center gap-[3mm]">
         <QrCode text={lpnUrl(lpn.lpnNo)} size="34mm" title={lpn.lpnNo} />
         <div className="flex min-w-0 flex-col gap-[1mm]">
+          {lpn.caseNo && <div className="w-fit border-2 border-black px-[1.5mm] font-mono text-[11pt] font-bold leading-tight">เคส {lpn.caseNo}</div>}
           {single ? (
             <>
               <div className="font-mono text-[12pt] font-bold leading-tight">{single.partNo}</div>
               <div className="text-[8pt] leading-snug">{desc}</div>
             </>
           ) : (
-            <div className="text-[10pt] font-bold">กล่องรวม {lpn.items.length} part</div>
+            <div className="text-[10pt] font-bold">{lpn.caseNo ? '' : 'กล่องรวม '}{lpn.items.length} part</div>
           )}
           <div className="font-mono text-[22pt] font-bold leading-none">
             {fmt(total)} <span className="text-[9pt]">PCS</span>
@@ -116,7 +117,10 @@ export function GrnSheet({ ctx }: { ctx: LabelContext }) {
       <div className="flex items-start justify-between gap-[6mm] border-b-2 border-black pb-[3mm]">
         <div>
           <BrandMark logo="14mm" name="13pt" />
-          <div className="mt-[2mm] text-[11pt] font-semibold">ใบรับสินค้า / GOODS RECEIPT NOTE {ctx.trial && <span className="ml-2 border border-black px-1 text-[8pt]">ทดลอง</span>}</div>
+          <div className="mt-[2mm] text-[11pt] font-semibold">
+            ใบรับสินค้า / GOODS RECEIPT NOTE {ctx.trial && <span className="ml-2 border border-black px-1 text-[8pt]">ทดลอง</span>}
+            {g.status === 'void' && <span className="ml-2 border-2 border-black px-1 text-[10pt] font-bold">ยกเลิกแล้ว</span>}
+          </div>
           <div className="mt-[2mm] font-mono text-[15pt] font-bold">{g.grnNo}</div>
         </div>
         <QrCode text={`${typeof window !== 'undefined' ? window.location.origin : ''}/g/${g.grnNo}`} size="26mm" title={g.grnNo} />
@@ -134,7 +138,7 @@ export function GrnSheet({ ctx }: { ctx: LabelContext }) {
       <table className="w-full border-collapse text-[8pt]">
         <thead>
           <tr>
-            {['#', 'Part No.', 'รายการ', 'PL', 'รับจริง', 'Invoice', 'ที่เก็บ', 'MI3'].map((h) => (
+            {['#', 'เคส', 'Part No.', 'รายการ', 'PL', 'รับจริง', 'Invoice', 'ที่เก็บ', 'MI3'].map((h) => (
               <th key={h} className="border border-neutral-500 bg-neutral-100 px-[1.5mm] py-[1mm] text-left">
                 {h}
               </th>
@@ -145,6 +149,7 @@ export function GrnSheet({ ctx }: { ctx: LabelContext }) {
           {ctx.lines.map((l) => (
             <tr key={l.id}>
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm]">{l.lineNo}</td>
+              <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] font-mono">{l.caseNo ?? ''}</td>
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] font-mono">{l.partNo}</td>
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm]">{l.description}</td>
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] text-right font-mono">{fmt(l.plQty)}</td>

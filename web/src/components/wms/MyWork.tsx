@@ -4,6 +4,7 @@ import { pendingAcks } from '../../wms/closing'
 import { CYCLE_REASON, type CyclePlan, type CycleSlot } from '../../wms/cycleCount'
 import { fmt } from '../../wms/logic'
 import type { WorkBox } from '../../wms/myWork'
+import type { ReceiptCheck } from '../../wms/types'
 import { useApprovals } from '../../wms/useApprovals'
 import { useMyWork } from '../../wms/useMyWork'
 import { usePrintQueue } from '../../wms/usePrintQueue'
@@ -17,6 +18,10 @@ interface Props {
   onScan: (lpnNo: string, mode: ScanMode) => void
   /** จอคอม: เปิดแท็บงานคลัง · มือถือไม่มี (อนุมัติ / Invoice / บัญชีคุม ทำที่จอคอม) */
   onTab?: (tab: WmsTab) => void
+  /** เปิดใบตรวจรับที่ค้าง */
+  onOpenCheck?: (id: string) => void
+  /** เปิดหน้าย้ายของจากรายการ (กล่องที่จุดรับของ) */
+  onMove?: () => void
 }
 
 const SHOW = 5
@@ -24,7 +29,7 @@ const time = (iso: string) => new Date(iso).toLocaleTimeString('th-TH', { timeZo
 const dayLabel = (day: string) => new Date(`${day}T00:00:00+07:00`).toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok', weekday: 'long', day: 'numeric', month: 'long' })
 
 /** หน้าแรกของคนหน้างาน: งานที่ค้างอยู่ตอนนี้ตามสิทธิ์ของแต่ละคน · แตะรายการแล้วเริ่มงานได้ทันที */
-export function MyWork({ onScan, onTab }: Props) {
+export function MyWork({ onScan, onTab, onOpenCheck, onMove }: Props) {
   const { api, can, ready } = useWms()
   const { profile } = useAuth()
   const [ver, setVer] = useState(0)
@@ -35,6 +40,19 @@ export function MyWork({ onScan, onTab }: Props) {
   // งานที่ทำที่จอคอม: Invoice ที่ยังไม่ปิด และปิดยอดที่รอรับทราบ
   const [invoices, setInvoices] = useState<{ open: number; reported: number }>({ open: 0, reported: 0 })
   const [acks, setAcks] = useState(0)
+  // ใบตรวจรับที่ยังตรวจไม่เสร็จ (ทุกคนช่วยตรวจได้)
+  const [checks, setChecks] = useState<ReceiptCheck[]>([])
+  useEffect(() => {
+    if (!ready || !can('receive.create')) return
+    let alive = true
+    api
+      .listChecks()
+      .then((c) => alive && setChecks(c.filter((x) => x.status === 'open')))
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [api, ready, can, ver])
   useEffect(() => {
     if (!ready || !desk) return
     let alive = true
@@ -55,6 +73,8 @@ export function MyWork({ onScan, onTab }: Props) {
 
   const q = work.queues
   const sections: { key: string; count: number; node: ReactNode }[] = []
+  if (can('receive.create'))
+    sections.push({ key: 'checks', count: checks.length, node: <CheckSection checks={checks} onOpen={onOpenCheck} /> })
   if (q && can('scan.qi'))
     sections.push({
       key: 'qi',
@@ -65,7 +85,22 @@ export function MyWork({ onScan, onTab }: Props) {
     sections.push({
       key: 'put',
       count: q.putaway.length,
-      node: <BoxSection title="จัดเก็บเข้าช่อง" hint="อยู่ที่จุดรับของ / จุดตรวจ MI3 · สแกนกล่อง แล้วสแกนป้ายช่องปลายทาง" boxes={q.putaway} action="จัดเก็บ" onPick={(b) => onScan(b.lpnNo, 'PUT')} />,
+      node: (
+        <BoxSection
+          title="จัดเก็บเข้าช่อง"
+          hint="อยู่ที่จุดรับของ / จุดตรวจ MI3 · สแกนกล่องแล้วสแกนป้ายช่อง หรือเลือกหลายกล่องจากรายการ"
+          boxes={q.putaway}
+          action="จัดเก็บ"
+          onPick={(b) => onScan(b.lpnNo, 'PUT')}
+          extra={
+            onMove && (
+              <BigButton tone="secondary" className="self-start" onClick={onMove}>
+                เลือกหลายกล่องแล้วย้ายทีเดียว →
+              </BigButton>
+            )
+          }
+        />
+      ),
     })
   if (can('scan.count'))
     sections.push({ key: 'count', count: work.plan ? work.plan.target - work.plan.done : 0, node: <CycleSection plan={work.plan} onCount={(lpnNo) => onScan(lpnNo, 'COUNT')} /> })
@@ -159,6 +194,7 @@ export function MyWork({ onScan, onTab }: Props) {
 }
 
 const SECTION_NAME: Record<string, string> = {
+  checks: 'ใบตรวจรับ',
   qi: 'ตรวจ MI3',
   put: 'จัดเก็บ',
   count: 'นับวน',
@@ -184,7 +220,7 @@ function Shell({ title, count, hint, children }: { title: string; count?: ReactN
 
 const Count = ({ n }: { n: number }) => <span className="rounded-full bg-amber-500 px-2 py-0.5 text-xs font-bold text-white">{fmt(n)}</span>
 
-function BoxSection({ title, hint, boxes, action, onPick }: { title: string; hint: string; boxes: WorkBox[]; action: string; onPick: (b: WorkBox) => void }) {
+function BoxSection({ title, hint, boxes, action, onPick, extra }: { title: string; hint: string; boxes: WorkBox[]; action: string; onPick: (b: WorkBox) => void; extra?: ReactNode }) {
   const [all, setAll] = useState(false)
   const shown = all ? boxes : boxes.slice(0, SHOW)
   return (
@@ -211,6 +247,32 @@ function BoxSection({ title, hint, boxes, action, onPick }: { title: string; hin
           {all ? 'ย่อ' : `ดูทั้งหมด ${boxes.length} กล่อง`}
         </button>
       )}
+      {extra}
+    </Shell>
+  )
+}
+
+function CheckSection({ checks, onOpen }: { checks: ReceiptCheck[]; onOpen?: (id: string) => void }) {
+  return (
+    <Shell title="ใบตรวจรับค้าง" count={<Count n={checks.length} />} hint="ตรวจของตาม Packing List ทีละเคส · หลายคนช่วยกันตรวจใบเดียวกันได้">
+      <ul className="flex flex-col divide-y divide-slate-100">
+        {checks.slice(0, SHOW).map((c) => (
+          <li key={c.id}>
+            <button className="flex w-full items-center gap-3 py-2.5 text-left hover:bg-slate-50 disabled:cursor-default" disabled={!onOpen} onClick={() => onOpen?.(c.id)}>
+              <span className="min-w-0 flex-1">
+                <span className="block font-mono text-sm font-semibold text-slate-800">{c.checkNo}</span>
+                <span className="block truncate text-xs text-slate-500">
+                  PL {c.plRef} · {c.modelCode ?? '-'} · ตรวจแล้ว {c.checkedCount}/{c.lineCount}
+                </span>
+              </span>
+              <span className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-slate-100" aria-hidden>
+                <span className="block h-full rounded-full bg-emerald-500" style={{ width: `${c.lineCount ? (c.checkedCount / c.lineCount) * 100 : 0}%` }} />
+              </span>
+              {onOpen && <span className="shrink-0 text-sm font-semibold text-sky-700">ตรวจ →</span>}
+            </button>
+          </li>
+        ))}
+      </ul>
     </Shell>
   )
 }

@@ -367,10 +367,10 @@ export function ScanTab({
               <dt className="text-slate-500">หัวหน้าโซน</dt>
               <dd>{zoneHeadOf(master, lpn.locationCode)}</dd>
               <dt className="text-slate-500">สถานะ</dt>
-              <dd>{lpn.status === 'merged' ? <Pill tone="muted">ถูกรวมเข้ากล่องอื่นแล้ว</Pill> : lpn.status === 'void' ? <Pill tone="muted">ยกเลิกแล้ว (ใช้ป้ายเดิมก่อนรวม)</Pill> : lpn.status === 'empty' ? <Pill tone="muted">ใช้หมดแล้ว</Pill> : lpn.hold ? <Pill tone="mi3">รอตรวจ MI3 · ห้ามเบิก</Pill> : <Pill tone="ok">พร้อมใช้</Pill>}</dd>
+              <dd>{lpn.status === 'merged' ? <Pill tone="muted">ถูกรวมเข้ากล่องอื่นแล้ว</Pill> : lpn.status === 'void' ? <Pill tone="muted">{cur?.grn?.status === 'void' ? `ใบรับ ${cur.grn.grnNo} ถูกยกเลิก · แกะป้ายนี้ออก` : 'ยกเลิกแล้ว (ใช้ป้ายเดิมก่อนรวม)'}</Pill> : lpn.status === 'empty' ? <Pill tone="muted">ใช้หมดแล้ว</Pill> : lpn.hold ? <Pill tone="mi3">รอตรวจ MI3 · ห้ามเบิก</Pill> : <Pill tone="ok">พร้อมใช้</Pill>}</dd>
               <dt className="text-slate-500">ที่มา</dt>
               <dd className="font-mono text-xs">
-                {cur?.grn ? `${cur.grn.grnNo} · PL ${cur.grn.plRef}${cur.grn.invoiceNo ? ` · INV ${cur.grn.invoiceNo}` : ''}` : '–'}
+                {cur?.grn ? `${cur.grn.grnNo} · PL ${cur.grn.plRef}${lpn.caseNo ? ` · เคส ${lpn.caseNo}` : ''}${cur.grn.invoiceNo ? ` · INV ${cur.grn.invoiceNo}` : ''}` : '–'}
               </dd>
             </dl>
 
