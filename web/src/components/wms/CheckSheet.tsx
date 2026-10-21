@@ -155,7 +155,12 @@ export function CheckView({ id, onBack, onReceived, onChanged }: { id: string; o
     })
   const complete = () =>
     run(async () => {
-      if (!window.confirm(`ตรวจครบแล้ว ออกใบรับ (GRN) ตามยอดที่นับได้?\n\n${sum.cases} เคส · ${fmt(sum.actualQty)} ชิ้น${sum.issueLines ? ` · ของไม่ตรง ${sum.issueLines} รายการ` : ''}`)) return
+      if (
+        !window.confirm(
+          `ตรวจครบแล้ว ออกใบรับ (GRN) ตามยอดที่นับได้?\n\n${sum.cases} เคส · ${fmt(sum.actualQty)} ชิ้น${sum.issueLines ? ` · ของไม่ตรง ${sum.issueLines} รายการ` : ''}${sum.damagedQty ? `\nของเสียหาย ${fmt(sum.damagedQty)} ชิ้น แยกเป็นกล่อง NG (พื้นที่กัก NG) อัตโนมัติ` : ''}`,
+        )
+      )
+        return
       const r = await api.completeCheck(c.id)
       onReceived(r.grnId)
       return `ออก ${r.grnNo} แล้ว`
@@ -224,6 +229,7 @@ export function CheckView({ id, onBack, onReceived, onChanged }: { id: string; o
         {c.status === 'done' && (
           <Alert tone="ok">
             ออกใบรับ {c.grnNo} แล้ว {when(c.doneAt)} โดย {c.doneCode} · พิมพ์ป้ายกล่อง (1 เคส = 1 ป้าย) ได้ที่หน้าป้าย หรือไม่พิมพ์ก็ได้ (ใช้เลข PL + เลขเคสค้นหาและย้ายของ)
+            {sum.damagedQty > 0 && ` · ของเสียหาย ${fmt(sum.damagedQty)} ชิ้นแยกเป็นกล่อง NG แล้ว (งานวันนี้ → NG รอส่งคืน)`}
           </Alert>
         )}
         {c.status === 'cancelled' && (

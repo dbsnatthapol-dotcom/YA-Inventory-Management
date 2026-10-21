@@ -288,14 +288,17 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
       .map((l, i) => ({ lineNo: l.lineNo || i + 1, partNo: canonPartNo(db.master.parts, l.partNo), description: l.description ?? '', qty: Math.max(0, Number(l.qty) || 0) }))
   const partName = (partNo: string) => db.master.parts.find((p) => p.partNo === canonPartNo(db.master.parts, partNo))?.name ?? null
 
-  // ===== ใบเบิก: กติกาเดียวกับ wms_issue_fifo / wms_return_lifo ใน 0014 =====
+  // ===== ใบเบิก: กติกาเดียวกับ wms_issue_fifo (0021) / wms_return_lifo (0014) =====
+  const inNgArea = (l: Lpn) => db.master.locations.find((x) => x.code === l.locationCode)?.kind === 'ng'
   const onHand = (part: string) =>
     db.lpns.filter((l) => l.status === 'active').reduce((s, l) => s + l.items.filter((i) => i.partNo === part).reduce((t, i) => t + i.qty, 0), 0)
   const issueFifo = (reqId: string, doc: string, ref: string, part: string, qty: number) => {
     if (!(qty > 0)) return
+    // ใบเบิก NG ตัดจากพื้นที่กัก NG ก่อน · ใบอื่น (เข้าไลน์ / QC / FM-P-005) ไม่แตะของในพื้นที่ NG
+    const ng = db.requisitions.find((r) => r.id === reqId)?.kind === 'ng'
     const boxes = db.lpns
-      .filter((l) => l.status === 'active' && !l.hold && l.items.some((i) => i.partNo === part && i.qty > 0))
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.lpnNo.localeCompare(b.lpnNo))
+      .filter((l) => l.status === 'active' && !l.hold && (ng || !inNgArea(l)) && l.items.some((i) => i.partNo === part && i.qty > 0))
+      .sort((a, b) => Number(!inNgArea(a)) - Number(!inNgArea(b)) || a.createdAt.localeCompare(b.createdAt) || a.lpnNo.localeCompare(b.lpnNo))
     const have = boxes.reduce((s, l) => s + l.items.filter((i) => i.partNo === part).reduce((t, i) => t + i.qty, 0), 0)
     if (have < qty) fail(`สต็อก ${part} ไม่พอ · พร้อมเบิก ${have} ขอเบิก ${qty}`)
     let left = qty
@@ -380,7 +383,12 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
     }
     db.grns.unshift(grn)
     const used = new Set(db.lpns.filter((l) => l.status === 'active').map((l) => l.locationCode))
+    // พื้นที่กัก NG: ของเสียหายแยกเป็นกล่องของตัวเอง (เหมือน create_grn 0021) · ไม่มี ⇒ อยู่กล่องเดียวกับของดี
+    const ngLoc = db.master.locations.filter((l) => l.kind === 'ng' && l.active && !l.blocked).map((l) => l.code).sort()[0] ?? null
     p.lines.forEach((line, i) => {
+      const damaged = line.damagedQty ?? 0
+      if (damaged < 0 || !Number.isInteger(damaged) || damaged > line.countedQty) fail(`จำนวนเสียหายของรายการที่ ${i + 1} ต้องเป็นจำนวนเต็ม 0 ถึง ${line.countedQty}`)
+      const good = ngLoc ? line.countedQty - damaged : line.countedQty
       const part = db.master.parts.find((x) => x.partNo === line.partNo)
       const type = part?.type ?? null
       const needs = !!type && (model?.requiresInspection ?? true) && db.settings.qiPartTypes.includes(type)
@@ -404,14 +412,23 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         needsQi: needs,
         homeLocation: home,
         caseNo,
+        damagedQty: damaged,
       }
       db.grnLines.push(gl)
-      if (line.countedQty > 0) {
-        const same = caseNo && !needs ? db.lpns.find((l) => l.grnId === grn.id && l.caseNo === caseNo && !l.hold && l.status === 'active') : undefined
+      if (good > 0) {
+        // กล่องของเคสนี้ที่จุดรับของ (ไม่ใช่กล่อง NG ของเคสเดียวกัน)
+        const same = caseNo && !needs ? db.lpns.find((l) => l.grnId === grn.id && l.caseNo === caseNo && !l.hold && l.status === 'active' && l.locationCode === 'RCV-01') : undefined
         const lpn: Lpn = same ?? { id: uid(), lpnNo: nextDoc('LPN'), grnId: grn.id, locationCode: needs ? 'MI3-QC' : 'RCV-01', hold: needs, status: 'active', createdAt: nowIso(), items: [], caseNo }
-        lpn.items.push({ id: uid(), lpnId: lpn.id, grnLineId: gl.id, partNo: line.partNo, qty: line.countedQty })
+        lpn.items.push({ id: uid(), lpnId: lpn.id, grnLineId: gl.id, partNo: line.partNo, qty: good })
         if (!same) db.lpns.push(lpn)
-        log({ kind: 'RECEIVE', docNo: grn.grnNo, lpnId: lpn.id, lpnNo: lpn.lpnNo, partNo: line.partNo, qty: line.countedQty, toLoc: lpn.locationCode, ref: grn.plRef })
+        log({ kind: 'RECEIVE', docNo: grn.grnNo, lpnId: lpn.id, lpnNo: lpn.lpnNo, partNo: line.partNo, qty: good, toLoc: lpn.locationCode, ref: grn.plRef })
+      }
+      // ของเสียหาย: กล่อง NG แยก 1 กล่องต่อรายการ → คิว "NG รอส่งคืน"
+      if (ngLoc && damaged > 0) {
+        const box: Lpn = { id: uid(), lpnNo: nextDoc('LPN'), grnId: grn.id, locationCode: ngLoc, hold: false, status: 'active', createdAt: nowIso(), items: [], caseNo }
+        box.items.push({ id: uid(), lpnId: box.id, grnLineId: gl.id, partNo: line.partNo, qty: damaged })
+        db.lpns.push(box)
+        log({ kind: 'RECEIVE', docNo: grn.grnNo, lpnId: box.id, lpnNo: box.lpnNo, partNo: line.partNo, qty: damaged, toLoc: ngLoc, ref: grn.plRef, reason: 'เสียหายจากการตรวจรับ → NG' })
       }
     })
     return { grnId: grn.id, grnNo: grn.grnNo }
@@ -670,7 +687,7 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
               : undefined,
             lines: [...c.lines]
               .sort((a, b) => a.lineNo - b.lineNo)
-              .map((l) => ({ caseNo: l.caseNo, partNo: l.partNo, description: l.description ?? '', plQty: l.plQty, countedQty: l.actualQty ?? 0, ...(l.zoneId ? { zoneId: l.zoneId } : {}) })),
+              .map((l) => ({ caseNo: l.caseNo, partNo: l.partNo, description: l.description ?? '', plQty: l.plQty, countedQty: l.actualQty ?? 0, damagedQty: l.damagedQty, ...(l.zoneId ? { zoneId: l.zoneId } : {}) })),
           },
           c.id,
         )
@@ -813,6 +830,7 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         const { lpn, item } = itemById(p.itemId)
         if (lpn.status !== 'active') fail('ไม่พบป้าย หรือป้ายนี้ใช้หมดแล้ว')
         if (lpn.hold) fail('เบิกไม่ได้ · กล่องนี้ยังไม่ผ่านการตรวจ MI3')
+        if (p.kind === 'line' && inNgArea(lpn)) fail('เบิกเข้าไลน์ไม่ได้ · กล่องนี้อยู่พื้นที่กัก NG (เบิกได้เฉพาะ NG / ส่งคืน หรือ QC)')
         if (!(p.qty > 0)) fail('ใส่จำนวนที่เบิก')
         if (p.qty > item.qty) fail(`เบิกได้ไม่เกิน ${item.qty} ชิ้น`)
         const day = today()

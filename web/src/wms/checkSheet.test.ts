@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { checkSummary, compareParts, groupCases, lineIssues, offInvoice } from './checkSheet'
 import { demoWms } from './demoApi'
+import { bangkokDay } from './ledger'
 import { ARCHIVE_CONFIRM } from './types'
 import type { CheckLine, CheckPayload } from './types'
 
@@ -101,15 +102,17 @@ describe('receiving with a check sheet (demo, same rules as check_* in 0020)', (
 
     const { grnId, grnNo } = await api.completeCheck(id)
     const grn = (await api.grnDetail(grnId))!
-    expect(grn.lpns.map((l) => [l.caseNo, l.items.map((i) => `${i.partNo}:${i.qty}`).join(',')])).toEqual([
-      ['P-1', 'RAT00586:100,RAT00566:50'],
-      ['P-2', 'RAT00586:25,RAT00566:5'],
+    // ของเสียหาย 2 ชิ้นแยกเป็นกล่องที่พื้นที่กัก NG
+    expect(grn.lpns.map((l) => [l.caseNo, l.locationCode, l.items.map((i) => `${i.partNo}:${i.qty}`).join(',')])).toEqual([
+      ['P-1', 'RCV-01', 'RAT00586:100,RAT00566:50'],
+      ['P-2', 'RCV-01', 'RAT00586:23,RAT00566:5'],
+      ['P-2', 'NG-HOLD', 'RAT00586:2'],
     ])
-    expect(grn.lines.map((l) => [l.caseNo, l.countedQty, l.invoiceQty])).toEqual([
-      ['P-1', 100, 130],
-      ['P-1', 50, null],
-      ['P-2', 25, 130],
-      ['P-2', 5, null],
+    expect(grn.lines.map((l) => [l.caseNo, l.countedQty, l.damagedQty, l.invoiceQty])).toEqual([
+      ['P-1', 100, 0, 130],
+      ['P-1', 50, 0, null],
+      ['P-2', 25, 2, 130],
+      ['P-2', 5, 0, null],
     ])
     expect(grn.grn.checkId).toBe(id)
     expect((await api.listChecks())[0]).toMatchObject({ id, status: 'done', grnNo })
@@ -131,6 +134,37 @@ describe('receiving with a check sheet (demo, same rules as check_* in 0020)', (
     await expect(api.cancelCheck(id, ' ')).rejects.toThrow('ใส่เหตุผลที่ยกเลิก')
     await api.cancelCheck(id, 'รถเที่ยวนี้ไม่มา')
     expect((await api.listChecks())[0]).toMatchObject({ status: 'cancelled', cancelReason: 'รถเที่ยวนี้ไม่มา' })
+  })
+
+  it('puts damaged goods in their own NG box that line issues never take (same rules as 0021)', async () => {
+    const api = demoWms()
+    const docDate = bangkokDay(new Date().toISOString())
+    const { id } = await api.createCheck(sheet({ lines: [{ caseNo: 'N1', partNo: 'RAT00566', description: '', plQty: 10 }] }))
+    const [l] = (await api.checkDetail(id))!.lines
+    await api.saveCheckLine(l.id, l.version, { actual: 10, damaged: 3, note: 'งอ' })
+    const { grnId } = await api.completeCheck(id)
+    const boxes = (await api.grnDetail(grnId))!.lpns
+    expect(boxes.map((b) => [b.locationCode, b.hold, b.items[0].qty])).toEqual([
+      ['RCV-01', false, 7],
+      ['NG-HOLD', false, 3],
+    ])
+    const ngItem = boxes[1].items[0]
+    // ของดีที่เบิกได้ = ทุกกล่องที่ไม่รอ MI3 และไม่อยู่พื้นที่ NG
+    const good = (await api.activeLpns())
+      .filter((b) => !b.hold && b.locationCode !== 'NG-HOLD')
+      .flatMap((b) => b.items)
+      .filter((i) => i.partNo === 'RAT00566')
+      .reduce((s, i) => s + i.qty, 0)
+    const line = (qty: number) => api.postRequisition({ kind: 'line', docDate, modelCode: 'K1G', lines: [{ partNo: 'RAT00566', qty }] })
+    await expect(line(good + 1)).rejects.toThrow(`พร้อมเบิก ${good} ขอเบิก ${good + 1}`)
+    await line(good)
+    await expect(api.scanIssue({ itemId: ngItem.id, qty: 1, kind: 'line', modelCode: 'K1G' })).rejects.toThrow('เบิกเข้าไลน์ไม่ได้ · กล่องนี้อยู่พื้นที่กัก NG')
+    expect((await api.grnDetail(grnId))!.lpns[1].items[0].qty).toBe(3)
+    // ใบเบิก NG ตัดจากพื้นที่ NG ก่อน · สแกนเบิก NG จากกล่องได้
+    await api.postRequisition({ kind: 'ng', docDate, lines: [{ partNo: 'RAT00566', qty: 2 }] })
+    expect((await api.grnDetail(grnId))!.lpns[1].items[0].qty).toBe(1)
+    await api.scanIssue({ itemId: ngItem.id, qty: 1, kind: 'ng' })
+    expect((await api.grnDetail(grnId))!.lpns.find((b) => b.locationCode === 'NG-HOLD')?.status).toBe('empty')
   })
 
   it('keeps parts that MI3 must inspect in their own boxes', async () => {

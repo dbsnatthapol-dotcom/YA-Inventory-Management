@@ -16,7 +16,9 @@ export function LabelCard({ lpn, ctx, heightMm = 150, mono = false }: { lpn: Lpn
   const single = lpn.items.length === 1 ? lpn.items[0] : null
   const total = lpn.items.reduce((s, i) => s + i.qty, 0)
   const home = (single && line(single.grnLineId)?.homeLocation) || lpn.locationCode
-  const dest = lpn.hold ? 'MI3-QC' : home
+  // กล่องในพื้นที่กัก NG (ของเสียหายจากการตรวจรับ): อยู่ที่นั่นจนส่งคืน ห้ามเข้าไลน์
+  const ng = ctx.master.locations.find((l) => l.code === lpn.locationCode)?.kind === 'ng'
+  const dest = lpn.hold ? 'MI3-QC' : ng ? lpn.locationCode : home
   const desc = single ? (line(single.grnLineId)?.description ?? ctx.master.parts.find((p) => p.partNo === single.partNo)?.name ?? '') : ''
   return (
     <div className="print-page flex flex-col gap-[2mm] border border-black p-[4mm] font-sans" style={{ width: '100mm', height: `${heightMm}mm`, boxSizing: 'border-box' }}>
@@ -63,7 +65,11 @@ export function LabelCard({ lpn, ctx, heightMm = 150, mono = false }: { lpn: Lpn
       )}
       {single && <div className="flex-1" />}
 
-      <div className="border-2 border-black py-[1mm] text-center text-[9pt] font-bold">{lpn.hold ? 'รอตรวจ MI3 · ห้ามเบิก' : 'พร้อมใช้ · BOI'}</div>
+      {ng ? (
+        <div className="border-2 border-black bg-black py-[1mm] text-center text-[10pt] font-bold text-white">NG · ของเสียหาย · ห้ามเข้าไลน์</div>
+      ) : (
+        <div className="border-2 border-black py-[1mm] text-center text-[9pt] font-bold">{lpn.hold ? 'รอตรวจ MI3 · ห้ามเบิก' : 'พร้อมใช้ · BOI'}</div>
+      )}
 
       <div className="grid grid-cols-[1.25fr_1fr] gap-[2mm] border-2 border-black px-[2mm] py-[1.2mm]">
         <div className="min-w-0">
@@ -153,7 +159,10 @@ export function GrnSheet({ ctx }: { ctx: LabelContext }) {
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] font-mono">{l.partNo}</td>
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm]">{l.description}</td>
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] text-right font-mono">{fmt(l.plQty)}</td>
-              <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] text-right font-mono font-bold">{fmt(l.countedQty)}</td>
+              <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] text-right font-mono font-bold">
+                {fmt(l.countedQty)}
+                {l.damagedQty ? <div className="text-[7pt] font-normal">เสียหาย→NG {fmt(l.damagedQty)}</div> : null}
+              </td>
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] text-right font-mono">{fmt(l.invoiceQty)}</td>
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] font-mono">{l.needsQi ? 'MI3-QC' : (l.homeLocation ?? '-')}</td>
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm]">{l.needsQi ? 'ตรวจ' : ''}</td>
@@ -163,6 +172,7 @@ export function GrnSheet({ ctx }: { ctx: LabelContext }) {
       </table>
       <div className="text-[8pt]">
         รวม {ctx.lines.length} รายการ · {fmt(ctx.lines.reduce((s, l) => s + l.countedQty, 0))} ชิ้น
+        {ctx.lines.some((l) => l.damagedQty) && ` · เสียหายแยกกล่อง NG ${fmt(ctx.lines.reduce((s, l) => s + (l.damagedQty ?? 0), 0))} ชิ้น`}
         {off > 0 && ` · ไม่ตรง Invoice ${off} รายการ (ดูหน้ากระทบยอด Invoice)`}
       </div>
       <div className="mt-auto grid grid-cols-3 gap-[8mm] pt-[14mm] text-center">

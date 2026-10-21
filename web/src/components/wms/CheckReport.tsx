@@ -68,7 +68,9 @@ export function CheckReport({ detail }: { detail: CheckDetail }) {
         ตรวจ {sum.checked}/{sum.lines} รายการ ({sum.casesDone}/{sum.cases} เคส) · ตาม PL {fmt(sum.plQty)} ชิ้น · นับได้ {fmt(sum.actualQty)} ชิ้น
         {sum.damagedQty ? ` · เสียหาย ${fmt(sum.damagedQty)} ชิ้น` : ''} ·{' '}
         <b>{off.length ? `ไม่ตรง ${off.length} รายการ` : 'ตรงตาม Packing List ทุกรายการ'}</b>
-        <div className="text-[8pt]">รับเข้าสต็อกตามยอดที่นับได้จริง · ส่วนต่างตามรายการด้านล่าง</div>
+        <div className="text-[8pt]">
+          รับเข้าสต็อกตามยอดที่นับได้จริง · ส่วนต่างตามรายการด้านล่าง{sum.damagedQty ? ' · ของเสียหายแยกเป็นกล่อง NG รอส่งคืน' : ''}
+        </div>
       </div>
 
       <div>

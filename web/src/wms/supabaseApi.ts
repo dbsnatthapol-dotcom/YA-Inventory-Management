@@ -121,6 +121,7 @@ const toGrnLine = (r: Row): GrnLine => ({
   needsQi: Boolean(r.needs_qi),
   homeLocation: str(r.home_location),
   caseNo: str(r.case_no),
+  damagedQty: Number(r.damaged_qty ?? 0),
 })
 
 const toItem = (r: Row): LpnItem => ({ id: String(r.id), lpnId: String(r.lpn_id), grnLineId: String(r.grn_line_id), partNo: String(r.part_no), qty: Number(r.qty), prevLpnId: str(r.prev_lpn_id) })

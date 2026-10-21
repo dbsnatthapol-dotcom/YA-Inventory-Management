@@ -150,6 +150,8 @@ export interface GrnLine {
   homeLocation: string | null
   /** เลขเคส/พาเลทจาก Packing List */
   caseNo?: string | null
+  /** เสียหายที่พบตอนตรวจรับ (รวมอยู่ใน countedQty · แยกเป็นกล่อง NG) */
+  damagedQty?: number
 }
 
 export interface LpnItem {
@@ -530,8 +532,9 @@ export interface ReceivePayload {
   note?: string
   /** รับของทดแทน */
   replacement?: boolean
-  /** zoneId = โซนเก็บที่ผู้รับเลือกเอง (ไม่ระบุ = ระบบแนะนำตามกฎลูกค้า + กลุ่ม part) · caseNo เดียวกัน = กล่องเดียวกัน */
-  lines: { partNo: string; description: string; plQty: number; countedQty: number; zoneId?: string; caseNo?: string }[]
+  /** zoneId = โซนเก็บที่ผู้รับเลือกเอง (ไม่ระบุ = ระบบแนะนำตามกฎลูกค้า + กลุ่ม part) · caseNo เดียวกัน = กล่องเดียวกัน
+   *  damagedQty = เสียหาย (อยู่ใน countedQty) แยกเป็นกล่องที่พื้นที่กัก NG */
+  lines: { partNo: string; description: string; plQty: number; countedQty: number; zoneId?: string; caseNo?: string; damagedQty?: number }[]
 }
 
 // ===== ใบตรวจรับ: แปลง Packing List เป็นรายการตรวจทีละเคส (มือถือ/คอม หลายคนพร้อมกัน) แล้วออก GRN จากยอดที่นับได้ =====

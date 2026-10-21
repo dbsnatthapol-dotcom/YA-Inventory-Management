@@ -309,6 +309,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
                         <span className="mt-1 flex flex-wrap gap-1">
                           <Pill tone="muted">{l.lpnNo}</Pill>
                           {l.hold ? <Pill tone="mi3">รอ MI3</Pill> : l.status === 'empty' ? <Pill tone="muted">ใช้หมดแล้ว</Pill> : null}
+                          {master.locations.find((x) => x.code === l.locationCode)?.kind === 'ng' && <Pill tone="bad">NG · เสียหาย → {l.locationCode}</Pill>}
                         </span>
                       </span>
                       <span className="font-mono font-semibold">{fmt(qty)}</span>
