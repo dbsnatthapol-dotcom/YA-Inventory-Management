@@ -26,6 +26,7 @@ import type {
   PrintJob,
   Settings,
   StaffBrief,
+  TraceTx,
   Tx,
   ZoneHead,
   CountRow,
@@ -930,6 +931,44 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
     recentTx: async (limit = 30, lpnId) => clone(db.tx.filter((t) => !lpnId || t.lpnId === lpnId).slice(0, limit)),
     pendingAdjustments: async () => clone(db.tx.filter((t) => t.kind === 'ADJ' && t.status === 'pending')),
     activeLpns: async () => db.lpns.filter((l) => l.status === 'active').map(lpnOf),
+
+    // เหมือน findDocs / traceTx ใน supabaseApi (ไม่สนตัวพิมพ์เล็ก/ใหญ่)
+    async findDocs(query) {
+      const up = query.trim().toUpperCase()
+      if (!up) return { grns: [], checks: [], reqs: [], invoices: [] }
+      const same = (v: string | null | undefined) => !!v && v.trim().toUpperCase() === up
+      const invs = db.invoices.filter((i) => same(i.invoiceNo) || same(i.poNo))
+      return clone({
+        grns: db.grns.filter((g) => same(g.grnNo) || same(g.plRef) || invs.some((i) => i.id === g.invoiceId)).sort((a, b) => b.receivedAt.localeCompare(a.receivedAt)),
+        checks: db.checks.filter((c) => same(c.checkNo) || same(c.plRef)).map(checkOf),
+        reqs: db.requisitions.filter((r) => same(r.reqNo) || same(r.docNo)),
+        invoices: invs.map((i) => ({ id: i.id, invoiceNo: i.invoiceNo, status: i.status })),
+      })
+    },
+
+    async traceTx(by) {
+      const lpnIds = new Set(by.lpnIds ?? [])
+      const reqIds = new Set(by.reqIds ?? [])
+      // db.tx เรียงใหม่ → เก่า: กลับด้านก่อน แล้วเรียงตามเวลา (เวลาเท่ากันคงลำดับที่บันทึก)
+      const rows = db.tx
+        .filter((t) => (t.lpnId && lpnIds.has(t.lpnId)) || (t.requisitionId && reqIds.has(t.requisitionId)))
+        .reverse()
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      return clone(
+        rows.map((t): TraceTx => {
+          const l = db.lpns.find((x) => x.id === t.lpnId)
+          const g = l ? db.grns.find((x) => x.id === l.grnId) : undefined
+          const r = t.requisitionId ? db.requisitions.find((x) => x.id === t.requisitionId) : undefined
+          return {
+            ...t,
+            box: l ? { grnId: l.grnId, grnNo: g?.grnNo ?? null, plRef: g?.plRef ?? null, invoiceNo: g?.invoiceNo ?? null, caseNo: l.caseNo ?? null, modelCode: g?.modelCode ?? null } : null,
+            req: r
+              ? { id: r.id, reqNo: r.reqNo, docNo: r.docNo, kind: r.kind, modelCode: r.modelCode, docDate: r.docDate, toDept: r.toDept, reconciledBy: r.reconciledBy, status: r.status }
+              : null,
+          }
+        }),
+      )
+    },
 
     async invoiceView(query) {
       const q = query.trim()

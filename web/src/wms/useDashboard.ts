@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { errorText } from './api'
 import { fetchFrom } from './dashboard'
 import { bangkokDay } from './ledger'
-import type { DashActivity, Requisition, StockClosing } from './types'
+import type { DashActivity, Grn, ReceiptCheck, Requisition, StockClosing } from './types'
 import { useWms } from './useWms'
 
 const POLL_MS = 60_000
@@ -14,6 +14,9 @@ export interface DashSource {
   activity: DashActivity
   pending: { adjustments: number; countSheets: number }
   closings: StockClosing[]
+  /** ผังขั้นตอนงาน (null = โหลดไม่ได้ ไม่ทำให้ทั้งหน้าล้ม) */
+  checks: ReceiptCheck[] | null
+  grns: Grn[] | null
   /** เวลาที่ดึงล่าสุด (ISO) */
   at: string
 }
@@ -36,15 +39,26 @@ export function useDashboard(enabled: boolean) {
       const from = fetchFrom(today)
       setLoading(true)
       try {
-        const [reqs, activity, adj, counts, closings] = await Promise.all([
+        const [reqs, activity, adj, counts, closings, checks, grns] = await Promise.all([
           api.listRequisitions(from, today),
           api.dashboardActivity(from),
           api.pendingAdjustments(),
           api.listStockCounts(),
           api.listClosings(),
+          api.listChecks().catch(() => null),
+          api.listGrns(60).catch(() => null),
         ])
         if (!alive) return
-        setSource({ today, reqs, activity, pending: { adjustments: adj.length, countSheets: counts.filter((c) => c.status === 'pending').length }, closings, at: new Date().toISOString() })
+        setSource({
+          today,
+          reqs,
+          activity,
+          pending: { adjustments: adj.length, countSheets: counts.filter((c) => c.status === 'pending').length },
+          closings,
+          checks,
+          grns,
+          at: new Date().toISOString(),
+        })
         setError(null)
       } catch (e) {
         if (alive) setError(errorText(e))
