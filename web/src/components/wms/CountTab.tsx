@@ -7,6 +7,7 @@ import { useWms } from '../../wms/useWms'
 import type { Zone } from '../../types/layout'
 import { CountUpload, SheetItem } from './StockImport'
 import { Alert, BigButton, Card, Pill } from './ui'
+import { TraceButton } from './TraceButton'
 
 const signed = (n: number) => (n > 0 ? `+${fmt(n)}` : n < 0 ? `−${fmt(-n)}` : '0')
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Bangkok' }) : '')
@@ -81,9 +82,11 @@ export function CountTab({ zones }: { zones: Zone[] }) {
         {!canApprove && <p className="text-sm text-slate-500">บัญชีนี้ดูได้อย่างเดียว · อนุมัติได้เฉพาะผู้มีสิทธิ์ "อนุมัติแก้ไขยอด"</p>}
         {queue.length === 0 && <p className="text-sm text-slate-500">ไม่มีรายการรออนุมัติ</p>}
         <ul className="flex flex-col gap-2">
-          {queue.map(({ t, c }) =>
-            t ? (
-              <li key={t.id} className="flex flex-wrap items-center gap-2 rounded-lg px-3 py-2 text-sm ring-1 ring-amber-200">
+          {queue.map(({ t, c }) => {
+            // ยอดในกล่องเปลี่ยนหลังส่งคำขอ (ตัดจ่าย/ย้าย/คืน) ⇒ อนุมัติไม่ได้ (เซิร์ฟเวอร์ก็ปฏิเสธ) ให้ไม่อนุมัติแล้วนับใหม่
+            const stale = t != null && t.nowQty != null && t.nowQty !== t.qty
+            return t ? (
+              <li key={t.id} className={`flex flex-wrap items-center gap-2 rounded-lg px-3 py-2 text-sm ring-1 ${stale ? 'ring-rose-300' : 'ring-amber-200'}`}>
                 <Pill tone="mi3">สแกน</Pill>
                 <span className="font-mono font-semibold">{t.docNo}</span>
                 <span className="font-mono text-slate-600">{t.lpnNo}</span>
@@ -94,13 +97,20 @@ export function CountTab({ zones }: { zones: Zone[] }) {
                 <span className="text-xs text-slate-500">
                   {t.reason} · ขอโดย {t.createdCode} {when(t.createdAt)}
                 </span>
+                {stale && (
+                  <>
+                    <Pill tone="bad">ยอดเปลี่ยนแล้ว: ตอนนี้ {fmt(t.nowQty)} ชิ้น</Pill>
+                    <span className="text-xs font-medium text-rose-700">ของถูกเบิก/ย้ายหลังส่งคำขอ · กดไม่อนุมัติ แล้วให้นับใหม่</span>
+                  </>
+                )}
+                <TraceButton query={t.lpnNo} label="ประวัติกล่อง" />
                 <span className="flex-1" />
                 {canApprove && (
                   <>
                     <BigButton tone="secondary" disabled={busy} onClick={() => void decideAdj(t, false)}>
                       ไม่อนุมัติ
                     </BigButton>
-                    <BigButton disabled={busy} onClick={() => void decideAdj(t, true)}>
+                    <BigButton disabled={busy || stale} onClick={() => void decideAdj(t, true)} title={stale ? 'ยอดในกล่องเปลี่ยนหลังส่งคำขอ · อนุมัติไม่ได้' : undefined}>
                       อนุมัติ → ปรับยอด
                     </BigButton>
                   </>
@@ -127,8 +137,8 @@ export function CountTab({ zones }: { zones: Zone[] }) {
                   }
                 />
               )
-            ),
-          )}
+            )
+          })}
         </ul>
         <p className="text-xs text-slate-500">นับทีละกล่อง: หน้าสแกน → โหมด "ตรวจนับ / แก้ไขยอด" · นับทั้งโซน: ใช้ Excel ด้านล่าง</p>
       </Card>

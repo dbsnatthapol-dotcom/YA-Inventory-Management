@@ -210,6 +210,8 @@ export interface Tx {
   requisitionId?: string | null
   /** ย้าย: scan = หน้าสแกน · list = เลือกจากรายการ */
   via?: 'scan' | 'list' | null
+  /** คำขอปรับยอดที่รออนุมัติ: ยอดในกล่องตอนนี้ (ต่างจาก qty = ยอดเปลี่ยนหลังขอ อนุมัติไม่ได้) */
+  nowQty?: number | null
 }
 
 export interface StorageLoc {
@@ -656,6 +658,24 @@ export interface InvoiceView {
   lines: InvoiceLine[]
   grns: Grn[]
   received: { partNo: string; qty: number }[]
+}
+
+// ===== ตามรอยเอกสาร/กล่อง (อ่านอย่างเดียว) =====
+/** เอกสารที่เลขตรงกับคำค้น */
+export interface DocMatches {
+  /** ตรงเลข GRN / Packing List / Invoice */
+  grns: Grn[]
+  /** ตรงเลขใบตรวจรับ / Packing List */
+  checks: ReceiptCheck[]
+  /** ตรงเลข RQ / เลขใบเบิกกระดาษ */
+  reqs: Requisition[]
+  invoices: { id: string; invoiceNo: string; status: InvoiceStatus }[]
+}
+
+/** รายการเคลื่อนไหว + กล่องนี้มาจากใบรับไหน + ใบเบิกของรายการเบิก/คืน */
+export interface TraceTx extends Tx {
+  box: { grnId: string | null; grnNo: string | null; plRef: string | null; invoiceNo: string | null; caseNo: string | null; modelCode: string | null } | null
+  req: { id: string; reqNo: string; docNo: string | null; kind: RequisitionKind; modelCode: string | null; docDate: string; toDept: string | null; reconciledBy: string | null; status: 'posted' | 'void' } | null
 }
 
 export interface PermRow {

@@ -15,11 +15,15 @@ import {
   type ModelRow,
 } from '../../wms/dashboard'
 import { ACCURACY_TARGET } from '../../wms/cycleCount'
+import { FM005_WINDOW, flowStages, type FlowKey } from '../../wms/flowBoard'
+import { addDays } from '../../wms/ledger'
 import { fmt as fmtN } from '../../wms/logic'
 import type { Lpn, MasterData } from '../../wms/types'
 import { useDashboard, type DashSource } from '../../wms/useDashboard'
 import { useWms } from '../../wms/useWms'
+import { FlowBoard } from '../wms/FlowBoard'
 import { Alert } from '../wms/ui'
+import type { WmsTab } from '../wms/WarehousePage'
 import { TrendChart } from './TrendChart'
 
 export type PlanTarget = Extract<DashAction, { kind: 'plan' }>
@@ -31,8 +35,11 @@ interface Props {
   /** เปิดผังคลัง 2D ที่โซน/ชั้น พร้อมไฮไลต์กล่อง */
   onPlan: (t: PlanTarget) => void
   /** ไปแท็บที่ต้องจัดการในงานคลัง */
-  onWms: (tab: 'count' | 'ledger') => void
+  onWms: (tab: WmsTab) => void
 }
+
+/** ผังขั้นตอนงานบนหน้าภาพรวม: แตะขั้นแล้วไปแท็บงานคลังของขั้นนั้น */
+const FLOW_TAB: Record<Exclude<FlowKey, 'stock'>, WmsTab> = { check: 'receive', grn: 'labels', qi: 'work', put: 'move', ng: 'work', issue: 'issue', fm005: 'issue', close: 'ledger' }
 
 /** สถานะ (สีสถานะใช้คู่กับไอคอน + ข้อความเสมอ) */
 const LEVEL: Record<DashAlert['level'] | 'good', { color: string; ink: string; icon: string; label: string }> = {
@@ -179,6 +186,20 @@ export function DashboardPage({ layout, lpns, onPlan, onWms }: Props) {
   const quality = data.models.filter((r) => r.holdBoxes || r.qiChecked || r.ngFound || r.ngWaitQty || r.ngReturned)
   const shownAlerts = allAlerts ? data.alerts : data.alerts.slice(0, 7)
   const updated = new Date(dash.source!.at).toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit' })
+  const src = dash.source!
+  // ผังขั้นตอนงาน (ทุก Model): ใบเบิกย้อนหลังเท่ากับหน้างานวันนี้
+  const stages = lpns
+    ? flowStages({
+        today: src.today,
+        lpns,
+        locations: master.locations,
+        checks: src.checks,
+        grns: src.grns,
+        reqs: src.reqs.filter((r) => r.docDate >= addDays(src.today, -(FM005_WINDOW - 1))),
+        closings: src.closings,
+        printQueued: null,
+      })
+    : null
 
   return (
     <div className="h-full overflow-y-auto bg-slate-100">
@@ -269,6 +290,8 @@ export function DashboardPage({ layout, lpns, onPlan, onWms }: Props) {
             <Tile label={`รับเข้า ${label}`} value={fmt(k.received)} unit="ชิ้น" sub={`${fmt(k.receiptDocs)} ใบรับสินค้า`} />
             <Tile label={`เบิกเข้าไลน์ ${label}`} value={fmt(k.issued)} unit="ชิ้น" sub={`เฉลี่ย ${fmt(avg)} ชิ้น/วันทำงาน (${AVG_WINDOW} วัน)`} />
           </div>
+
+          {stages && <FlowBoard stages={stages} onPick={(k) => (k === 'stock' ? onPlan({ kind: 'plan', zoneId: null, lpnNos: [] }) : onWms(FLOW_TAB[k]))} />}
 
           <div className="grid gap-4 xl:grid-cols-3">
             <Card

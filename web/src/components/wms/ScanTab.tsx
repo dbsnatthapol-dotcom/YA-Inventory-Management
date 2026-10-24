@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { errorText } from '../../wms/api'
 import { fmt, lpnFromScan, TX_LABEL, txSummary } from '../../wms/logic'
 import type { Grn, Lpn, Perm, ScanIssuePayload, Tx } from '../../wms/types'
+import { RELOAD_FAILED, saveThenReload } from '../../wms/afterSave'
 import { useApprovals } from '../../wms/useApprovals'
 import { useWms } from '../../wms/useWms'
 import { zoneHeadOf } from '../../wms/labels'
 import { useIsMobile } from '../../lib/viewMode'
 import { cue, setSoundOn, soundOn } from '../../lib/scanFeedback'
 import { QrScanner } from './QrScanner'
+import { TraceButton } from './TraceButton'
 import { Alert, BigButton, Card, Field, inputCls, Pill, type Tone } from './ui'
 
 export type ScanMode = 'PUT' | 'MOVE' | 'ISSUE' | 'COUNT' | 'QI' | 'VIEW'
@@ -74,7 +76,8 @@ export function ScanTab({
   const mobile = useIsMobile()
   const [mode, setModeState] = useState<Mode>(() => {
     if (!initialMode) return loadMode()
-    saveMode(initialMode)
+    // เปิดดูกล่องจากหน้าอื่น (ตามรอย) ไม่เปลี่ยนงานที่จำไว้
+    if (initialMode !== 'VIEW') saveMode(initialMode)
     return initialMode
   })
   const [cur, setCur] = useState<Current | null>(null)
@@ -92,6 +95,11 @@ export function ScanTab({
   const [miss, setMiss] = useState<{ itemId: string; partNo: string; counted: number; system: number } | null>(null)
   const [sound, setSound] = useState(soundOn)
   const scanInput = useRef<HTMLInputElement>(null)
+  const boxCard = useRef<HTMLDivElement>(null)
+  const mobileRef = useRef(mobile)
+  useEffect(() => {
+    mobileRef.current = mobile
+  }, [mobile])
   // กล่องในพื้นที่กัก NG: ไม่แนะนำช่องเก็บของดี และเบิกเข้าไลน์ไม่ได้
   const inNg = useCallback((code: string | undefined) => master.locations.find((l) => l.code === code)?.kind === 'ng', [master.locations])
 
@@ -107,7 +115,10 @@ export function ScanTab({
     setVer((v) => v + 1)
   }, [api])
 
-  /** quiet = โหลดกล่องเดิมซ้ำหลังบันทึก (ไม่มีเสียงสแกน คง part ที่เลือกไว้) */
+  /**
+   * quiet = โหลดกล่องเดิมซ้ำหลังบันทึก (ไม่มีเสียงสแกน คง part ที่เลือกไว้ ไม่ล้างข้อความผลบันทึก)
+   * โหลดไม่สำเร็จตอน quiet ⇒ โยน error ให้ผู้เรียกตัดสิน (การบันทึกสำเร็จไปแล้ว ห้ามขึ้นว่าล้มเหลว)
+   */
   const lookup = useCallback(
     async (raw: string, quiet = false) => {
       const no = lpnFromScan(raw)
@@ -117,13 +128,18 @@ export function ScanTab({
         const found = await api.findLpn(no)
         if (!found) {
           setCur(null)
+          if (quiet) return
           setMsg({ tone: 'bad', text: `ไม่พบป้าย ${no} · ตรวจเลขบนป้าย หรือป้ายนี้อาจอยู่ในโหมดทดลองรอบก่อน` })
           cue('bad')
           return
         }
         setCur(found)
-        setMsg(null)
-        if (!quiet) cue('scan')
+        if (!quiet) {
+          setMsg(null)
+          cue('scan')
+          // มือถือ: เลื่อนให้เห็นกล่องกับปุ่มยืนยันทันที (ไม่ต้องเลื่อนหาเอง)
+          if (mobileRef.current) requestAnimationFrame(() => boxCard.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+        }
         const item = found.lpn.items[0]
         const inBox = (id: string) => found.lpn.items.some((i) => i.id === id)
         setForm((f) => {
@@ -138,6 +154,7 @@ export function ScanTab({
         const grnModel = found.grn?.modelCode
         setIssue((s) => (fits(s.model) ? s : { ...s, model: fits(grnModel) ? grnModel : pm.length === 1 ? pm[0] : '' }))
       } catch (e) {
+        if (quiet) throw e
         setMsg({ tone: 'bad', text: errorText(e) })
         cue('bad')
       }
@@ -178,14 +195,33 @@ export function ScanTab({
     setBusy(true)
     setMsg(null)
     try {
-      const r = await fn()
-      const { tone, text } = typeof r === 'string' ? { tone: 'ok' as const, text: r } : r
-      // โหลดกล่องใหม่ก่อน (lookup ล้างข้อความ) แล้วค่อยแสดงผล ไม่งั้นข้อความยืนยันหายทันที
-      if (cur) await lookup(cur.lpn.lpnNo, true)
-      await refreshLists()
-      onChanged?.()
-      setMsg({ tone, text })
-      cue(tone)
+      // บันทึกสำเร็จ ⇒ บอกผลทันที · โหลดกล่อง/รายการใหม่พลาด ไม่ใช่การบันทึกล้มเหลว (กันกดซ้ำแล้วตัดสต็อกซ้ำ)
+      let boxStale = false
+      const { value: done, reloadFailed } = await saveThenReload(
+        async () => {
+          const r = await fn()
+          return typeof r === 'string' ? { tone: 'ok' as const, text: r } : r
+        },
+        (d) => {
+          setMsg(d)
+          cue(d.tone)
+          onChanged?.()
+        },
+        [
+          () =>
+            cur &&
+            lookup(cur.lpn.lpnNo, true).catch((e: unknown) => {
+              boxStale = true
+              throw e
+            }),
+          refreshLists,
+        ],
+      )
+      if (reloadFailed) {
+        // ยอดกล่องบนจอเป็นยอดก่อนบันทึก ⇒ ซ่อนไว้ ไม่ให้ทำรายการต่อจากยอดเก่า
+        if (boxStale) setCur(null)
+        setMsg({ tone: done.tone, text: `${done.text} · ${RELOAD_FAILED} · สแกนกล่องอีกครั้งเพื่อดูยอดล่าสุด` })
+      }
       scanInput.current?.focus()
     } catch (e) {
       setMsg({ tone: 'bad', text: errorText(e) })
@@ -258,7 +294,7 @@ export function ScanTab({
       <div className="flex min-w-0 flex-col gap-4">
         {mobile ? (
           <Card eyebrow="1 · เลือกงาน (ระบบจำไว้)">
-            <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1" role="radiogroup" aria-label="งานที่จะสแกน">
+            <div className="grid grid-cols-3 gap-1.5" role="radiogroup" aria-label="งานที่จะสแกน">
               {MODES.map((m) => {
                 const ok = m.perm === null || can(m.perm)
                 return (
@@ -267,7 +303,7 @@ export function ScanTab({
                     role="radio"
                     aria-checked={mode === m.k}
                     onClick={() => setMode(m.k)}
-                    className={`min-h-[44px] shrink-0 rounded-full px-4 text-sm font-semibold ring-1 ${mode === m.k ? 'bg-sky-700 text-white ring-sky-700' : 'bg-white text-slate-700 ring-slate-300'} ${ok ? '' : 'opacity-40'}`}
+                    className={`min-h-[48px] rounded-xl px-1.5 text-[13px] font-semibold leading-tight ring-1 ${mode === m.k ? 'bg-sky-700 text-white ring-sky-700' : 'bg-white text-slate-700 ring-slate-300'} ${ok ? '' : 'opacity-40'}`}
                   >
                     {m.name}
                   </button>
@@ -288,8 +324,7 @@ export function ScanTab({
                   onClick={() => setMode(m.k)}
                   className={`flex min-h-[84px] flex-col items-start gap-0.5 rounded-xl border-2 p-2.5 text-left transition ${mode === m.k ? 'border-sky-700 bg-sky-50' : 'border-slate-200 bg-white hover:bg-slate-50'} ${ok ? '' : 'opacity-50'}`}
                 >
-                  <span className={`font-mono text-[11px] tracking-wider ${mode === m.k ? 'text-sky-700' : 'text-slate-400'}`}>{m.k}</span>
-                  <span className="text-sm font-bold text-slate-800">{m.name}</span>
+                  <span className={`text-sm font-bold ${mode === m.k ? 'text-sky-800' : 'text-slate-800'}`}>{m.name}</span>
                   <span className="text-[11px] leading-tight text-slate-500">{ok ? m.hint : 'ไม่มีสิทธิ์'}</span>
                 </button>
               )
@@ -347,8 +382,9 @@ export function ScanTab({
         {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
 
         {lpn && (
+          <div ref={boxCard} className="scroll-mt-2">
           <Card
-            eyebrow={`โหมด ${mode} · ${modeInfo.name}`}
+            eyebrow={`งาน: ${modeInfo.name}`}
             title={<span className="font-mono text-xl">{lpn.lpnNo}</span>}
             action={
               mode === 'COUNT' ? (
@@ -376,6 +412,7 @@ export function ScanTab({
                 {cur?.grn ? `${cur.grn.grnNo} · PL ${cur.grn.plRef}${lpn.caseNo ? ` · เคส ${lpn.caseNo}` : ''}${cur.grn.invoiceNo ? ` · INV ${cur.grn.invoiceNo}` : ''}` : '–'}
               </dd>
             </dl>
+            <TraceButton query={lpn.lpnNo} label="ตามรอยกล่องนี้ (มาจากไหน · ไปไหน)" className="self-start" />
 
             {!allowed && mode !== 'VIEW' && <Alert tone="warn">บัญชีนี้ไม่มีสิทธิ์ทำโหมดนี้ · ให้ผู้ดูแลระบบเปิดสิทธิ์ในหน้าหลังบ้าน</Alert>}
 
@@ -398,7 +435,7 @@ export function ScanTab({
                 </Field>
                 <div className="flex flex-wrap gap-2">
                   {locChoices.map((l) => (
-                    <button key={l} type="button" onClick={() => setForm({ ...form, loc: l })} className="rounded-full bg-slate-100 px-3 py-1.5 font-mono text-xs font-semibold text-slate-700 ring-1 ring-slate-200 hover:bg-sky-50">
+                    <button key={l} type="button" onClick={() => setForm({ ...form, loc: l })} className="min-h-[44px] rounded-full bg-slate-100 px-4 font-mono text-sm font-semibold text-slate-700 ring-1 ring-slate-200 hover:bg-sky-50">
                       {l === home ? `แนะนำ ${l}` : l}
                     </button>
                   ))}
@@ -528,6 +565,7 @@ export function ScanTab({
                 </>
               ))}
           </Card>
+          </div>
         )}
 
         <datalist id="wms-locs">

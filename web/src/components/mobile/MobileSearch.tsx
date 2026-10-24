@@ -113,8 +113,8 @@ function HitCard({ hit, onScanLpn, onShowZone }: { hit: StockHit; onScanLpn: (lp
               </div>
             </div>
             {b.zoneId && hit.kind === 'part' && <MapButton small onClick={() => onShowZone(b.zoneId!, [b.lpnNo])} />}
-            <button className="min-h-[40px] rounded-lg px-3 text-sm font-semibold text-sky-700 ring-1 ring-sky-200" onClick={() => onScanLpn(b.lpnNo)}>
-              เปิด
+            <button className="min-h-[44px] rounded-lg px-3 text-sm font-semibold text-sky-700 ring-1 ring-sky-200" onClick={() => onScanLpn(b.lpnNo)}>
+              เปิดดู
             </button>
           </li>
         ))}
@@ -127,7 +127,7 @@ function HitCard({ hit, onScanLpn, onShowZone }: { hit: StockHit; onScanLpn: (lp
 
 function MapButton({ onClick, small }: { onClick: () => void; small?: boolean }) {
   return (
-    <button className={`rounded-lg font-semibold text-emerald-700 ring-1 ring-emerald-200 ${small ? 'min-h-[40px] px-2 text-xs' : 'min-h-[40px] px-3 text-sm'}`} onClick={onClick}>
+    <button className={`rounded-lg font-semibold text-emerald-700 ring-1 ring-emerald-200 ${small ? 'min-h-[44px] px-2 text-xs' : 'min-h-[44px] px-3 text-sm'}`} onClick={onClick}>
       📍 ผัง
     </button>
   )

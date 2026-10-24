@@ -4,6 +4,7 @@ import { ChangePasswordScreen, LoadingScreen, LoginScreen } from './auth/AuthScr
 import { homePage, ROLE_LABEL } from './auth/staff'
 import { useAuth } from './auth/useAuth'
 import { BackofficePage } from './components/admin/BackofficePage'
+import { SystemMap, type MapTarget } from './components/wms/SystemMap'
 import { WarehousePage, type WmsDeepLink, type WmsTab } from './components/wms/WarehousePage'
 import { DashboardPage, type PlanTarget } from './components/dashboard/DashboardPage'
 import { WmsProvider } from './wms/WmsProvider'
@@ -70,7 +71,7 @@ function WmsApp() {
   )
 }
 
-type Page = 'dash' | 'plan' | 'map' | 'wms' | 'layout' | 'admin'
+type Page = 'dash' | 'plan' | 'map' | 'wms' | 'system' | 'layout' | 'admin'
 
 /** ลิงก์จาก QR บนป้าย: /t/LPN-2610-000001 (กล่อง) หรือ /g/GRN-2610-0001 (ใบรับสินค้า) */
 function readDeepLink(): WmsDeepLink | null {
@@ -300,11 +301,20 @@ function FactoryApp() {
     setHighlight(null)
     setSelectedPallet(null)
   }
+  /** จากผังระบบงาน: เปิดหน้าหรือแท็บงานคลังของการ์ดที่แตะ */
+  const goMap = (to: MapTarget) => {
+    const pages: Partial<Record<MapTarget, Page>> = { dash: 'dash', plan: 'plan', map3d: 'map', layout: 'layout', admin: 'admin' }
+    const p = pages[to]
+    if (p) return go(p)
+    setWmsTab(to as WmsTab)
+    setPage('wms')
+  }
   const navItems: [Page, string][] = [
     ['dash', 'ภาพรวม'],
     ['plan', 'ผังคลัง 2D'],
     ['map', 'ผังโรงงาน 3D'],
     ['wms', 'งานคลัง'],
+    ['system', 'ผังระบบงาน'],
     ...(canEditLayout ? ([['layout', 'ปรับผัง']] as [Page, string][]) : []),
     ...(canAdmin ? ([['admin', 'หลังบ้าน']] as [Page, string][]) : []),
   ]
@@ -425,7 +435,14 @@ function FactoryApp() {
       )}
       {page === 'wms' && (
         <main className="min-h-0 flex-1">
-          <WarehousePage deepLink={deepLink} zones={layout.zones} initialTab={wmsTab} />
+          <WarehousePage deepLink={deepLink} zones={layout.zones} initialTab={wmsTab} onPlan={() => go('plan')} />
+        </main>
+      )}
+      {page === 'system' && (
+        <main className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-[1400px] px-4 py-4">
+            <SystemMap onGo={goMap} canGo={(to) => (to === 'layout' ? canEditLayout : to === 'admin' ? canAdmin : true)} />
+          </div>
         </main>
       )}
       {/* ผังคลัง 2D: ซ่อนแทนการ unmount เพื่อคงชั้น/โซนที่เลือกไว้ */}
