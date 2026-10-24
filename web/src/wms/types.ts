@@ -210,6 +210,8 @@ export interface Tx {
   requisitionId?: string | null
   /** ย้าย: scan = หน้าสแกน · list = เลือกจากรายการ */
   via?: 'scan' | 'list' | null
+  /** คำขอปรับยอดที่รออนุมัติ: ยอดในกล่องตอนนี้ (ต่างจาก qty = ยอดเปลี่ยนหลังขอ อนุมัติไม่ได้) */
+  nowQty?: number | null
 }
 
 export interface StorageLoc {

@@ -4,6 +4,7 @@ import { aiReaderAvailable, readInvoicePhoto, readPackingListPhoto } from '../..
 import { useIsMobile } from '../../lib/viewMode'
 import { zoneCodeOf } from '../../wms/locations'
 import { fmt, needsQi, suggestedZone } from '../../wms/logic'
+import { invoiceLinesFromRows } from '../../wms/invoiceLines'
 import { basePartNo, resolvePart } from '../../wms/partCodes'
 import { SAMPLE_INVOICE, SAMPLE_MODEL, SAMPLE_PACKING_LIST } from '../../wms/sampleDocs'
 import { useWms } from '../../wms/useWms'
@@ -149,6 +150,11 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
   }
 
   const patch = (key: string, p: Partial<Row>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...p } : r)))
+  // ยอด Invoice เป็นยอดทั้ง part (ไม่ใช่รายเคส) ⇒ แก้แถวเดียว ทุกเคสของ part เดียวกันเปลี่ยนตาม
+  const setInvQty = (r: Row, invQty: number | null) => {
+    const part = canon(r.partNo)
+    setRows((rs) => rs.map((x) => (x.key === r.key || (part && canon(x.partNo) === part) ? { ...x, invQty } : x)))
+  }
   const pickPart = (key: string, partNo: string) => {
     const part = resolvePart(master.parts, partNo)
     patch(key, { partNo: partNo.trimStart(), ...(part ? { description: part.name } : {}) })
@@ -157,7 +163,18 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
   const settlePart = (key: string, partNo: string) => patch(key, { partNo: canon(partNo) })
 
   const offPl = direct ? rows.filter((r) => r.counted !== r.plQty).length : 0
-  const offInv = rows.filter((r) => r.invQty !== null && r.counted !== r.invQty).length
+  // part เดียวกันหลายเคส: เทียบยอด Invoice กับยอดรวมทุกเคสของ part (ไม่ใช่รายแถว)
+  const byPart = new Map<string, { rows: number; counted: number; pl: number }>()
+  for (const r of rows) {
+    const k = canon(r.partNo)
+    if (!k) continue
+    const t = byPart.get(k) ?? { rows: 0, counted: 0, pl: 0 }
+    byPart.set(k, { rows: t.rows + 1, counted: t.counted + r.counted, pl: t.pl + r.plQty })
+  }
+  const partTotal = (r: Row) => byPart.get(canon(r.partNo)) ?? { rows: 1, counted: r.counted, pl: r.plQty }
+  const offInvoice = (r: Row) => r.invQty !== null && (direct ? partTotal(r).counted : partTotal(r).pl) !== r.invQty
+  const offInv = new Set(rows.filter(offInvoice).map((r) => canon(r.partNo))).size
+  const invoiceLines = () => invoiceLinesFromRows(rows.map((r) => ({ ...r, partNo: canon(r.partNo) })))
   const mi3 = rows.filter((r) => needsQi(master, settings.qiPartTypes, modelCode, canon(r.partNo))).length
   const unknown = rows.filter((r) => r.partNo && !resolvePart(master.parts, r.partNo)).length
   const total = rows.reduce((s, r) => s + (direct ? r.counted : r.plQty), 0)
@@ -184,7 +201,7 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
               poNo: inv.poNo.trim(),
               docDate: inv.docDate.trim(),
               movementType: inv.movementType.trim(),
-              lines: rows.filter((r) => r.invQty !== null).map((r, i) => ({ lineNo: r.invLine ?? i + 1, partNo: canon(r.partNo), description: r.description, qty: r.invQty ?? 0 })),
+              lines: invoiceLines(),
             }
           : undefined,
         lines: rows.map((r) => ({ partNo: canon(r.partNo), description: r.description, plQty: r.plQty, countedQty: r.counted, ...(r.zoneId ? { zoneId: r.zoneId } : {}), ...(r.caseNo.trim() ? { caseNo: r.caseNo.trim() } : {}) })),
@@ -218,7 +235,7 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
               poNo: inv.poNo.trim(),
               docDate: inv.docDate.trim(),
               movementType: inv.movementType.trim(),
-              lines: rows.filter((r) => r.invQty !== null).map((r, i) => ({ lineNo: r.invLine ?? i + 1, partNo: canon(r.partNo), description: r.description, qty: r.invQty ?? 0 })),
+              lines: invoiceLines(),
               imagePaths: invPath ? [invPath] : [],
             }
           : undefined,
@@ -238,7 +255,8 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
     const qi = needsQi(master, settings.qiPartTypes, modelCode, partNo)
     const known = !!resolvePart(master.parts, r.partNo)
     const zone = suggestedZone(master, customerId, partNo)
-    const bad = direct && (r.counted !== r.plQty || (r.invQty !== null && r.counted !== r.invQty))
+    const bad = direct && (r.counted !== r.plQty || offInvoice(r))
+    const cases = partTotal(r).rows
     const num = `rounded-md px-2 text-right font-mono ${wide ? 'w-full py-2.5 text-base' : 'w-24 py-1.5'}`
     return {
       bad,
@@ -274,9 +292,10 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
           {existing ? (
             <span className={`block font-mono ${wide ? 'py-2.5 text-right text-base' : ''}`}>{fmt(r.invQty)}</span>
           ) : (
-            <input id={`inv-${r.key}`} type="number" min={0} inputMode="numeric" className={`${num} border border-slate-300`} value={r.invQty ?? ''} placeholder="–" onChange={(e) => patch(r.key, { invQty: e.target.value === '' ? null : Math.max(0, Math.floor(Number(e.target.value) || 0)) })} aria-label="จำนวนใน Invoice" />
+            <input id={`inv-${r.key}`} type="number" min={0} inputMode="numeric" className={`${num} border border-slate-300`} value={r.invQty ?? ''} placeholder="–" onChange={(e) => setInvQty(r, e.target.value === '' ? null : Math.max(0, Math.floor(Number(e.target.value) || 0)))} aria-label="จำนวนใน Invoice" />
           )}
           {r.invLine !== null && <div className="text-[10px] text-slate-400">บรรทัด {r.invLine}</div>}
+          {r.invQty !== null && cases > 1 && <div className="text-[10px] text-slate-400">ยอดรวม {cases} เคส</div>}
         </>
       ),
       zone: (
@@ -301,8 +320,8 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
       pills: (
         <>
           {direct && (r.counted === r.plQty ? <Pill tone="ok">ตรง PL</Pill> : r.counted < r.plQty ? <Pill tone="bad">ขาด {fmt(r.plQty - r.counted)}</Pill> : <Pill tone="warn">เกิน {fmt(r.counted - r.plQty)}</Pill>)}
-          {direct && r.invQty !== null && r.counted !== r.invQty && <Pill tone="bad">ไม่ตรง Invoice</Pill>}
-          {!direct && r.invQty !== null && r.plQty !== r.invQty && <Pill tone="warn">PL ไม่ตรง Invoice</Pill>}
+          {direct && offInvoice(r) && <Pill tone="bad">{cases > 1 ? `รวม ${cases} เคสไม่ตรง Invoice` : 'ไม่ตรง Invoice'}</Pill>}
+          {!direct && offInvoice(r) && <Pill tone="warn">{cases > 1 ? `PL รวม ${cases} เคสไม่ตรง Invoice` : 'PL ไม่ตรง Invoice'}</Pill>}
           {!direct && r.plQty === 0 && r.invQty !== null && <Pill tone="muted">มีแค่ใน Invoice</Pill>}
           {qi && <Pill tone="mi3">ส่ง MI3</Pill>}
           {r.partNo && !known && <Pill tone="warn">ไม่มีใน Master</Pill>}

@@ -117,6 +117,9 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
   const lpns = detail?.lpns ?? []
   const isVoid = detail?.grn.status === 'void'
   const chosen = lpns.filter((l) => selected.has(l.id))
+  const inNgArea = (l: Lpn) => master.locations.find((x) => x.code === l.locationCode)?.kind === 'ng'
+  // เหมือน merge_lpns (0022): กล่อง NG รวมกับกล่องของดีไม่ได้ (กล่องรวมจะหลุดออกจากพื้นที่กัก NG)
+  const mixedNg = chosen.some(inNgArea) && chosen.some((l) => !inNgArea(l))
   const ctx: LabelContext = { grn: detail?.grn ?? null, lines: detail?.lines ?? [], master, trial: settings.mode === 'trial' }
   const count = format === 'a4' ? 1 : chosen.length
   const sheets = Math.ceil(chosen.length / 4)
@@ -287,9 +290,17 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
                     </BigButton>
                   )}
                   {can('label.print') && !isVoid && (
-                    <BigButton tone="secondary" disabled={busy || chosen.length < 2} onClick={merge} title="ย้ายของหลาย part มารวมในกล่องเดียว แล้วออกป้ายใหม่ 1 ใบ">
+                    <BigButton
+                      tone="secondary"
+                      disabled={busy || chosen.length < 2 || mixedNg}
+                      onClick={merge}
+                      title={mixedNg ? 'กล่อง NG รวมกับกล่องของดีไม่ได้' : 'ย้ายของหลาย part มารวมในกล่องเดียว แล้วออกป้ายใหม่ 1 ใบ'}
+                    >
                       รวม {chosen.length > 1 ? chosen.length : ''} ป้ายเป็นกล่องเดียว
                     </BigButton>
+                  )}
+                  {can('label.print') && !isVoid && mixedNg && (
+                    <span className="self-center text-xs font-medium text-amber-800">รวมกล่อง NG กับกล่องของดีไม่ได้ · เลือกเฉพาะกล่อง NG หรือเฉพาะของดี</span>
                   )}
                 </div>
               }
@@ -312,7 +323,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
                         <span className="mt-1 flex flex-wrap gap-1">
                           <Pill tone="muted">{l.lpnNo}</Pill>
                           {l.hold ? <Pill tone="mi3">รอ MI3</Pill> : l.status === 'empty' ? <Pill tone="muted">ใช้หมดแล้ว</Pill> : null}
-                          {master.locations.find((x) => x.code === l.locationCode)?.kind === 'ng' && <Pill tone="bad">NG · เสียหาย → {l.locationCode}</Pill>}
+                          {inNgArea(l) && <Pill tone="bad">NG · เสียหาย → {l.locationCode}</Pill>}
                         </span>
                       </span>
                       <span className="font-mono font-semibold">{fmt(qty)}</span>

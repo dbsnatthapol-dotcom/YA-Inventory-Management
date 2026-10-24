@@ -3,6 +3,7 @@ import { MODELS, PARTS, ZONE_RULES } from '../inventory/masterData'
 import type { WmsApi } from './api'
 import { layoutLocations, zoneCodeOf } from './locations'
 import { addDays, bangkokDay, buildLedger, monthRange } from './ledger'
+import { tidyInvoiceLines } from './invoiceLines'
 import { canonPartNo, partRevision, partsOfModel, resolvePart } from './partCodes'
 import { HEAD_KINDS } from './readiness'
 import { countLocations, systemQty } from './stockImport'
@@ -283,10 +284,9 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
     return c
   }
   const wholeQty = (n: number) => Number.isInteger(n) && n >= 0
-  const invLines = (lines: { lineNo?: number; partNo: string; description?: string | null; qty: number }[]) =>
-    lines
-      .filter((l) => l.partNo.trim())
-      .map((l, i) => ({ lineNo: l.lineNo || i + 1, partNo: canonPartNo(db.master.parts, l.partNo), description: l.description ?? '', qty: Math.max(0, Number(l.qty) || 0) }))
+  // บรรทัด Invoice ไม่ซ้ำ เลขไม่ชนกัน (เหมือน check_inv_lines ใน 0022)
+  const invLines = (lines: { lineNo?: number | null; partNo: string; description?: string | null; qty: number }[]) =>
+    tidyInvoiceLines(lines, (c) => canonPartNo(db.master.parts, c))
   const partName = (partNo: string) => db.master.parts.find((p) => p.partNo === canonPartNo(db.master.parts, partNo))?.name ?? null
 
   // ===== ใบเบิก: กติกาเดียวกับ wms_issue_fifo (0021) / wms_return_lifo (0014) =====
@@ -313,10 +313,9 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         if (!l.items.some((i) => i.qty > 0)) l.status = 'empty'
       }
   }
+  // คืนเข้ากล่องที่รายการอยู่ตอนนี้ (อาจถูกรวมกล่องหลังเบิก) และเปิดสถานะกล่องนั้น (เหมือน 0022)
   const putBack = (t: Tx, qty: number, doc: string, ref: string | null, reqId: string, reason: string | null = null) => {
-    const l = db.lpns.find((x) => x.id === t.lpnId)
-    const item = l?.items.find((i) => i.id === t.lpnItemId)
-    if (!l || !item) return
+    const { lpn: l, item } = itemById(t.lpnItemId ?? '')
     item.qty += qty
     if (l.status === 'empty') l.status = 'active'
     log({ kind: 'RETURN', docNo: doc, lpnId: l.id, lpnNo: l.lpnNo, lpnItemId: item.id, partNo: t.partNo, qty, toLoc: l.locationCode, ref, reason, requisitionId: reqId })
@@ -361,7 +360,7 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         statusAt: null,
         imagePaths: p.invoice.imagePaths ?? [],
         createdAt: nowIso(),
-        lines: p.invoice.lines.map((l) => ({ lineNo: l.lineNo, partNo: l.partNo, description: l.description, qty: l.qty })),
+        lines: invLines(p.invoice.lines),
       }
       db.invoices.unshift(invoice)
     }
@@ -701,11 +700,17 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         if (ids.length < 2) fail('เลือกอย่างน้อย 2 ป้ายเพื่อรวม')
         const src = ids.map(lpnById)
         if (src.some((l) => l.status !== 'active')) fail('มีป้ายที่ถูกรวมหรือใช้หมดไปแล้ว')
+        // เหมือน merge_lpns (0022): ของเสียหายในพื้นที่ NG รวมกับของดีไม่ได้ · กล่องรวมอยู่พื้นที่ชนิดเดียวกับกล่องต้นทาง
+        const ng = src.filter((l) => inNgArea(l)).length
+        if (ng && ng < src.length) fail('รวมกล่อง NG (ของเสียหาย) กับกล่องของดีไม่ได้ · พิมพ์ป้ายแยกกัน ของ NG ต้องอยู่พื้นที่กัก NG')
+        const to = location?.trim().toUpperCase() || src[0].locationCode
+        if ((ng > 0) !== (db.master.locations.find((x) => x.code === to)?.kind === 'ng'))
+          fail(ng ? 'กล่อง NG รวมแล้วต้องอยู่พื้นที่กัก NG · เลือกช่อง NG' : 'รวมกล่องของดีไปไว้พื้นที่กัก NG ไม่ได้')
         const lpn: Lpn = {
           id: uid(),
           lpnNo: nextDoc('LPN'),
           grnId: src[0].grnId,
-          locationCode: location ?? src[0].locationCode,
+          locationCode: to,
           hold: src.some((l) => l.hold),
           status: 'active',
           createdAt: nowIso(),
@@ -896,9 +901,12 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         const t = db.tx.find((x) => x.id === txId)
         if (!t || t.status !== 'pending') fail('รายการนี้ถูกพิจารณาไปแล้ว')
         if (approve) {
+          // เหมือน scan_adjust_decide (0022): ยอดเปลี่ยนหลังส่งคำขอ ⇒ ไม่ให้อนุมัติ ให้นับใหม่
           const { lpn, item } = itemById(t!.lpnItemId!)
+          if (lpn.status !== 'active' && lpn.status !== 'empty') fail(`กล่อง ${lpn.lpnNo} ถูกยกเลิกแล้ว (ยกเลิกใบรับ) · กดไม่อนุมัติคำขอนี้`)
+          if (item.qty !== t!.qty) fail(`ยอด ${t!.partNo} ในกล่อง ${lpn.lpnNo} เปลี่ยนหลังส่งคำขอ (ตอนขอ ${t!.qty} · ตอนนี้ ${item.qty}) · กดไม่อนุมัติแล้วให้นับใหม่`)
           item.qty = t!.newQty ?? item.qty
-          if (lpn.status !== 'merged') lpn.status = lpn.items.some((i) => i.qty > 0) ? 'active' : 'empty'
+          lpn.status = lpn.items.some((i) => i.qty > 0) ? 'active' : 'empty'
         }
         t!.status = approve ? 'approved' : 'rejected'
         t!.decidedCode = ME
@@ -929,7 +937,12 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
       }),
 
     recentTx: async (limit = 30, lpnId) => clone(db.tx.filter((t) => !lpnId || t.lpnId === lpnId).slice(0, limit)),
-    pendingAdjustments: async () => clone(db.tx.filter((t) => t.kind === 'ADJ' && t.status === 'pending')),
+    pendingAdjustments: async () =>
+      clone(
+        db.tx
+          .filter((t) => t.kind === 'ADJ' && t.status === 'pending')
+          .map((t) => ({ ...t, nowQty: db.lpns.flatMap((l) => l.items).find((i) => i.id === t.lpnItemId)?.qty ?? null })),
+      ),
     activeLpns: async () => db.lpns.filter((l) => l.status === 'active').map(lpnOf),
 
     // เหมือน findDocs / traceTx ใน supabaseApi (ไม่สนตัวพิมพ์เล็ก/ใหญ่)
@@ -1295,7 +1308,10 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
           if (!part) fail(`แถว ${i + 1}: ไม่พบ part "${l.partNo}" ใน Master`)
           if (!(l.counted >= 0)) fail(`แถว ${i + 1}: จำนวนนับต้องเป็น 0 ขึ้นไป`)
           const loc = l.loc.trim().toUpperCase()
-          if (count.lines.some((x) => x.loc === loc && x.partNo === part!.partNo)) fail(`แถว ${i + 1}: ${part!.partNo} ที่ ${l.loc} ซ้ำในไฟล์`)
+          // เหมือน stock_count_submit (0022): part เดียวกันห้ามมีแถวที่ช่องซ้อนกัน (ช่องซ้ำ หรือโซนที่มีช่องนั้น)
+          const clash = count.lines.find((x) => x.partNo === part!.partNo && countLocations(x.loc, ctx)!.locs.some((c) => where!.locs.includes(c)))
+          if (clash)
+            fail(`แถว ${i + 1}: ${part!.partNo} ที่ ${loc} ซ้อนกับแถว ${clash.lineNo} (${clash.loc}) ในไฟล์เดียวกัน (ช่องเดียวกัน หรือโซนที่มีช่องนั้น) · part เดียวกันให้นับระดับเดียว: รายช่อง หรือทั้งโซน`)
           count.lines.push({ lineNo: i + 1, loc, zoneId: where!.zoneId, partNo: part!.partNo, systemQty: systemQty(db.lpns, where!.locs, part!.partNo), countedQty: l.counted, appliedQty: null })
         })
         db.counts.unshift(count)

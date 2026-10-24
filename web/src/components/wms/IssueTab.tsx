@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { errorText } from '../../wms/api'
+import { RELOAD_FAILED, saveThenReload } from '../../wms/afterSave'
 import { fmt } from '../../wms/logic'
 import { bomQty, fgOfModel, partsOfModel, resolvePart, stockByPart } from '../../wms/partCodes'
 import type { FgItem, Lpn, PartMaster, Requisition } from '../../wms/types'
@@ -210,23 +211,31 @@ function SubForm({ day, model, stock, reqs, canIssue, onDone }: { day: string; m
     setBusy(true)
     setMsg(null)
     try {
-      const res = await api.postRequisition({
-        kind: 'line',
-        docDate: day,
-        modelCode: model,
-        fgCode: fgItem?.code,
-        fgQty: fg ? int(fg) : null,
-        docNo: head.docNo.trim() || undefined,
-        fromDept: head.fromDept.trim() || undefined,
-        toDept: 'W/H ASSY',
-        note: head.note.trim() || undefined,
-        lines: lines.map((l) => ({ ...l, reqQty: l.qty })),
-      })
-      setMsg({ tone: 'ok', text: `บันทึก ${res.reqNo} แล้ว · ตัดสต็อก ${lines.length} รายการ ${fmt(total)} ชิ้น` })
-      setQty({})
-      setFg('')
-      setHead({ ...head, docNo: '', note: '' })
-      await onDone()
+      // บันทึกแล้ว = สำเร็จ แม้โหลดรายการใหม่พลาด (ไม่งั้นกรอกซ้ำแล้วตัดสต็อกซ้ำ)
+      const done = (r: { reqNo: string }) => `บันทึก ${r.reqNo} แล้ว · ตัดสต็อก ${lines.length} รายการ ${fmt(total)} ชิ้น`
+      const { value: res, reloadFailed } = await saveThenReload(
+        () =>
+          api.postRequisition({
+            kind: 'line',
+            docDate: day,
+            modelCode: model,
+            fgCode: fgItem?.code,
+            fgQty: fg ? int(fg) : null,
+            docNo: head.docNo.trim() || undefined,
+            fromDept: head.fromDept.trim() || undefined,
+            toDept: 'W/H ASSY',
+            note: head.note.trim() || undefined,
+            lines: lines.map((l) => ({ ...l, reqQty: l.qty })),
+          }),
+        (r) => {
+          setMsg({ tone: 'ok', text: done(r) })
+          setQty({})
+          setFg('')
+          setHead({ ...head, docNo: '', note: '' })
+        },
+        [onDone],
+      )
+      if (reloadFailed) setMsg({ tone: 'ok', text: `${done(res)} · ${RELOAD_FAILED}` })
     } catch (e) {
       setMsg({ tone: 'bad', text: errorText(e) })
     } finally {
@@ -403,21 +412,28 @@ function Fm005Form({ day, model, stock, reqs, canIssue, onDone }: { day: string;
     setBusy(true)
     setMsg(null)
     try {
-      const res = await api.reconcileFm005({
-        docNo: head.docNo.trim(),
-        docDate: day,
-        modelCode: model,
-        fgCode: fgItem?.code,
-        fgQty: fg ? int(fg) : null,
-        fromDept: head.fromDept.trim() || undefined,
-        toDept: head.toDept.trim() || undefined,
-        note: head.note.trim() || undefined,
-        lines: rows.filter((r) => r.fm > 0 || r.sub > 0).map((r) => ({ partNo: r.no, qty: r.fm })),
-      })
-      setMsg({ tone: 'ok', text: `บันทึก FM-P-005 ${head.docNo} (${res.reqNo}) แล้ว · กระทบใบย่อย ${res.subs} ใบ · ปรับส่วนต่าง ${changed.length} รายการ` })
-      setQty({})
-      setHead({ ...head, docNo: '', note: '' })
-      await onDone()
+      const done = (r: { reqNo: string; subs: number }) => `บันทึก FM-P-005 ${head.docNo} (${r.reqNo}) แล้ว · กระทบใบย่อย ${r.subs} ใบ · ปรับส่วนต่าง ${changed.length} รายการ`
+      const { value: res, reloadFailed } = await saveThenReload(
+        () =>
+          api.reconcileFm005({
+            docNo: head.docNo.trim(),
+            docDate: day,
+            modelCode: model,
+            fgCode: fgItem?.code,
+            fgQty: fg ? int(fg) : null,
+            fromDept: head.fromDept.trim() || undefined,
+            toDept: head.toDept.trim() || undefined,
+            note: head.note.trim() || undefined,
+            lines: rows.filter((r) => r.fm > 0 || r.sub > 0).map((r) => ({ partNo: r.no, qty: r.fm })),
+          }),
+        (r) => {
+          setMsg({ tone: 'ok', text: done(r) })
+          setQty({})
+          setHead({ ...head, docNo: '', note: '' })
+        },
+        [onDone],
+      )
+      if (reloadFailed) setMsg({ tone: 'ok', text: `${done(res)} · ${RELOAD_FAILED}` })
     } catch (e) {
       setMsg({ tone: 'bad', text: errorText(e) })
     } finally {

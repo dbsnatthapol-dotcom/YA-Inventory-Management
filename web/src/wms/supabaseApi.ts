@@ -494,7 +494,10 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
     },
 
     async pendingAdjustments() {
-      return ((await run(sb.from('wms_tx').select(TX_SELECT).eq('kind', 'ADJ').eq('status', 'pending').order('created_at'))) as Row[]).map(toTx)
+      const rows = (await run(
+        sb.from('wms_tx').select(`${TX_SELECT}, lpn_items!wms_tx_lpn_item_id_fkey(qty)`).eq('kind', 'ADJ').eq('status', 'pending').order('created_at'),
+      )) as Row[]
+      return rows.map((r) => ({ ...toTx(r), nowQty: num(one(r.lpn_items as Row | Row[] | null)?.qty) }))
     },
 
     async activeLpns() {

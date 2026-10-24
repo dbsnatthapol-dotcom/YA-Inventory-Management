@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { errorText } from '../../wms/api'
 import { fmt, lpnFromScan, TX_LABEL, txSummary } from '../../wms/logic'
 import type { Grn, Lpn, Perm, ScanIssuePayload, Tx } from '../../wms/types'
+import { RELOAD_FAILED, saveThenReload } from '../../wms/afterSave'
 import { useApprovals } from '../../wms/useApprovals'
 import { useWms } from '../../wms/useWms'
 import { zoneHeadOf } from '../../wms/labels'
@@ -114,7 +115,10 @@ export function ScanTab({
     setVer((v) => v + 1)
   }, [api])
 
-  /** quiet = โหลดกล่องเดิมซ้ำหลังบันทึก (ไม่มีเสียงสแกน คง part ที่เลือกไว้) */
+  /**
+   * quiet = โหลดกล่องเดิมซ้ำหลังบันทึก (ไม่มีเสียงสแกน คง part ที่เลือกไว้ ไม่ล้างข้อความผลบันทึก)
+   * โหลดไม่สำเร็จตอน quiet ⇒ โยน error ให้ผู้เรียกตัดสิน (การบันทึกสำเร็จไปแล้ว ห้ามขึ้นว่าล้มเหลว)
+   */
   const lookup = useCallback(
     async (raw: string, quiet = false) => {
       const no = lpnFromScan(raw)
@@ -124,13 +128,14 @@ export function ScanTab({
         const found = await api.findLpn(no)
         if (!found) {
           setCur(null)
+          if (quiet) return
           setMsg({ tone: 'bad', text: `ไม่พบป้าย ${no} · ตรวจเลขบนป้าย หรือป้ายนี้อาจอยู่ในโหมดทดลองรอบก่อน` })
           cue('bad')
           return
         }
         setCur(found)
-        setMsg(null)
         if (!quiet) {
+          setMsg(null)
           cue('scan')
           // มือถือ: เลื่อนให้เห็นกล่องกับปุ่มยืนยันทันที (ไม่ต้องเลื่อนหาเอง)
           if (mobileRef.current) requestAnimationFrame(() => boxCard.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
@@ -149,6 +154,7 @@ export function ScanTab({
         const grnModel = found.grn?.modelCode
         setIssue((s) => (fits(s.model) ? s : { ...s, model: fits(grnModel) ? grnModel : pm.length === 1 ? pm[0] : '' }))
       } catch (e) {
+        if (quiet) throw e
         setMsg({ tone: 'bad', text: errorText(e) })
         cue('bad')
       }
@@ -189,14 +195,33 @@ export function ScanTab({
     setBusy(true)
     setMsg(null)
     try {
-      const r = await fn()
-      const { tone, text } = typeof r === 'string' ? { tone: 'ok' as const, text: r } : r
-      // โหลดกล่องใหม่ก่อน (lookup ล้างข้อความ) แล้วค่อยแสดงผล ไม่งั้นข้อความยืนยันหายทันที
-      if (cur) await lookup(cur.lpn.lpnNo, true)
-      await refreshLists()
-      onChanged?.()
-      setMsg({ tone, text })
-      cue(tone)
+      // บันทึกสำเร็จ ⇒ บอกผลทันที · โหลดกล่อง/รายการใหม่พลาด ไม่ใช่การบันทึกล้มเหลว (กันกดซ้ำแล้วตัดสต็อกซ้ำ)
+      let boxStale = false
+      const { value: done, reloadFailed } = await saveThenReload(
+        async () => {
+          const r = await fn()
+          return typeof r === 'string' ? { tone: 'ok' as const, text: r } : r
+        },
+        (d) => {
+          setMsg(d)
+          cue(d.tone)
+          onChanged?.()
+        },
+        [
+          () =>
+            cur &&
+            lookup(cur.lpn.lpnNo, true).catch((e: unknown) => {
+              boxStale = true
+              throw e
+            }),
+          refreshLists,
+        ],
+      )
+      if (reloadFailed) {
+        // ยอดกล่องบนจอเป็นยอดก่อนบันทึก ⇒ ซ่อนไว้ ไม่ให้ทำรายการต่อจากยอดเก่า
+        if (boxStale) setCur(null)
+        setMsg({ tone: done.tone, text: `${done.text} · ${RELOAD_FAILED} · สแกนกล่องอีกครั้งเพื่อดูยอดล่าสุด` })
+      }
       scanInput.current?.focus()
     } catch (e) {
       setMsg({ tone: 'bad', text: errorText(e) })
