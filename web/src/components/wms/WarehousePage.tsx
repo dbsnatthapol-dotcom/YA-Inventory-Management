@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { BRAND } from '../../data/brand'
 import { useWms } from '../../wms/useWms'
 import { pendingAcks } from '../../wms/closing'
+import type { FlowKey } from '../../wms/flowBoard'
+import { TraceContext } from '../../wms/traceNav'
 import { usePrintQueue } from '../../wms/usePrintQueue'
 import { useApprovals } from '../../wms/useApprovals'
 import { CountTab } from './CountTab'
@@ -13,18 +15,20 @@ import { MoveBoxes } from './MoveBoxes'
 import { MyWork } from './MyWork'
 import { ReceivePage } from './ReceivePage'
 import { ScanTab, type ScanMode } from './ScanTab'
+import { TracePage } from './TracePage'
 import type { Zone } from '../../types/layout'
 import { Alert } from './ui'
 
-export type WmsTab = 'work' | 'receive' | 'labels' | 'scan' | 'move' | 'invoice' | 'issue' | 'ledger' | 'count'
+export type WmsTab = 'work' | 'trace' | 'receive' | 'labels' | 'scan' | 'move' | 'invoice' | 'issue' | 'ledger' | 'count'
 
 const TABS: [WmsTab, string, string][] = [
   ['work', '✓', 'งานวันนี้'],
-  ['receive', '1', 'รับสินค้า / ตรวจรับ'],
+  ['trace', '↔', 'ตามรอย'],
+  ['receive', '1', 'ตรวจรับสินค้า'],
   ['labels', '2', 'ป้าย QR & พิมพ์'],
   ['scan', '3', 'สแกนหน้างาน'],
   ['move', '4', 'ย้าย / จัดเก็บ'],
-  ['invoice', '5', 'กระทบยอด Invoice'],
+  ['invoice', '5', 'กระทบ Invoice'],
   ['issue', '6', 'เบิกเข้าไลน์'],
   ['ledger', '7', 'บัญชีคุม FM-P-537'],
   ['count', '8', 'ตรวจนับ & อนุมัติ'],
@@ -36,7 +40,19 @@ export interface WmsDeepLink {
   code: string
 }
 
-export function WarehousePage({ deepLink, zones, initialTab }: { deepLink: WmsDeepLink | null; zones: Zone[]; /** เปิดแท็บนี้ก่อน (เช่น จากหน้าภาพรวม) */ initialTab?: WmsTab | null }) {
+export function WarehousePage({
+  deepLink,
+  zones,
+  initialTab,
+  onPlan,
+}: {
+  deepLink: WmsDeepLink | null
+  zones: Zone[]
+  /** เปิดแท็บนี้ก่อน (เช่น จากหน้าภาพรวม) */
+  initialTab?: WmsTab | null
+  /** เปิดผังคลัง 2D (ขั้น "ในช่องเก็บ" ของผังขั้นตอนงาน) */
+  onPlan?: () => void
+}) {
   const { api, ready, error, settings, can } = useWms()
   const [tab, setTab] = useState<WmsTab>(initialTab ?? (deepLink?.kind === 'lpn' ? 'scan' : deepLink?.kind === 'grn' ? 'labels' : 'work'))
   const [grnId, setGrnId] = useState<string | null>(null)
@@ -83,88 +99,118 @@ export function WarehousePage({ deepLink, zones, initialTab }: { deepLink: WmsDe
     setGrnId(id)
     setTab('labels')
   }
+  const openCheck = (id: string) => {
+    setReceive((r) => ({ checkId: id, key: r.key + 1 }))
+    setTab('receive')
+  }
+  // ตามรอย: เปิดจากปุ่มในหน้าอื่นด้วยเลขเอกสาร (key ใหม่ = ค้นใหม่)
+  const [trace, setTrace] = useState<{ query: string; key: number } | null>(null)
+  const openTrace = (query: string) => {
+    setTrace((t) => ({ query, key: (t?.key ?? 0) + 1 }))
+    setTab('trace')
+  }
+  const setScanMode = (mode: ScanMode) => {
+    setScan((s) => ({ code: null, mode, key: s.key + 1 }))
+    setTab('scan')
+  }
+  // ผังขั้นตอนงาน: ขั้นที่หน้างานวันนี้ไม่มีรายการให้ทำ ⇒ ไปหน้าจอของขั้นนั้น
+  const onFlow = (k: FlowKey) => {
+    if (k === 'stock' && onPlan) return onPlan()
+    if (k === 'qi' || k === 'ng') return setScanMode(k === 'qi' ? 'QI' : 'ISSUE')
+    const to: Partial<Record<FlowKey, WmsTab>> = { check: 'receive', grn: 'labels', put: 'move', issue: 'issue', fm005: 'issue', close: 'ledger' }
+    const tab = to[k]
+    if (tab === 'receive') setReceive((r) => ({ checkId: null, key: r.key + 1 }))
+    if (tab === 'move') setMoveFrom((m) => ({ place: 'staging', key: m.key + 1 }))
+    if (tab) setTab(tab)
+  }
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto flex max-w-[1400px] flex-col gap-4 px-4 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <nav className="flex flex-wrap gap-1 rounded-xl bg-white p-1 shadow-sm ring-1 ring-slate-200" aria-label="งานคลัง">
-            {TABS.map(([k, n, label]) => (
-              <button
-                key={k}
-                onClick={() => {
-                  // เปิดแท็บสแกนเอง = เริ่มสแกนใหม่ด้วยงานที่จำไว้ (ไม่ย้อนไปกล่อง/งานที่สั่งจากหน้างานวันนี้)
-                  if (k === 'scan' && tab !== 'scan') setScan((s) => ({ code: null, key: s.key + 1 }))
-                  if (k === 'receive' && tab !== 'receive') setReceive((r) => ({ checkId: null, key: r.key + 1 }))
-                  if (k === 'move' && tab !== 'move') setMoveFrom((m) => ({ place: 'all', key: m.key + 1 }))
-                  setTab(k)
-                }}
-                aria-current={tab === k ? 'page' : undefined}
-                className={`flex min-h-[44px] items-center gap-2 rounded-lg px-4 text-[15px] font-semibold transition ${tab === k ? 'text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
-                style={tab === k ? { background: BRAND.primary } : undefined}
-              >
-                <span className={`grid h-6 w-6 place-items-center rounded-full border-2 text-xs ${tab === k ? 'border-white' : 'border-slate-300'}`}>{n}</span>
-                {label}
-                {k === 'labels' && tab !== 'labels' && printQueue.queued.length > 0 && (
-                  <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-500 px-1 text-[11px] font-bold text-white" title="งานพิมพ์จากมือถือรออยู่">
-                    {printQueue.queued.length}
-                  </span>
-                )}
-                {k === 'count' && tab !== 'count' && approvals.total > 0 && (
-                  <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-500 px-1 text-[11px] font-bold text-white" title="รออนุมัติปรับยอด">
-                    {approvals.total}
-                  </span>
-                )}
-                {k === 'ledger' && toAck > 0 && (
-                  <span className="grid h-5 min-w-5 place-items-center rounded-full bg-rose-600 px-1 text-[11px] font-bold text-white" title="ปิดยอดรอคุณรับทราบ">
-                    {toAck}
-                  </span>
-                )}
-              </button>
-            ))}
-          </nav>
-          {settings.mode === 'trial' ? (
-            <span className="rounded-full bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-300" title="ข้อมูลโหมดทดลองแยกจากของจริง ผู้ดูแลระบบเริ่มรอบใหม่หรือเปลี่ยนเป็นใช้งานจริงได้ในหน้าหลังบ้าน">
-              โหมดทดลอง · รอบที่ {settings.trialRound}
-            </span>
+    <TraceContext.Provider value={openTrace}>
+      <div className="h-full overflow-y-auto">
+        <div className="mx-auto flex max-w-[1400px] flex-col gap-4 px-4 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <nav className="flex flex-wrap gap-1 rounded-xl bg-white p-1 shadow-sm ring-1 ring-slate-200" aria-label="งานคลัง">
+              {TABS.map(([k, n, label]) => (
+                <button
+                  key={k}
+                  onClick={() => {
+                    // เปิดแท็บสแกนเอง = เริ่มสแกนใหม่ด้วยงานที่จำไว้ (ไม่ย้อนไปกล่อง/งานที่สั่งจากหน้างานวันนี้)
+                    if (k === 'scan' && tab !== 'scan') setScan((s) => ({ code: null, key: s.key + 1 }))
+                    if (k === 'receive' && tab !== 'receive') setReceive((r) => ({ checkId: null, key: r.key + 1 }))
+                    if (k === 'move' && tab !== 'move') setMoveFrom((m) => ({ place: 'all', key: m.key + 1 }))
+                    setTab(k)
+                  }}
+                  aria-current={tab === k ? 'page' : undefined}
+                  className={`flex min-h-[44px] items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-[14px] font-semibold transition ${tab === k ? 'text-white shadow-sm' : 'text-slate-600 hover:bg-slate-50'}`}
+                  style={tab === k ? { background: BRAND.primary } : undefined}
+                >
+                  <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 text-[11px] ${tab === k ? 'border-white' : 'border-slate-300'}`}>{n}</span>
+                  {label}
+                  {k === 'labels' && tab !== 'labels' && printQueue.queued.length > 0 && (
+                    <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-500 px-1 text-[11px] font-bold text-white" title="งานพิมพ์จากมือถือรออยู่">
+                      {printQueue.queued.length}
+                    </span>
+                  )}
+                  {k === 'count' && tab !== 'count' && approvals.total > 0 && (
+                    <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber-500 px-1 text-[11px] font-bold text-white" title="รออนุมัติปรับยอด">
+                      {approvals.total}
+                    </span>
+                  )}
+                  {k === 'ledger' && toAck > 0 && (
+                    <span className="grid h-5 min-w-5 place-items-center rounded-full bg-rose-600 px-1 text-[11px] font-bold text-white" title="ปิดยอดรอคุณรับทราบ">
+                      {toAck}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </nav>
+            {settings.mode === 'trial' ? (
+              <span className="rounded-full bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-300" title="ข้อมูลโหมดทดลองแยกจากของจริง ผู้ดูแลระบบเริ่มรอบใหม่หรือเปลี่ยนเป็นใช้งานจริงได้ในหน้าหลังบ้าน">
+                โหมดทดลอง · รอบที่ {settings.trialRound}
+              </span>
+            ) : (
+              <span className="rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-300">ใช้งานจริง</span>
+            )}
+          </div>
+
+          {api.kind === 'demo' && <Alert tone="info">หน้าสาธิต: ข้อมูลเก็บในเบราว์เซอร์นี้เท่านั้น · ระบบจริงบันทึกลงฐานข้อมูลกลาง ทุกเครื่องเห็นชุดเดียวกัน</Alert>}
+          {error && <Alert tone="bad">โหลดข้อมูลไม่สำเร็จ: {error}</Alert>}
+          {!ready ? (
+            <p className="py-16 text-center text-slate-500">กำลังโหลด…</p>
           ) : (
-            <span className="rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-300">ใช้งานจริง</span>
+            <>
+              {tab === 'work' && (
+                <MyWork
+                  onScan={scanBox}
+                  onTab={setTab}
+                  onOpenCheck={openCheck}
+                  onMove={() => {
+                    setMoveFrom((m) => ({ place: 'staging', key: m.key + 1 }))
+                    setTab('move')
+                  }}
+                  onFlow={onFlow}
+                />
+              )}
+              {tab === 'trace' && (
+                <TracePage
+                  start={trace}
+                  links={{ check: openCheck, grn: openGrn, box: (lpnNo) => scanBox(lpnNo, 'VIEW'), tab: (t) => setTab(t) }}
+                />
+              )}
+              {tab === 'receive' && <ReceivePage key={receive.key} openCheckId={receive.checkId} onReceived={openGrn} />}
+              {tab === 'move' && <MoveBoxes key={moveFrom.key} initialPlace={moveFrom.place} />}
+              {tab === 'labels' && <LabelsTab grnId={grnId} onSelectGrn={setGrnId} />}
+              {tab === 'scan' && (
+                <ScanTab key={scan.key} initialCode={scan.code} initialMode={scan.mode} onOpenApprovals={() => setTab('count')} onChanged={() => setApprovalsVer((v) => v + 1)} />
+              )}
+              {tab === 'invoice' && <InvoiceTab onOpenGrn={openGrn} />}
+              {tab === 'issue' && <IssueTab />}
+              {tab === 'ledger' && <LedgerTab />}
+              {tab === 'count' && <CountTab zones={zones} />}
+            </>
           )}
         </div>
-
-        {api.kind === 'demo' && <Alert tone="info">หน้าสาธิต: ข้อมูลเก็บในเบราว์เซอร์นี้เท่านั้น · ระบบจริงบันทึกลงฐานข้อมูลกลาง ทุกเครื่องเห็นชุดเดียวกัน</Alert>}
-        {error && <Alert tone="bad">โหลดข้อมูลไม่สำเร็จ: {error}</Alert>}
-        {!ready ? (
-          <p className="py-16 text-center text-slate-500">กำลังโหลด…</p>
-        ) : (
-          <>
-            {tab === 'work' && (
-              <MyWork
-                onScan={scanBox}
-                onTab={setTab}
-                onOpenCheck={(id) => {
-                  setReceive((r) => ({ checkId: id, key: r.key + 1 }))
-                  setTab('receive')
-                }}
-                onMove={() => {
-                  setMoveFrom((m) => ({ place: 'staging', key: m.key + 1 }))
-                  setTab('move')
-                }}
-              />
-            )}
-            {tab === 'receive' && <ReceivePage key={receive.key} openCheckId={receive.checkId} onReceived={openGrn} />}
-            {tab === 'move' && <MoveBoxes key={moveFrom.key} initialPlace={moveFrom.place} />}
-            {tab === 'labels' && <LabelsTab grnId={grnId} onSelectGrn={setGrnId} />}
-            {tab === 'scan' && (
-              <ScanTab key={scan.key} initialCode={scan.code} initialMode={scan.mode} onOpenApprovals={() => setTab('count')} onChanged={() => setApprovalsVer((v) => v + 1)} />
-            )}
-            {tab === 'invoice' && <InvoiceTab onOpenGrn={openGrn} />}
-            {tab === 'issue' && <IssueTab />}
-            {tab === 'ledger' && <LedgerTab />}
-            {tab === 'count' && <CountTab zones={zones} />}
-          </>
-        )}
       </div>
-    </div>
+    </TraceContext.Provider>
   )
 }

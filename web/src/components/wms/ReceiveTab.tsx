@@ -341,7 +341,7 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
           <PhotoPick id="pl-photo" label="ถ่าย Packing List" file={plFile} onFile={readPl} />
           {reading === 'pl' && <Alert tone="info">AI กำลังอ่าน Packing List…</Alert>}
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="REF Document No. *">
+            <Field label="เลขที่ Packing List (REF. Document No.) *">
               <input id="pl-ref" className={inputCls} value={pl.refDoc} onChange={(e) => setPl({ ...pl, refDoc: e.target.value })} placeholder="เช่น 55035596" />
             </Field>
             <Field label="Model *">
@@ -354,7 +354,7 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
                 ))}
               </select>
             </Field>
-            <Field label="SO No.">
+            <Field label="เลขที่ SO">
               <input id="pl-so" className={inputCls} value={pl.soNo} onChange={(e) => setPl({ ...pl, soNo: e.target.value })} />
             </Field>
             <Field label="หีบห่อ (Packing Type)">
@@ -372,16 +372,16 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
           {reading === 'invoice' && <Alert tone="info">AI กำลังอ่าน Invoice…</Alert>}
           {existing && <Alert tone="info">Invoice นี้มีในระบบแล้ว (รับไปแล้ว {existing.grnCount} เที่ยว) · เที่ยวนี้จะผูกกับใบเดิม ไม่สร้างซ้ำ</Alert>}
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Invoice No.">
+            <Field label="เลขที่ Invoice">
               <input id="inv-no" className={inputCls} value={inv.invoiceNo} onChange={(e) => setInv({ ...inv, invoiceNo: e.target.value })} onBlur={(e) => void checkInvoice(e.target.value)} placeholder="เช่น 4957930126" />
             </Field>
-            <Field label="PO">
+            <Field label="เลขที่ PO">
               <input id="inv-po" className={inputCls} value={inv.poNo} onChange={(e) => setInv({ ...inv, poNo: e.target.value })} />
             </Field>
             <Field label="วันที่เอกสาร">
               <input id="inv-date" type="date" className={inputCls} value={inv.docDate} onChange={(e) => setInv({ ...inv, docDate: e.target.value })} />
             </Field>
-            <Field label="Movement Type">
+            <Field label="ประเภทรายการ (Movement Type)">
               <input id="inv-mvt" className={inputCls} value={inv.movementType} onChange={(e) => setInv({ ...inv, movementType: e.target.value })} placeholder="เช่น 541" />
             </Field>
           </div>

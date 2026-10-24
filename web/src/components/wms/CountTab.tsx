@@ -7,6 +7,7 @@ import { useWms } from '../../wms/useWms'
 import type { Zone } from '../../types/layout'
 import { CountUpload, SheetItem } from './StockImport'
 import { Alert, BigButton, Card, Pill } from './ui'
+import { TraceButton } from './TraceButton'
 
 const signed = (n: number) => (n > 0 ? `+${fmt(n)}` : n < 0 ? `−${fmt(-n)}` : '0')
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Bangkok' }) : '')
@@ -94,6 +95,7 @@ export function CountTab({ zones }: { zones: Zone[] }) {
                 <span className="text-xs text-slate-500">
                   {t.reason} · ขอโดย {t.createdCode} {when(t.createdAt)}
                 </span>
+                <TraceButton query={t.lpnNo} label="ประวัติกล่อง" />
                 <span className="flex-1" />
                 {canApprove && (
                   <>

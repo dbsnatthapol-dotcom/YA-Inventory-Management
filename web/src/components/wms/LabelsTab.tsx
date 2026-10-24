@@ -10,6 +10,8 @@ import { PrintDialog } from './Print'
 import { usePrintQueue } from '../../wms/usePrintQueue'
 import { PrintQueue } from './PrintQueue'
 import { Alert, BigButton, Card, inputCls, Pill, Segmented, tdCls, thCls } from './ui'
+import { TraceButton } from './TraceButton'
+import { boxPlace } from '../../wms/trace'
 
 const dateTime = (iso: string) => new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 
@@ -292,6 +294,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
                 </div>
               }
             >
+              <GrnProgress lpns={lpns} grnNo={detail.grn.grnNo} />
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
                 {lpns.map((l) => {
                   const single = l.items.length === 1 ? l.items[0] : null
@@ -316,11 +319,11 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
                     </label>
                     {can('label.print') && l.status === 'active' && (
                       <div className="flex flex-wrap gap-2 border-t border-slate-200 px-3 py-2">
-                        <button type="button" className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium hover:bg-slate-100 disabled:opacity-40" disabled={busy || qty < 2} onClick={() => setSplitting(l)}>
+                        <button type="button" className="min-h-[40px] rounded-md border border-slate-300 bg-white px-3 text-sm font-medium hover:bg-slate-100 disabled:opacity-40" disabled={busy || qty < 2} onClick={() => setSplitting(l)}>
                           แยกกล่อง
                         </button>
                         {l.items.some((i) => i.prevLpnId) && (
-                          <button type="button" className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium hover:bg-slate-100 disabled:opacity-40" disabled={busy} onClick={() => unmerge(l)}>
+                          <button type="button" className="min-h-[40px] rounded-md border border-slate-300 bg-white px-3 text-sm font-medium hover:bg-slate-100 disabled:opacity-40" disabled={busy} onClick={() => unmerge(l)}>
                             ยกเลิกการรวม
                           </button>
                         )}
@@ -502,6 +505,25 @@ function SplitDialog({
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+/** ใบนี้ไปถึงไหนแล้ว: กล่องอยู่ขั้นไหนบ้าง + ปุ่มตามรอยทั้งสาย */
+function GrnProgress({ lpns, grnNo }: { lpns: Lpn[]; grnNo: string }) {
+  const { master } = useWms()
+  const n = { store: 0, staging: 0, mi3: 0, ng: 0, gone: 0 }
+  for (const l of lpns) n[boxPlace(l, master.locations)]++
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-sm">
+      <span className="text-xs font-semibold text-slate-500">กล่องของใบนี้ตอนนี้:</span>
+      {n.staging > 0 && <Pill tone="warn">รอจัดเก็บ {n.staging}</Pill>}
+      {n.mi3 > 0 && <Pill tone="mi3">รอ MI3 {n.mi3}</Pill>}
+      {n.store > 0 && <Pill tone="ok">ในช่องเก็บ {n.store}</Pill>}
+      {n.ng > 0 && <Pill tone="bad">NG {n.ng}</Pill>}
+      {n.gone > 0 && <Pill tone="muted">ใช้หมด / ปิด {n.gone}</Pill>}
+      {!lpns.length && <Pill tone="muted">ไม่มีกล่อง</Pill>}
+      <TraceButton query={grnNo} label="ตามรอยใบนี้" className="ml-auto" />
     </div>
   )
 }

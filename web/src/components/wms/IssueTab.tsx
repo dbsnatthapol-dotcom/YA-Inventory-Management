@@ -7,6 +7,7 @@ import { useWms } from '../../wms/useWms'
 import { PrintDialog } from './Print'
 import { PlanningPage } from './ReportPages'
 import { Alert, BigButton, Card, Field, inputCls, Pill, Segmented, tdCls, thCls } from './ui'
+import { TraceButton } from './TraceButton'
 
 type Mode = 'sub' | 'fm005' | 'report'
 
@@ -353,6 +354,7 @@ function TodayList({ title, reqs, canIssue, onDone }: { title: string; reqs: Req
               {r.note ? ` · ${r.note}` : ''}
             </span>
             {r.status === 'void' ? <Pill tone="muted">ยกเลิก</Pill> : r.reconciledBy ? <Pill tone="ok">กระทบ FM-P-005 แล้ว</Pill> : <Pill tone="warn">รอ FM-P-005</Pill>}
+            <TraceButton query={r.reqNo} label="ของมาจากไหน" />
             {canIssue && r.status === 'posted' && !r.reconciledBy && (
               <button className="ml-auto rounded-md px-2 py-1 text-xs text-rose-600 ring-1 ring-rose-200 hover:bg-rose-50" onClick={() => void cancel(r)}>
                 ยกเลิกใบนี้

@@ -631,7 +631,7 @@ function SlotCard({ slot, spot, zs, lit, onOpenLpn }: { slot: Slot; spot: Spot |
 }
 
 function BoxRow({ box, lit, showLocation, onOpenLpn }: { box: SlotBox; lit: boolean; showLocation?: boolean; onOpenLpn?: (lpnNo: string) => void }) {
-  const open = 'ml-auto shrink-0 text-xs font-semibold text-sky-700 hover:underline'
+  const open = 'ml-auto inline-flex min-h-[36px] shrink-0 items-center rounded-lg px-2.5 text-xs font-semibold text-sky-700 ring-1 ring-sky-200 hover:bg-sky-50'
   return (
     <li className={`rounded-lg bg-white p-2.5 ${lit ? 'ring-2 ring-rose-500' : 'ring-1 ring-slate-200'}`}>
       <div className="flex items-center gap-2">
