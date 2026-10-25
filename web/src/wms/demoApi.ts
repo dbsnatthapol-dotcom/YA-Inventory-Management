@@ -2,7 +2,8 @@ import { sampleLayout } from '../data/factoryLayout'
 import { MODELS, PARTS, ZONE_RULES } from '../inventory/masterData'
 import type { WmsApi } from './api'
 import { layoutLocations, zoneCodeOf } from './locations'
-import { addDays, bangkokDay, buildLedger, monthRange } from './ledger'
+import { addDays, bangkokDay, buildLedger, monthRange, onDocDate, rowsOfModel } from './ledger'
+import { tidyInvoiceLines } from './invoiceLines'
 import { canonPartNo, partRevision, partsOfModel, resolvePart } from './partCodes'
 import { HEAD_KINDS } from './readiness'
 import { countLocations, systemQty } from './stockImport'
@@ -26,6 +27,7 @@ import type {
   PrintJob,
   Settings,
   StaffBrief,
+  TraceTx,
   Tx,
   ZoneHead,
   CountRow,
@@ -73,6 +75,10 @@ const DEMO_HEAD = { id: 'demo-head', employeeCode: 'DEMO-WH', fullName: 'เต�
 // v2: รหัส part เป็นเลขฐาน (ข้อมูลสาธิตเก่าที่มี /A /B เริ่มใหม่)
 const KEY = 'uam-wms-demo-v2'
 const ME = 'DEMO'
+/** ชื่อผู้ใช้สาธิตบนเอกสาร (ปิดยอด / รับทราบ) */
+const DEMO_ME = `ผู้ใช้สาธิต (${ME})`
+/** สาธิต: ผู้ปิดยอด (คนละคนกับผู้ใช้สาธิต ⇒ ผู้ใช้สาธิตกดรับทราบได้) */
+const DEMO_CLOSER = 'หัวหน้าคลังสาธิต (DEMO-MGR)'
 
 function seed(): DemoDb {
   return {
@@ -196,8 +202,25 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
     db.tx
       .filter((t) => t.kind === 'COUNT' && bangkokDay(t.createdAt) >= fromDay)
       .map((t) => ({ at: t.createdAt, day: bangkokDay(t.createdAt), loc: t.fromLoc, itemId: t.lpnItemId, partNo: t.partNo ?? '', system: t.qty ?? 0, counted: t.newQty ?? 0, code: t.createdCode }))
-  const log = (t: Partial<Tx> & Pick<Tx, 'kind'>) =>
-    db.tx.unshift({
+  // Model ของรายการในบัญชีคุม (เหมือน ledger_item_model / stock_ledger_entries 0023):
+  // ใบรับที่ของชิ้นนั้นมา (รายการในกล่อง ⇒ กล่อง) ⇒ Model เดียวของ part · part ร่วมที่ไม่รู้ ⇒ null
+  const soleModel = (part: string | null) => {
+    const models = [...new Set(db.master.parts.find((p) => p.partNo === part)?.models ?? [])]
+    return models.length === 1 ? models[0] : null
+  }
+  const itemModel = (itemId: string | null | undefined, lpnId: string | null | undefined, part: string | null | undefined) => {
+    const item = itemId ? db.lpns.flatMap((l) => l.items).find((i) => i.id === itemId) : undefined
+    const line = item ? db.grnLines.find((g) => g.id === item.grnLineId) : undefined
+    const box = lpnId ? db.lpns.find((l) => l.id === lpnId) : undefined
+    return (line && db.grns.find((g) => g.id === line.grnId)?.modelCode) || (box && db.grns.find((g) => g.id === box.grnId)?.modelCode) || soleModel(part ?? null)
+  }
+  const log = (t: Partial<Tx> & Pick<Tx, 'kind'>) => {
+    // จำนวนเป็นจำนวนเต็ม (ชิ้น) เหมือน trigger wms_whole_qty (0025)
+    for (const v of [t.qty, t.newQty, t.passQty, t.ngQty]) if (v != null && !Number.isInteger(v)) fail(`จำนวนต้องเป็นจำนวนเต็ม (ชิ้น) · ได้ ${v}`)
+    // ใบ QC / NG ที่ไม่มี Model: ติดล็อกปิดเดือนตาม Model ของใบรับที่ของมา (เหมือน trigger wms_tx_month_lock 0023)
+    const req = (t.kind === 'ISSUE' || t.kind === 'RETURN') && t.requisitionId ? db.requisitions.find((r) => r.id === t.requisitionId) : undefined
+    if (req && !req.modelCode) assertOpen(itemModel(t.lpnItemId, t.lpnId, t.partNo), req.docDate)
+    return db.tx.unshift({
       id: uid(),
       docNo: null,
       lpnId: null,
@@ -218,7 +241,13 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
       decidedCode: null,
       ...t,
     })
+  }
   const lpnById = (id: string) => db.lpns.find((l) => l.id === id) ?? fail('ไม่พบป้าย')
+  // นับ / ขอปรับยอดได้เฉพาะกล่องที่ใช้งาน หรือใช้หมดแล้ว (เหมือน scan_count_item / scan_adjust_request 0025)
+  const boxInUse = (lpn: Lpn, what: string) => {
+    if (lpn.status !== 'active' && lpn.status !== 'empty')
+      fail(`กล่อง ${lpn.lpnNo} ${lpn.status === 'void' ? 'ถูกยกเลิก (ยกเลิกใบรับ)' : 'ถูกรวมเข้ากล่องอื่น'}แล้ว · ${what}เฉพาะกล่องที่ใช้งานอยู่`)
+  }
   const itemById = (id: string) => {
     for (const l of db.lpns) {
       const it = l.items.find((i) => i.id === id)
@@ -282,14 +311,18 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
     return c
   }
   const wholeQty = (n: number) => Number.isInteger(n) && n >= 0
-  const invLines = (lines: { lineNo?: number; partNo: string; description?: string | null; qty: number }[]) =>
-    lines
-      .filter((l) => l.partNo.trim())
-      .map((l, i) => ({ lineNo: l.lineNo || i + 1, partNo: canonPartNo(db.master.parts, l.partNo), description: l.description ?? '', qty: Math.max(0, Number(l.qty) || 0) }))
+  // บรรทัด Invoice ไม่ซ้ำ เลขไม่ชนกัน (เหมือน check_inv_lines ใน 0022)
+  const invLines = (lines: { lineNo?: number | null; partNo: string; description?: string | null; qty: number }[]) =>
+    tidyInvoiceLines(lines, (c) => canonPartNo(db.master.parts, c))
   const partName = (partNo: string) => db.master.parts.find((p) => p.partNo === canonPartNo(db.master.parts, partNo))?.name ?? null
 
   // ===== ใบเบิก: กติกาเดียวกับ wms_issue_fifo (0021) / wms_return_lifo (0014) =====
   const inNgArea = (l: Lpn) => db.master.locations.find((x) => x.code === l.locationCode)?.kind === 'ng'
+  // ช่องปลายทางต้องมีและเปิดใช้ (move_target_check ใน 0024) · ผู้ใช้สาธิตมีทุกสิทธิ์ (รวมตรวจ MI3) จึงย้ายกล่อง NG ออกได้เสมอ
+  const openSlot = (dest: string) => {
+    const loc = db.master.locations.find((l) => l.code === dest)
+    if (!loc || !loc.active || loc.blocked) fail(`ไม่พบช่อง ${dest} หรือช่องนี้ปิดใช้อยู่`)
+  }
   const onHand = (part: string) =>
     db.lpns.filter((l) => l.status === 'active').reduce((s, l) => s + l.items.filter((i) => i.partNo === part).reduce((t, i) => t + i.qty, 0), 0)
   const issueFifo = (reqId: string, doc: string, ref: string, part: string, qty: number) => {
@@ -312,10 +345,9 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         if (!l.items.some((i) => i.qty > 0)) l.status = 'empty'
       }
   }
+  // คืนเข้ากล่องที่รายการอยู่ตอนนี้ (อาจถูกรวมกล่องหลังเบิก) และเปิดสถานะกล่องนั้น (เหมือน 0022)
   const putBack = (t: Tx, qty: number, doc: string, ref: string | null, reqId: string, reason: string | null = null) => {
-    const l = db.lpns.find((x) => x.id === t.lpnId)
-    const item = l?.items.find((i) => i.id === t.lpnItemId)
-    if (!l || !item) return
+    const { lpn: l, item } = itemById(t.lpnItemId ?? '')
     item.qty += qty
     if (l.status === 'empty') l.status = 'active'
     log({ kind: 'RETURN', docNo: doc, lpnId: l.id, lpnNo: l.lpnNo, lpnItemId: item.id, partNo: t.partNo, qty, toLoc: l.locationCode, ref, reason, requisitionId: reqId })
@@ -360,7 +392,7 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         statusAt: null,
         imagePaths: p.invoice.imagePaths ?? [],
         createdAt: nowIso(),
-        lines: p.invoice.lines.map((l) => ({ lineNo: l.lineNo, partNo: l.partNo, description: l.description, qty: l.qty })),
+        lines: invLines(p.invoice.lines),
       }
       db.invoices.unshift(invoice)
     }
@@ -408,7 +440,8 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         partType: type,
         plQty: line.plQty,
         countedQty: line.countedQty,
-        invoiceQty: invoice?.lines.find((l) => l.partNo === line.partNo)?.qty ?? null,
+        // ยอด Invoice ทั้ง part (Invoice มี part เดียวกันหลายบรรทัดได้ · create_grn 0024)
+        invoiceQty: invoice?.lines.some((l) => l.partNo === line.partNo) ? invoice.lines.filter((l) => l.partNo === line.partNo).reduce((s, l) => s + l.qty, 0) : null,
         needsQi: needs,
         homeLocation: home,
         caseNo,
@@ -557,9 +590,10 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         })
         return { id, checkNo }
       }),
+    // เหมือนระบบจริง: ใบที่ยังเปิดทั้งหมด + ใบที่ปิดแล้ว 80 ใบล่าสุด
     listChecks: async () => {
       const all = db.checks.map(checkOf)
-      return clone([...all.filter((c) => c.status === 'open'), ...all.filter((c) => c.status !== 'open')].slice(0, 80))
+      return clone([...all.filter((c) => c.status === 'open'), ...all.filter((c) => c.status !== 'open').slice(0, 80)])
     },
     checkDetail: async (id) => {
       const c = db.checks.find((x) => x.id === id)
@@ -700,14 +734,23 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         if (ids.length < 2) fail('เลือกอย่างน้อย 2 ป้ายเพื่อรวม')
         const src = ids.map(lpnById)
         if (src.some((l) => l.status !== 'active')) fail('มีป้ายที่ถูกรวมหรือใช้หมดไปแล้ว')
+        // เหมือน merge_lpns (0022): ของเสียหายในพื้นที่ NG รวมกับของดีไม่ได้ · กล่องรวมอยู่พื้นที่ชนิดเดียวกับกล่องต้นทาง
+        const ng = src.filter((l) => inNgArea(l)).length
+        if (ng && ng < src.length) fail('รวมกล่อง NG (ของเสียหาย) กับกล่องของดีไม่ได้ · พิมพ์ป้ายแยกกัน ของ NG ต้องอยู่พื้นที่กัก NG')
+        const to = location?.trim().toUpperCase() || src[0].locationCode
+        if ((ng > 0) !== (db.master.locations.find((x) => x.code === to)?.kind === 'ng'))
+          fail(ng ? 'กล่อง NG รวมแล้วต้องอยู่พื้นที่กัก NG · เลือกช่อง NG' : 'รวมกล่องของดีไปไว้พื้นที่กัก NG ไม่ได้')
+        // กล่องรวมใช้วันรับเข้าเก่าสุดของกล่องต้นทาง · เคสเดียวกันทุกกล่อง ⇒ คงเลขเคส (เหมือน merge_lpns 0023)
+        const cases = new Set(src.map((l) => l.caseNo ?? null))
         const lpn: Lpn = {
           id: uid(),
           lpnNo: nextDoc('LPN'),
           grnId: src[0].grnId,
-          locationCode: location ?? src[0].locationCode,
+          locationCode: to,
           hold: src.some((l) => l.hold),
           status: 'active',
-          createdAt: nowIso(),
+          createdAt: src.map((l) => l.createdAt).sort()[0],
+          caseNo: cases.size === 1 ? [...cases][0] : null,
           items: src.flatMap((l) => l.items),
         }
         lpn.items.forEach((i) => {
@@ -751,7 +794,8 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
       commit(() => {
         const box = lpnById(lpnId)
         if (box.status !== 'active') fail('ไม่พบป้าย หรือป้ายนี้ใช้งานไม่ได้แล้ว')
-        const lpn: Lpn = { id: uid(), lpnNo: nextDoc('LPN'), grnId: box.grnId, locationCode: box.locationCode, hold: box.hold, status: 'active', createdAt: nowIso(), items: [] }
+        // กล่องใหม่ใช้วันรับเข้าและเลขเคสของกล่องเดิม (เหมือน split_lpn 0023 · FIFO ไม่เพี้ยน)
+        const lpn: Lpn = { id: uid(), lpnNo: nextDoc('LPN'), grnId: box.grnId, locationCode: box.locationCode, hold: box.hold, status: 'active', createdAt: box.createdAt, caseNo: box.caseNo ?? null, items: [] }
         for (const p of picks) {
           if (!(p.qty > 0)) continue
           const item = box.items.find((i) => i.id === p.itemId) ?? fail('รายการที่เลือกไม่ได้อยู่ในกล่องนี้')
@@ -793,19 +837,19 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         if (lpn.status !== 'active') fail('ไม่พบป้าย หรือป้ายนี้ใช้หมดแล้ว')
         if (!dest) fail('เลือกช่องปลายทาง')
         if (dest === lpn.locationCode) fail('กล่องอยู่ที่ช่องนี้แล้ว')
+        openSlot(dest)
         log({ kind, lpnId, lpnNo: lpn.lpnNo, fromLoc: lpn.locationCode, toLoc: dest, via: 'scan' })
         lpn.locationCode = dest
       }),
 
-    // เหมือน move_lpns (0020): ปลายทางต้องเป็นช่องที่มีและเปิดใช้ · จากจุดรับของ/จุดพัก = PUT
+    // เหมือน move_lpns (0024): ปลายทางต้องเป็นช่องที่มีและเปิดใช้ · จากจุดรับของ/จุดพัก = PUT · กล่อง NG ออกไปช่องของดีได้เฉพาะ MI3
     moveLpns: (lpnIds, to) =>
       commit(() => {
         const ids = [...new Set(lpnIds)]
         if (!ids.length) fail('เลือกกล่องที่จะย้าย')
         if (ids.length > 200) fail('ย้ายได้ครั้งละไม่เกิน 200 กล่อง')
         const dest = to.trim().toUpperCase()
-        const loc = db.master.locations.find((l) => l.code === dest)
-        if (!loc || !loc.active || loc.blocked) fail(`ไม่พบช่อง ${dest} หรือช่องนี้ปิดใช้อยู่`)
+        openSlot(dest)
         const boxes = ids.map((id) => db.lpns.find((l) => l.id === id) ?? fail('ไม่พบบางกล่อง · โหลดรายการใหม่')).sort((a, b) => a.lpnNo.localeCompare(b.lpnNo))
         let moved = 0
         for (const lpn of boxes) {
@@ -881,7 +925,8 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
     scanAdjustRequest: (itemId, newQty, reason) =>
       commit(() => {
         const { lpn, item } = itemById(itemId)
-        if (!(newQty >= 0)) fail('ใส่ยอดที่ถูกต้อง')
+        boxInUse(lpn, 'ขอปรับยอดได้')
+        if (!(newQty >= 0) || !Number.isInteger(newQty)) fail('ใส่ยอดที่ถูกต้อง (จำนวนเต็ม)')
         if (!reason.trim()) fail('ระบุเหตุผลก่อนส่ง')
         if (newQty === item.qty) fail('ยอดเท่าเดิม ไม่ต้องแก้ไข')
         if (db.tx.some((t) => t.lpnItemId === itemId && t.kind === 'ADJ' && t.status === 'pending')) fail('มีคำขอแก้ไขยอดของรายการนี้รออนุมัติอยู่แล้ว')
@@ -895,18 +940,24 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         const t = db.tx.find((x) => x.id === txId)
         if (!t || t.status !== 'pending') fail('รายการนี้ถูกพิจารณาไปแล้ว')
         if (approve) {
+          // เหมือน scan_adjust_decide (0022): ยอดเปลี่ยนหลังส่งคำขอ ⇒ ไม่ให้อนุมัติ ให้นับใหม่
           const { lpn, item } = itemById(t!.lpnItemId!)
+          if (lpn.status !== 'active' && lpn.status !== 'empty') fail(`กล่อง ${lpn.lpnNo} ถูกยกเลิกแล้ว (ยกเลิกใบรับ) · กดไม่อนุมัติคำขอนี้`)
+          if (item.qty !== t!.qty) fail(`ยอด ${t!.partNo} ในกล่อง ${lpn.lpnNo} เปลี่ยนหลังส่งคำขอ (ตอนขอ ${t!.qty} · ตอนนี้ ${item.qty}) · กดไม่อนุมัติแล้วให้นับใหม่`)
           item.qty = t!.newQty ?? item.qty
-          if (lpn.status !== 'merged') lpn.status = lpn.items.some((i) => i.qty > 0) ? 'active' : 'empty'
+          lpn.status = lpn.items.some((i) => i.qty > 0) ? 'active' : 'empty'
         }
         t!.status = approve ? 'approved' : 'rejected'
         t!.decidedCode = ME
+        // บัญชีคุมลงวันที่อนุมัติ (A7)
+        t!.decidedAt = nowIso()
       }),
 
     scanCountItem: (itemId, counted) =>
       commit(() => {
         const { lpn, item } = itemById(itemId)
-        if (!(counted >= 0)) fail('ใส่จำนวนที่นับได้')
+        boxInUse(lpn, 'นับได้')
+        if (!(counted >= 0) || !Number.isInteger(counted)) fail('ใส่จำนวนที่นับได้ (จำนวนเต็ม)')
         log({ kind: 'COUNT', lpnId: lpn.id, lpnNo: lpn.lpnNo, lpnItemId: item.id, partNo: item.partNo, qty: item.qty, newQty: counted, fromLoc: lpn.locationCode })
         return counted - item.qty
       }),
@@ -928,8 +979,51 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
       }),
 
     recentTx: async (limit = 30, lpnId) => clone(db.tx.filter((t) => !lpnId || t.lpnId === lpnId).slice(0, limit)),
-    pendingAdjustments: async () => clone(db.tx.filter((t) => t.kind === 'ADJ' && t.status === 'pending')),
+    pendingAdjustments: async () =>
+      clone(
+        db.tx
+          .filter((t) => t.kind === 'ADJ' && t.status === 'pending')
+          .map((t) => ({ ...t, nowQty: db.lpns.flatMap((l) => l.items).find((i) => i.id === t.lpnItemId)?.qty ?? null })),
+      ),
     activeLpns: async () => db.lpns.filter((l) => l.status === 'active').map(lpnOf),
+
+    // เหมือน findDocs / traceTx ใน supabaseApi (ไม่สนตัวพิมพ์เล็ก/ใหญ่)
+    async findDocs(query) {
+      const up = query.trim().toUpperCase()
+      if (!up) return { grns: [], checks: [], reqs: [], invoices: [] }
+      const same = (v: string | null | undefined) => !!v && v.trim().toUpperCase() === up
+      const invs = db.invoices.filter((i) => same(i.invoiceNo) || same(i.poNo))
+      return clone({
+        grns: db.grns.filter((g) => same(g.grnNo) || same(g.plRef) || invs.some((i) => i.id === g.invoiceId)).sort((a, b) => b.receivedAt.localeCompare(a.receivedAt)),
+        checks: db.checks.filter((c) => same(c.checkNo) || same(c.plRef)).map(checkOf),
+        reqs: db.requisitions.filter((r) => same(r.reqNo) || same(r.docNo)),
+        invoices: invs.map((i) => ({ id: i.id, invoiceNo: i.invoiceNo, status: i.status })),
+      })
+    },
+
+    async traceTx(by) {
+      const lpnIds = new Set(by.lpnIds ?? [])
+      const reqIds = new Set(by.reqIds ?? [])
+      // db.tx เรียงใหม่ → เก่า: กลับด้านก่อน แล้วเรียงตามเวลา (เวลาเท่ากันคงลำดับที่บันทึก)
+      const rows = db.tx
+        .filter((t) => (t.lpnId && lpnIds.has(t.lpnId)) || (t.requisitionId && reqIds.has(t.requisitionId)))
+        .reverse()
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      return clone(
+        rows.map((t): TraceTx => {
+          const l = db.lpns.find((x) => x.id === t.lpnId)
+          const g = l ? db.grns.find((x) => x.id === l.grnId) : undefined
+          const r = t.requisitionId ? db.requisitions.find((x) => x.id === t.requisitionId) : undefined
+          return {
+            ...t,
+            box: l ? { grnId: l.grnId, grnNo: g?.grnNo ?? null, plRef: g?.plRef ?? null, invoiceNo: g?.invoiceNo ?? null, caseNo: l.caseNo ?? null, modelCode: g?.modelCode ?? null } : null,
+            req: r
+              ? { id: r.id, reqNo: r.reqNo, docNo: r.docNo, kind: r.kind, modelCode: r.modelCode, docDate: r.docDate, toDept: r.toDept, reconciledBy: r.reconciledBy, status: r.status }
+              : null,
+          }
+        }),
+      )
+    },
 
     async invoiceView(query) {
       const q = query.trim()
@@ -1050,6 +1144,8 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
       }),
     postRequisition: (p) =>
       commit(() => {
+        // เหมือน trigger requisition_needs_model (0025)
+        if (p.kind === 'line' && !p.modelCode) fail('ใบเบิกเข้าไลน์ต้องระบุ Model (ไม่งั้นกระทบ FM-P-005 ไม่ได้)')
         assertOpen(p.modelCode, p.docDate || today())
         const lines = p.lines.filter((l) => l.qty > 0)
         if (!lines.length) fail('ไม่มีรายการที่จะเบิก')
@@ -1142,7 +1238,7 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
           .filter((l) => grns.has(l.grnId) && l.countedQty > 0)
           .map((l) => {
             const g = grns.get(l.grnId)!
-            return { day: bangkokDay(g.receivedAt), grnNo: g.grnNo, model: g.modelCode, partNo: l.partNo, qty: l.countedQty, replacement: !!g.replacement }
+            return { day: bangkokDay(g.receivedAt), grnNo: g.grnNo, model: g.modelCode, partNo: l.partNo, qty: l.countedQty, damaged: l.damagedQty ?? 0, replacement: !!g.replacement }
           }),
         qi: db.tx
           .filter((t) => t.kind === 'QI' && bangkokDay(t.createdAt) >= fromDay)
@@ -1165,7 +1261,7 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
       const reqs = new Map(db.requisitions.map((r) => [r.id, r]))
       const rows: LedgerRow[] = []
       for (const t of [...db.tx].reverse()) {
-        if (!t.partNo || !want.has(t.partNo) || t.createdAt >= to) continue
+        if (!t.partNo || !want.has(t.partNo)) continue
         const ok = ['RECEIVE', 'ISSUE', 'RETURN'].includes(t.kind) || (t.kind === 'QI' && (t.ngQty ?? 0) > 0) || (t.kind === 'ADJ' && t.status === 'approved')
         if (!ok) continue
         const lpn = db.lpns.find((l) => l.id === t.lpnId)
@@ -1175,8 +1271,12 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         const inv = db.invoices.find((i) => i.id === grn?.invoiceId)
         const req = reqs.get(t.requisitionId ?? '')
         const reqCol = req?.kind === 'qc' ? 'qc' : req?.kind === 'ng' ? 'ng' : 'issue'
+        const issue = t.kind === 'ISSUE' || t.kind === 'RETURN'
+        // วันที่ลงบัญชี (เหมือน stock_ledger_entries 0023): ใบเบิก/FM-P-005 = วันที่ในเอกสาร · ปรับยอด = วันที่อนุมัติ
+        const at = issue && req ? onDocDate(t.createdAt, req.docDate) : t.kind === 'ADJ' ? (t.decidedAt ?? t.createdAt) : t.createdAt
+        if (at >= to) continue
         rows.push({
-          at: t.createdAt,
+          at,
           partNo: t.partNo,
           kind: t.kind,
           col: t.kind === 'RECEIVE' ? (grn?.replacement ? 'recv_rep' : 'recv') : t.kind === 'ISSUE' || t.kind === 'RETURN' ? reqCol : t.kind === 'QI' ? 'ng' : 'adj',
@@ -1187,18 +1287,22 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
           docNo: t.kind === 'ISSUE' || t.kind === 'RETURN' ? (req?.docNo ?? req?.reqNo ?? t.ref ?? t.docNo) : t.kind === 'RECEIVE' ? (grn?.grnNo ?? null) : t.docNo,
           lot: grn?.grnNo ?? null,
           note: t.reason ?? (req?.kind === 'fm005' ? 'กระทบยอด FM-P-005' : null),
+          model: (issue ? req?.modelCode : null) || itemModel(t.lpnItemId, t.lpnId, t.partNo),
         })
       }
-      return rows
+      return rows.sort((a, b) => a.at.localeCompare(b.at))
     },
     // สาธิต: ผังเก็บในเครื่อง (useLayoutEdits) — ที่นี่ปรับเฉพาะช่องเก็บให้ตรงกับผัง (กติกาเดียวกับ layout_save)
-    listClosings: async () => clone(db.closings),
+    // ผู้ใช้สาธิตคนนี้ปิดยอดเอง / รับทราบฝั่งไหนไปแล้ว (เหมือน listClosings ฝั่งฐานข้อมูล)
+    listClosings: async () =>
+      clone(db.closings.map((c) => ({ ...c, mine: { closed: c.closedBy === DEMO_ME, planning: c.planningBy === DEMO_ME, account: c.accountBy === DEMO_ME } }))),
     closeMonth: async (model, month, note) => {
       if (month >= today().slice(0, 7)) fail(`ปิดยอดได้เมื่อจบเดือน ${month} แล้ว`)
       const prev = db.closings.find((c) => c.modelCode === model && c.month === month)
       if (prev?.status === 'closed') fail(`${model} เดือน ${month} ปิดยอดไปแล้ว`)
       const parts = partsOfModel(db.master, model)
-      const sheets = buildLedger(await api.ledgerRows(parts.map((p) => p.partNo), monthRange(month).to), parts, month)
+      // ยอดของ Model นี้เท่านั้น (part ร่วมไม่ซ้ำในหลาย Model เหมือน ledger_month_totals 0023)
+      const sheets = buildLedger(rowsOfModel(await api.ledgerRows(parts.map((p) => p.partNo), monthRange(month).to), model), parts, month)
       const totals = sheets.map((x) => ({ partNo: x.partNo, opening: x.opening, in: x.totalIn, out: x.totalOut, closing: x.closing }))
       const next: StockClosing = {
         id: prev?.id ?? uid(),
@@ -1206,7 +1310,8 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         month,
         status: 'closed',
         totals,
-        closedBy: `ผู้ใช้สาธิต (${ME})`,
+        // สาธิต: ปิดยอดในนามหัวหน้าคลัง ผู้ใช้สาธิตจึงกดรับทราบได้ (คนปิดยอดรับทราบเองไม่ได้)
+        closedBy: DEMO_CLOSER,
         closedAt: nowIso(),
         planningBy: null,
         planningAt: null,
@@ -1229,8 +1334,12 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
       commit(() => {
         const c = db.closings.find((x) => x.id === id && x.status === 'closed')
         if (!c || (side === 'planning' ? c.planningAt : c.accountAt)) fail('ไม่พบรายการ หรือรับทราบไปแล้ว')
-        if (side === 'planning') Object.assign(c!, { planningBy: `ผู้ใช้สาธิต (${ME})`, planningAt: nowIso() })
-        else Object.assign(c!, { accountBy: `ผู้ใช้สาธิต (${ME})`, accountAt: nowIso() })
+        const who = side === 'planning' ? 'Planning' : 'บัญชี'
+        // เหมือน stock_close_ack 0023: คนปิดยอดรับทราบเองไม่ได้ · คนเดียวรับทราบทั้งสองฝั่งไม่ได้
+        if (c!.closedBy === DEMO_ME) fail(`คนที่ปิดยอดรับทราบเองไม่ได้ · ให้ ${who} กดรับทราบ`)
+        if ((side === 'planning' ? c!.accountBy : c!.planningBy) === DEMO_ME) fail(`รับทราบอีกฝั่งไปแล้ว · ฝั่ง ${who} ต้องเป็นอีกคน`)
+        if (side === 'planning') Object.assign(c!, { planningBy: DEMO_ME, planningAt: nowIso() })
+        else Object.assign(c!, { accountBy: DEMO_ME, accountAt: nowIso() })
       }),
     submitStockCount: (p) =>
       commit(() => {
@@ -1256,7 +1365,10 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
           if (!part) fail(`แถว ${i + 1}: ไม่พบ part "${l.partNo}" ใน Master`)
           if (!(l.counted >= 0)) fail(`แถว ${i + 1}: จำนวนนับต้องเป็น 0 ขึ้นไป`)
           const loc = l.loc.trim().toUpperCase()
-          if (count.lines.some((x) => x.loc === loc && x.partNo === part!.partNo)) fail(`แถว ${i + 1}: ${part!.partNo} ที่ ${l.loc} ซ้ำในไฟล์`)
+          // เหมือน stock_count_submit (0022): part เดียวกันห้ามมีแถวที่ช่องซ้อนกัน (ช่องซ้ำ หรือโซนที่มีช่องนั้น)
+          const clash = count.lines.find((x) => x.partNo === part!.partNo && countLocations(x.loc, ctx)!.locs.some((c) => where!.locs.includes(c)))
+          if (clash)
+            fail(`แถว ${i + 1}: ${part!.partNo} ที่ ${loc} ซ้อนกับแถว ${clash.lineNo} (${clash.loc}) ในไฟล์เดียวกัน (ช่องเดียวกัน หรือโซนที่มีช่องนั้น) · part เดียวกันให้นับระดับเดียว: รายช่อง หรือทั้งโซน`)
           count.lines.push({ lineNo: i + 1, loc, zoneId: where!.zoneId, partNo: part!.partNo, systemQty: systemQty(db.lpns, where!.locs, part!.partNo), countedQty: l.counted, appliedQty: null })
         })
         db.counts.unshift(count)
@@ -1280,7 +1392,7 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         let changed = 0
         let newBoxes = 0
         const adj = (lpn: Lpn, item: Lpn['items'][number], from: number, to: number) =>
-          log({ kind: 'ADJ', docNo: c!.countNo, lpnId: lpn.id, lpnNo: lpn.lpnNo, lpnItemId: item.id, partNo: item.partNo, qty: from, newQty: to, reason, status: 'approved', createdCode: c!.createdCode, toLoc: lpn.locationCode })
+          log({ kind: 'ADJ', docNo: c!.countNo, lpnId: lpn.id, lpnNo: lpn.lpnNo, lpnItemId: item.id, partNo: item.partNo, qty: from, newQty: to, reason, status: 'approved', createdCode: c!.createdCode, toLoc: lpn.locationCode, decidedCode: ME, decidedAt: nowIso() })
         // ตรวจทุกบรรทัดก่อน (ไม่พอลด ⇒ ไม่ปรับเลยสักบรรทัด เหมือนธุรกรรมฝั่งฐานข้อมูล)
         for (const l of c!.lines) {
           const locs = countLocations(l.loc, ctx)!.locs

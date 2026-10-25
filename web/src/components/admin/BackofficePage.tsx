@@ -63,7 +63,7 @@ export function BackofficePage({ zones, onNavigate }: { zones: Zone[]; /** ไ�
         {tab === 'users' && <UsersPage />}
         {tab !== 'users' && (
           <div className="mx-auto flex max-w-[1400px] flex-col gap-4 px-4 py-4">
-            {tab === 'ready' && <ReadinessTab zones={zones} onGo={go} />}
+            {tab === 'ready' && <ReadinessTab zones={zones} onGo={go} canGo={(t) => t.kind !== 'admin' || tabs.some(([k]) => k === t.tab)} />}
             {tab === 'perms' && <PermissionsTab />}
             {tab === 'heads' && <ZoneHeadsTab zones={zones} />}
             {tab === 'master' && <MasterTab zones={zones} sub={masterSub} onSub={setMasterSub} />}
@@ -695,7 +695,7 @@ const READY_TONE = {
 }
 
 /** เช็กลิสต์ก่อนใช้งานจริง: คิดจากข้อมูลในระบบตอนนี้ · กดปุ่มไปยังหน้าที่ใช้แก้ */
-function ReadinessTab({ zones, onGo }: { zones: Zone[]; onGo: (t: ReadyTarget) => void }) {
+function ReadinessTab({ zones, onGo, canGo }: { zones: Zone[]; onGo: (t: ReadyTarget) => void; /** หน้าปลายทางมีในบัญชีนี้ไหม (หน้าสาธิตไม่มีหน้าผู้ใช้งาน) */ canGo: (t: ReadyTarget) => boolean }) {
   const { api, master, settings } = useWms()
   const [data, setData] = useState<{ staff: StaffBrief[]; boxes: number; countSheets: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -734,7 +734,7 @@ function ReadinessTab({ zones, onGo }: { zones: Zone[]; onGo: (t: ReadyTarget) =
       {data && (
         <ol className="flex flex-col gap-2">
           {items.map((i) => (
-            <ReadyRow key={i.id} item={i} onGo={onGo} />
+            <ReadyRow key={i.id} item={i} onGo={onGo} canGo={canGo(i.action.target)} />
           ))}
         </ol>
       )}
@@ -742,7 +742,7 @@ function ReadinessTab({ zones, onGo }: { zones: Zone[]; onGo: (t: ReadyTarget) =
   )
 }
 
-function ReadyRow({ item, onGo }: { item: ReadyItem; onGo: (t: ReadyTarget) => void }) {
+function ReadyRow({ item, onGo, canGo }: { item: ReadyItem; onGo: (t: ReadyTarget) => void; canGo: boolean }) {
   const tone = READY_TONE[item.ok === null ? 'manual' : item.ok ? 'ok' : 'todo']
   return (
     <li className="flex flex-wrap items-center gap-3 rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
@@ -765,9 +765,13 @@ function ReadyRow({ item, onGo }: { item: ReadyItem; onGo: (t: ReadyTarget) => v
           </div>
         )}
       </div>
-      <BigButton tone={item.ok ? 'ghost' : 'secondary'} onClick={() => onGo(item.action.target)}>
-        {item.action.label} →
-      </BigButton>
+      {canGo ? (
+        <BigButton tone={item.ok ? 'ghost' : 'secondary'} onClick={() => onGo(item.action.target)}>
+          {item.action.label} →
+        </BigButton>
+      ) : (
+        <span className="max-w-[220px] text-xs text-slate-500">หน้าสาธิตไม่มีบัญชีผู้ใช้จริง · ระบบจริง{item.action.label}ที่แท็บ "ผู้ใช้งาน & ประวัติเข้าใช้"</span>
+      )}
     </li>
   )
 }

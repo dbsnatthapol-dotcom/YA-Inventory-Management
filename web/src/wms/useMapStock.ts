@@ -25,7 +25,8 @@ export function useMapStock(enabled: boolean, layout: Pick<FactoryLayout, 'zones
       const [l, reqs, grns, tx] = await Promise.all([api.activeLpns(), api.listRequisitions(day, day), api.listGrns(200), api.recentTx(300)])
       if (!alive) return
       setLpns(l)
-      setActivity(todayActivity(reqs, grns, tx, day))
+      const ng = new Set(master.locations.filter((x) => x.kind === 'ng').map((x) => x.code))
+      setActivity(todayActivity(reqs, grns, tx, day, (code) => ng.has(code)))
       setLoaded(true)
     }
     const run = () => void load().catch(() => undefined)
@@ -35,7 +36,7 @@ export function useMapStock(enabled: boolean, layout: Pick<FactoryLayout, 'zones
       alive = false
       window.clearInterval(t)
     }
-  }, [api, enabled, ready, refreshKey])
+  }, [api, enabled, ready, refreshKey, master.locations])
   const stock = useMemo(() => buildZoneStock(lpns, master, layout), [lpns, master, layout])
   return { lpns, stock, activity, loaded }
 }

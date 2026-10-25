@@ -8,6 +8,7 @@ import type {
   ReceiptCheck,
   CycleActivity,
   DashActivity,
+  DocMatches,
   EnvSummary,
   Grn,
   GrnDetail,
@@ -34,6 +35,7 @@ import type {
   ScanIssueResult,
   StorageLoc,
   Tx,
+  TraceTx,
   ZoneRuleRow,
 } from './types'
 import type { LayoutSavePayload } from '../lib/layoutSave'
@@ -94,6 +96,12 @@ export interface WmsApi {
   recentTx(limit?: number, lpnId?: string): Promise<Tx[]>
   pendingAdjustments(): Promise<Tx[]>
   activeLpns(): Promise<Lpn[]>
+
+  // ตามรอยเอกสาร/กล่อง (อ่านอย่างเดียว)
+  /** เอกสารที่เลขตรงกับคำค้น (ไม่สนตัวพิมพ์เล็ก/ใหญ่): GRN (เลข GRN / Packing List / Invoice) · ใบตรวจรับ (เลขใบ / Packing List) · ใบเบิก (เลข RQ / เลขใบเบิกกระดาษ) */
+  findDocs(query: string): Promise<DocMatches>
+  /** รายการเคลื่อนไหวของกล่อง (lpnIds) หรือของใบเบิก (reqIds) เรียงเก่า → ใหม่ พร้อมใบรับของกล่องและใบเบิก */
+  traceTx(by: { lpnIds?: string[]; reqIds?: string[] }): Promise<TraceTx[]>
 
   invoiceView(query: string): Promise<InvoiceView | null>
   invoiceSetStatus(invoiceId: string, status: InvoiceStatus, note?: string): Promise<void>

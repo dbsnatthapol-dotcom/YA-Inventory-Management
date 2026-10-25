@@ -81,7 +81,7 @@ describe('line requisitions', () => {
     // กล่องเที่ยวแรกหมด เหลือเที่ยวสอง
     const bolts = lpns.filter((l) => l.items.some((i) => i.partNo === 'H6906002'))
     expect(bolts).toHaveLength(1)
-    await expect(api.postRequisition({ kind: 'line', docDate: today, lines: [{ partNo: 'H6906002', qty: 401 }] })).rejects.toThrow(/ไม่พอ/)
+    await expect(api.postRequisition({ kind: 'line', docDate: today, modelCode: 'TWIN', lines: [{ partNo: 'H6906002', qty: 401 }] })).rejects.toThrow(/ไม่พอ/)
     expect(qtyOf(await api.activeLpns(), 'H6906002')).toBe(400)
   })
 
@@ -121,9 +121,10 @@ describe('line requisitions', () => {
 describe('stock ledger (FM-P-537)', () => {
   it('builds the month sheet: opening, receipts normal/replacement, issues, QC and running stock', async () => {
     const api = await stocked()
-    const month = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Bangkok' }).slice(0, 7)
-    await api.postRequisition({ kind: 'line', docNo: 'MRA-01', docDate: '2026-10-15', modelCode: 'TWIN', lines: [{ partNo: 'H6906002', qty: 600 }] })
-    await api.postRequisition({ kind: 'qc', docDate: '2026-10-15', lines: [{ partNo: 'H6906002', qty: 5 }] })
+    const day = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Bangkok' })
+    const month = day.slice(0, 7)
+    await api.postRequisition({ kind: 'line', docNo: 'MRA-01', docDate: day, modelCode: 'TWIN', lines: [{ partNo: 'H6906002', qty: 600 }] })
+    await api.postRequisition({ kind: 'qc', docDate: day, lines: [{ partNo: 'H6906002', qty: 5 }] })
     const rows = await api.ledgerRows(['H6906002'], monthRange(month).to)
     const [sheet] = buildLedger(rows, [{ partNo: 'H6906002', name: 'BOLT', uamCode: null }], month)
     expect(sheet.opening).toBe(0)

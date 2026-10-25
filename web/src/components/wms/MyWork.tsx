@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useAuth } from '../../auth/useAuth'
 import { pendingAcks } from '../../wms/closing'
 import { CYCLE_REASON, type CyclePlan, type CycleSlot } from '../../wms/cycleCount'
+import { flowStages, type FlowKey } from '../../wms/flowBoard'
 import { fmt } from '../../wms/logic'
 import type { WorkBox } from '../../wms/myWork'
 import type { ReceiptCheck } from '../../wms/types'
@@ -9,6 +10,7 @@ import { useApprovals } from '../../wms/useApprovals'
 import { useMyWork } from '../../wms/useMyWork'
 import { usePrintQueue } from '../../wms/usePrintQueue'
 import { useWms } from '../../wms/useWms'
+import { FlowBoard } from './FlowBoard'
 import type { ScanMode } from './ScanTab'
 import { Alert, BigButton, Pill } from './ui'
 import type { WmsTab } from './WarehousePage'
@@ -22,6 +24,19 @@ interface Props {
   onOpenCheck?: (id: string) => void
   /** เปิดหน้าย้ายของจากรายการ (กล่องที่จุดรับของ) */
   onMove?: () => void
+  /** แตะขั้นในผังขั้นตอนงานที่หน้านี้ไม่มีรายการให้ทำ ⇒ ให้หน้าหลักพาไปหน้าจอของขั้นนั้น */
+  onFlow?: (key: FlowKey) => void
+}
+
+/** ขั้นที่ทำที่จอคอมเท่านั้น (มือถือบอกทางแทน) */
+const DESK_ONLY: Partial<Record<FlowKey, string>> = { fm005: 'กระทบ FM-P-005', close: 'ปิดยอด / รับทราบ FM-P-537' }
+const BOARD_KEY = 'uam-mywork-board'
+const readBoard = () => {
+  try {
+    return localStorage.getItem(BOARD_KEY) !== 'hide'
+  } catch {
+    return true
+  }
 }
 
 const SHOW = 5
@@ -29,52 +44,83 @@ const time = (iso: string) => new Date(iso).toLocaleTimeString('th-TH', { timeZo
 const dayLabel = (day: string) => new Date(`${day}T00:00:00+07:00`).toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok', weekday: 'long', day: 'numeric', month: 'long' })
 
 /** หน้าแรกของคนหน้างาน: งานที่ค้างอยู่ตอนนี้ตามสิทธิ์ของแต่ละคน · แตะรายการแล้วเริ่มงานได้ทันที */
-export function MyWork({ onScan, onTab, onOpenCheck, onMove }: Props) {
-  const { api, can, ready } = useWms()
+export function MyWork({ onScan, onTab, onOpenCheck, onMove, onFlow }: Props) {
+  const { api, can, ready, master } = useWms()
   const { profile } = useAuth()
   const [ver, setVer] = useState(0)
   const work = useMyWork(ver)
   const approvals = useApprovals(ready && can('scan.adjust.approve'), ver)
   const print = usePrintQueue(ready && can('label.print'), ver)
   const desk = !!onTab
-  // งานที่ทำที่จอคอม: Invoice ที่ยังไม่ปิด และปิดยอดที่รอรับทราบ
-  const [invoices, setInvoices] = useState<{ open: number; reported: number }>({ open: 0, reported: 0 })
-  const [acks, setAcks] = useState(0)
-  // ใบตรวจรับที่ยังตรวจไม่เสร็จ (ทุกคนช่วยตรวจได้)
-  const [checks, setChecks] = useState<ReceiptCheck[]>([])
+  // งานที่ทำที่จอคอม: Invoice ที่ยังไม่ปิด
+  const [invoices, setInvoices] = useState<{ open: number; reported: number; failed?: boolean }>({ open: 0, reported: 0 })
   useEffect(() => {
-    if (!ready || !can('receive.create')) return
+    if (!ready || !desk || !(can('invoice.close') || can('invoice.report'))) return
     let alive = true
     api
-      .listChecks()
-      .then((c) => alive && setChecks(c.filter((x) => x.status === 'open')))
-      .catch(() => undefined)
-    return () => {
-      alive = false
-    }
-  }, [api, ready, can, ver])
-  useEffect(() => {
-    if (!ready || !desk) return
-    let alive = true
-    if (can('invoice.close') || can('invoice.report'))
-      api
-        .listInvoices(100)
-        .then((list) => alive && setInvoices({ open: list.filter((i) => i.status === 'open').length, reported: list.filter((i) => i.status === 'discrepancy_reported').length }))
-        .catch(() => undefined)
-    if (can('ledger.ack.planning') || can('ledger.ack.account'))
-      api
-        .listClosings()
-        .then((c) => alive && setAcks(pendingAcks(c, can).length))
-        .catch(() => undefined)
+      .listInvoices(100)
+      .then((list) => alive && setInvoices({ open: list.filter((i) => i.status === 'open').length, reported: list.filter((i) => i.status === 'discrepancy_reported').length }))
+      .catch(() => alive && setInvoices((v) => ({ ...v, failed: true })))
     return () => {
       alive = false
     }
   }, [api, ready, desk, can, ver])
+  // ใบตรวจรับที่ยังตรวจไม่เสร็จ (ทุกคนช่วยตรวจได้) และปิดยอดที่รอคนนี้รับทราบ · โหลดมากับงานวันนี้
+  const snap = work.snap
+  const checks = useMemo<ReceiptCheck[]>(() => snap?.checks?.filter((c) => c.status === 'open') ?? [], [snap])
+  const acks = desk && snap?.closings ? pendingAcks(snap.closings, can).length : 0
+
+  // ผังขั้นตอนงาน: ตัวเลขชุดเดียวกับรายการด้านล่าง
+  const printable = can('label.print')
+  const stages = useMemo(
+    () =>
+      snap && work.queues
+        ? flowStages(
+            {
+              today: snap.today,
+              lpns: snap.lpns,
+              locations: master.locations,
+              checks: snap.checks,
+              grns: snap.grns,
+              reqs: snap.reqs,
+              closings: snap.closings,
+              printQueued: printable ? print.queued.length : null,
+            },
+            work.queues,
+          )
+        : null,
+    [snap, work.queues, master.locations, printable, print.queued.length],
+  )
+  const [board, setBoard] = useState(readBoard)
+  const toggleBoard = () => {
+    setBoard((b) => {
+      try {
+        localStorage.setItem(BOARD_KEY, b ? 'hide' : 'show')
+      } catch {
+        // ไม่มีที่เก็บ: จำเฉพาะรอบนี้
+      }
+      return !b
+    })
+  }
+  const [deskOnly, setDeskOnly] = useState<string | null>(null)
+  const pickStage = (k: FlowKey) => {
+    setDeskOnly(null)
+    // ใบตรวจรับค้างใบเดียว ⇒ เปิดใบนั้นเลย
+    if (k === 'check' && checks.length === 1 && onOpenCheck) return onOpenCheck(checks[0].id)
+    // ขั้นที่มีรายการในหน้านี้ ⇒ เลื่อนลงไปที่รายการ
+    const section = ({ check: 'checks', qi: 'qi', put: 'put', ng: 'ng' } as Partial<Record<FlowKey, string>>)[k]
+    const el = section ? document.getElementById(`work-${section}`) : null
+    if (el) return el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    if (!desk && DESK_ONLY[k]) return setDeskOnly(DESK_ONLY[k]!)
+    onFlow?.(k)
+  }
 
   const q = work.queues
-  const sections: { key: string; count: number; node: ReactNode }[] = []
+  // deskOnly = มือถือดูได้แต่ทำที่จอคอม (ไม่นับรวมในงานค้างของคนหน้างาน)
+  // failed = โหลดข้อมูลของส่วนนี้ไม่ได้ (ต้องไม่บอกว่า "ไม่มีงานค้าง")
+  const sections: { key: string; count: number; node: ReactNode; deskOnly?: boolean; failed?: boolean }[] = []
   if (can('receive.create'))
-    sections.push({ key: 'checks', count: checks.length, node: <CheckSection checks={checks} onOpen={onOpenCheck} /> })
+    sections.push({ key: 'checks', count: checks.length, failed: !!snap && snap.checks === null, node: <CheckSection checks={checks} onOpen={onOpenCheck} /> })
   if (q && can('scan.qi'))
     sections.push({
       key: 'qi',
@@ -114,6 +160,8 @@ export function MyWork({ onScan, onTab, onOpenCheck, onMove }: Props) {
     sections.push({
       key: 'approve',
       count: approvals.total,
+      failed: !!approvals.error,
+      deskOnly: !desk,
       node: (
         <DeskSection
           title="รออนุมัติปรับยอด"
@@ -128,6 +176,8 @@ export function MyWork({ onScan, onTab, onOpenCheck, onMove }: Props) {
     sections.push({
       key: 'print',
       count: print.queued.length,
+      failed: !!print.error,
+      deskOnly: !desk,
       node: (
         <DeskSection
           title="คิวพิมพ์ป้าย"
@@ -145,14 +195,17 @@ export function MyWork({ onScan, onTab, onOpenCheck, onMove }: Props) {
     sections.push({
       key: 'invoice',
       count: invoices.open,
+      failed: invoices.failed,
       node: <DeskSection title="Invoice ยังรับไม่ครบ" count={invoices.open} detail={invoices.reported ? `แจ้งผู้ขายแล้วรอของ ${invoices.reported}` : 'ตรวจยอดรับกับ Invoice แล้วปิด หรือแจ้งผู้ขาย'} action="กระทบยอด" onGo={() => onTab('invoice')} />,
     })
   if (onTab && (can('ledger.ack.planning') || can('ledger.ack.account')))
-    sections.push({ key: 'ack', count: acks, node: <DeskSection title="ปิดยอดเดือน รอคุณรับทราบ" count={acks} detail="บัญชีคุม FM-P-537" action="ไปรับทราบ" onGo={() => onTab('ledger')} /> })
+    sections.push({ key: 'ack', count: acks, failed: !!snap && snap.closings === null, node: <DeskSection title="ปิดยอดเดือน รอคุณรับทราบ" count={acks} detail="บัญชีคุม FM-P-537" action="ไปรับทราบ" onGo={() => onTab('ledger')} /> })
 
   const busy = sections.filter((s) => s.count > 0)
-  const idle = sections.filter((s) => s.count === 0)
-  const total = busy.reduce((s, x) => s + x.count, 0)
+  const idle = sections.filter((s) => s.count === 0 && !s.failed)
+  const failed = sections.filter((s) => s.failed && s.count === 0)
+  const total = busy.filter((x) => !x.deskOnly).reduce((s, x) => s + x.count, 0)
+  const atDesk = busy.filter((x) => x.deskOnly).reduce((s, x) => s + x.count, 0)
 
   return (
     <div className="flex flex-col gap-3">
@@ -164,22 +217,44 @@ export function MyWork({ onScan, onTab, onOpenCheck, onMove }: Props) {
             {work.at && ` · อัปเดต ${time(work.at)} น.`}
           </p>
         </div>
-        <span className={`rounded-full px-3 py-1 text-sm font-semibold ring-1 ${total ? 'bg-amber-50 text-amber-800 ring-amber-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200'}`}>
-          {total ? `ค้าง ${fmt(total)} รายการ` : '✓ ไม่มีงานค้าง'}
+        <span
+          className={`rounded-full px-3 py-1 text-sm font-semibold ring-1 ${
+            !work.at ? (work.error ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-slate-50 text-slate-500 ring-slate-200') : total ? 'bg-amber-50 text-amber-800 ring-amber-200' : failed.length ? 'bg-slate-50 text-slate-600 ring-slate-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+          }`}
+        >
+          {!work.at ? (work.error ? 'โหลดงานไม่สำเร็จ' : 'กำลังโหลด…') : total ? `ค้าง ${fmt(total)} รายการ` : failed.length ? 'โหลดงานไม่ครบ' : '✓ ไม่มีงานค้าง'}
         </span>
+        {atDesk > 0 && (
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-600 ring-1 ring-slate-200" title="งานที่ทำที่จอคอม (คิวพิมพ์ / อนุมัติ) ไม่นับรวมงานค้างหน้างาน">
+            รอที่คอม {fmt(atDesk)}
+          </span>
+        )}
         <BigButton tone="secondary" onClick={() => setVer((v) => v + 1)}>
           ↻ อัปเดต
         </BigButton>
       </section>
 
+      {stages && (
+        <div className="flex flex-col gap-1">
+          {board && <FlowBoard stages={stages} compact={!desk} onPick={pickStage} />}
+          <button className="self-end px-1 text-xs font-semibold text-sky-700" onClick={toggleBoard} aria-expanded={board}>
+            {board ? 'ซ่อนผังขั้นตอนงาน ▲' : 'แสดงผังขั้นตอนงาน ▼'}
+          </button>
+          {deskOnly && <Alert tone="info">{deskOnly} ทำที่จอคอม: เมนู ☰ › สลับเป็นโหมดคอม › งานคลัง</Alert>}
+        </div>
+      )}
+
       {work.error && <Alert tone="bad">โหลดงานไม่สำเร็จ: {work.error}</Alert>}
+      {work.at && failed.length > 0 && (
+        <Alert tone="warn">โหลดไม่ได้: {failed.map((s) => SECTION_NAME[s.key]).join(' · ')} · อาจมีงานค้างที่ยังไม่แสดง กด ↻ อัปเดต</Alert>
+      )}
       {!sections.length && <Alert tone="info">บัญชีนี้ยังไม่มีงานหน้างาน · ดูภาพรวมหรือผังคลังได้จากเมนู</Alert>}
       {!work.at && !work.error && sections.length > 0 && <p className="py-8 text-center text-slate-500">กำลังโหลดงาน…</p>}
 
       <div className="grid gap-3 lg:grid-cols-2">
         {work.at &&
           busy.map((s) => (
-            <div key={s.key} className="min-w-0">
+            <div key={s.key} id={`work-${s.key}`} className="min-w-0 scroll-mt-3">
               {s.node}
             </div>
           ))}
@@ -243,8 +318,8 @@ function BoxSection({ title, hint, boxes, action, onPick, extra }: { title: stri
         ))}
       </ul>
       {boxes.length > SHOW && (
-        <button className="self-start text-sm font-semibold text-sky-700" onClick={() => setAll((a) => !a)}>
-          {all ? 'ย่อ' : `ดูทั้งหมด ${boxes.length} กล่อง`}
+        <button className="min-h-[44px] self-start px-1 text-sm font-semibold text-sky-700" onClick={() => setAll((a) => !a)}>
+          {all ? 'ย่อ ▲' : `ดูทั้งหมด ${boxes.length} กล่อง ▼`}
         </button>
       )}
       {extra}
@@ -320,13 +395,13 @@ function CycleSection({ plan, onCount }: { plan: CyclePlan | null; onCount: (lpn
         </ul>
       )}
       {plan.slots.length > shown.length && (
-        <button className="self-start text-sm font-semibold text-sky-700" onClick={() => setAll(true)}>
-          ดูทั้งหมด {plan.slots.length} ช่อง
+        <button className="min-h-[44px] self-start px-1 text-sm font-semibold text-sky-700" onClick={() => setAll(true)}>
+          ดูทั้งหมด {plan.slots.length} ช่อง ▼
         </button>
       )}
       {all && (
-        <button className="self-start text-sm font-semibold text-sky-700" onClick={() => setAll(false)}>
-          ย่อ
+        <button className="min-h-[44px] self-start px-1 text-sm font-semibold text-sky-700" onClick={() => setAll(false)}>
+          ย่อ ▲
         </button>
       )}
     </Shell>

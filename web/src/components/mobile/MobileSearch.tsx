@@ -109,12 +109,14 @@ function HitCard({ hit, onScanLpn, onShowZone }: { hit: StockHit; onScanLpn: (lp
             <div className="min-w-0 flex-1">
               <div className="font-mono text-sm font-semibold text-slate-800">{hit.kind === 'part' ? b.location : b.partNo}</div>
               <div className="truncate text-xs text-slate-500">
-                {[b.caseNo ? `เคส ${b.caseNo}` : null, b.lpnNo, `${fmt(b.qty)} ชิ้น`, hit.kind === 'place' || hit.kind === 'doc' ? b.location : null, b.hold ? 'รอ MI3' : null].filter(Boolean).join(' · ')}
+                {/* ค้นจากช่อง / PL + เคส: รหัสช่องขึ้นต้นบรรทัด (จอแคบตัดท้ายบรรทัดแล้วยังเห็นว่าอยู่ช่องไหน) */}
+                {(hit.kind === 'place' || hit.kind === 'doc') && <b className="font-mono text-slate-700">{b.location} · </b>}
+                {[b.caseNo ? `เคส ${b.caseNo}` : null, b.lpnNo, `${fmt(b.qty)} ชิ้น`, b.hold ? 'รอ MI3' : null].filter(Boolean).join(' · ')}
               </div>
             </div>
             {b.zoneId && hit.kind === 'part' && <MapButton small onClick={() => onShowZone(b.zoneId!, [b.lpnNo])} />}
-            <button className="min-h-[40px] rounded-lg px-3 text-sm font-semibold text-sky-700 ring-1 ring-sky-200" onClick={() => onScanLpn(b.lpnNo)}>
-              เปิด
+            <button className="min-h-[44px] rounded-lg px-3 text-sm font-semibold text-sky-700 ring-1 ring-sky-200" onClick={() => onScanLpn(b.lpnNo)}>
+              เปิดดู
             </button>
           </li>
         ))}
@@ -127,7 +129,7 @@ function HitCard({ hit, onScanLpn, onShowZone }: { hit: StockHit; onScanLpn: (lp
 
 function MapButton({ onClick, small }: { onClick: () => void; small?: boolean }) {
   return (
-    <button className={`rounded-lg font-semibold text-emerald-700 ring-1 ring-emerald-200 ${small ? 'min-h-[40px] px-2 text-xs' : 'min-h-[40px] px-3 text-sm'}`} onClick={onClick}>
+    <button className={`rounded-lg font-semibold text-emerald-700 ring-1 ring-emerald-200 ${small ? 'min-h-[44px] px-2 text-xs' : 'min-h-[44px] px-3 text-sm'}`} onClick={onClick}>
       📍 ผัง
     </button>
   )

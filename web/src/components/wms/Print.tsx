@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { PrintFormat } from '../../wms/labels'
-import { BigButton, Field, inputCls } from './ui'
+import { Alert, BigButton, Field, inputCls } from './ui'
 
 const PAGE_CSS: Record<PrintFormat, string> = {
   label: '@page { size: 100mm 150mm; margin: 0 }',
@@ -21,6 +21,7 @@ export function PrintDialog({
   subtitle,
   printLabel,
   onPrinted,
+  notice,
   initialCopies = 1,
   children,
 }: {
@@ -30,23 +31,25 @@ export function PrintDialog({
   title: string
   subtitle: string
   printLabel: string
-  /** หลังหน้าต่างพิมพ์ของเครื่องปิด (ใช้ปิดงานในคิวพิมพ์) */
+  /** หลังพิมพ์ออกครบ (ใช้ปิดงานในคิวพิมพ์) · ถามคนพิมพ์ก่อน เพราะกดยกเลิกหน้าต่างพิมพ์ก็นับว่าหน้าต่างปิด */
   onPrinted?: () => void
+  /** ข้อความเตือนเหนือตัวอย่าง (เช่น จำนวนป้ายไม่ตรงงานในคิว) */
+  notice?: string | null
   initialCopies?: number
   children: ReactNode
 }) {
   const [printing, setPrinting] = useState(false)
+  const [asking, setAsking] = useState(false)
   const [copies, setCopies] = useState(initialCopies)
-  const printed = useRef(onPrinted)
-  useEffect(() => {
-    printed.current = onPrinted
-  }, [onPrinted])
+  const ask = !!onPrinted
+  // ย่อตัวอย่างให้พอดีจอแคบ: กว้างหน้า (มม. × 3.78 px) + ขอบของหน้าต่างนี้
+  const fit = typeof window === 'undefined' ? 1 : Math.min(1, (window.innerWidth - 88) / ((format === 'label' ? 100 : 210) * 3.78))
 
   useEffect(() => {
     if (!printing) return
     const done = () => {
       setPrinting(false)
-      printed.current?.()
+      if (ask) setAsking(true)
     }
     window.addEventListener('afterprint', done)
     // รอให้ portal วาดเสร็จก่อนเปิดหน้าต่างพิมพ์ของเครื่อง
@@ -55,7 +58,7 @@ export function PrintDialog({
       window.clearTimeout(t)
       window.removeEventListener('afterprint', done)
     }
-  }, [printing])
+  }, [printing, ask])
 
   useEffect(() => {
     if (!open) return
@@ -90,14 +93,40 @@ export function PrintDialog({
               หน้าต่างพิมพ์ของเครื่องจะเปิดขึ้น · เลือกเครื่องพิมพ์ {format === 'label' ? 'ฉลาก (กระดาษ 100×150 มม.)' : 'A4'} แล้วกดพิมพ์
             </p>
           </div>
+          {notice && (
+            <div className="mx-5 mt-3">
+              <Alert tone="warn">{notice}</Alert>
+            </div>
+          )}
           <div className="m-5 mt-3 min-h-0 flex-1 overflow-auto rounded-xl bg-slate-100 p-4">
-            <div className="flex flex-wrap justify-center gap-4">{children}</div>
+            {/* safe center: หน้า A4 กว้างกว่าจอมือถือต้องเลื่อนดูได้ทั้งสองข้าง · จอแคบย่อให้พอดีความกว้าง (ตอนพิมพ์ใช้ขนาดจริง) */}
+            <div className="flex flex-wrap gap-4 [justify-content:safe_center]" style={fit < 1 ? { zoom: fit } : undefined}>
+              {children}
+            </div>
           </div>
-          <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-5 py-3">
-            <BigButton className="min-w-[180px] !py-3 text-base" onClick={() => setPrinting(true)}>
-              {printLabel}
-            </BigButton>
-          </div>
+          {asking ? (
+            <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-200 bg-amber-50 px-5 py-3">
+              <span className="mr-auto text-sm font-semibold text-amber-900">พิมพ์ออกจากเครื่องครบแล้วหรือยัง? (ถ้ากดยกเลิกในหน้าต่างพิมพ์ = ยังไม่ได้พิมพ์)</span>
+              <BigButton tone="secondary" onClick={() => setAsking(false)}>
+                ยังไม่ออก · พิมพ์ใหม่
+              </BigButton>
+              <BigButton
+                className="!py-3 text-base"
+                onClick={() => {
+                  setAsking(false)
+                  onPrinted?.()
+                }}
+              >
+                ออกครบแล้ว · ปิดงาน
+              </BigButton>
+            </div>
+          ) : (
+            <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-5 py-3">
+              <BigButton className="min-w-[180px] !py-3 text-base" onClick={() => setPrinting(true)}>
+                {printLabel}
+              </BigButton>
+            </div>
+          )}
         </div>
       </div>
       {printing &&

@@ -10,8 +10,10 @@ import { PrintDialog } from './Print'
 import { usePrintQueue } from '../../wms/usePrintQueue'
 import { PrintQueue } from './PrintQueue'
 import { Alert, BigButton, Card, inputCls, Pill, Segmented, tdCls, thCls } from './ui'
+import { TraceButton } from './TraceButton'
+import { boxPlace } from '../../wms/trace'
 
-const dateTime = (iso: string) => new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+const dateTime = (iso: string) => new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' })
 
 export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSelectGrn: (id: string) => void }) {
   const { api, master, settings, can } = useWms()
@@ -28,6 +30,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
   const [qver, setQver] = useState(0)
   const queue = usePrintQueue(!mobile && can('label.print'), qver)
   const [job, setJob] = useState<PrintJob | null>(null)
+  const [jobNote, setJobNote] = useState<string | null>(null)
   const jobRef = useRef<PrintJob | null>(null)
 
   useEffect(() => {
@@ -55,16 +58,32 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
     }
   }, [api, grnId])
 
-  // งานจากคิว: โหลด GRN ของงาน เลือกป้ายตามงาน แล้วเปิดตัวอย่างก่อนพิมพ์
+  // งานจากคิว: โหลด GRN ของงานใหม่ทุกครั้ง (ยอด/กล่องอาจเปลี่ยนหลังส่งงาน) เลือกป้ายตามงาน แล้วเปิดตัวอย่างก่อนพิมพ์
   const startJob = async (j: PrintJob) => {
     try {
-      const d = detail?.grn.id === j.grnId ? detail : await api.grnDetail(j.grnId)
+      const d = await api.grnDetail(j.grnId)
       if (!d) return setMsg({ tone: 'bad', text: 'ไม่พบใบรับสินค้าของงานนี้' })
+      const active = d.lpns.filter((l) => l.status === 'active')
+      const ids = j.lpnIds.length ? j.lpnIds.filter((id) => active.some((l) => l.id === id)) : active.map((l) => l.id)
+      // ป้ายในงานที่ใช้ไม่ได้แล้ว (รวม/แยก/ยกเลิก) + กล่องในใบรับที่ไม่อยู่ในงาน (เช่น กล่องที่แยกหลังส่งงาน)
+      const gone = j.lpnIds.length - ids.length
+      if (j.format !== 'a4' && !ids.length) return setMsg({ tone: 'bad', text: `ป้ายในงาน "${j.title ?? 'ป้ายกล่อง'}" ถูกรวม/แยก/ยกเลิกไปหมดแล้ว · ยกเลิกงานนี้ แล้วเลือกพิมพ์ป้ายกล่องปัจจุบัน` })
+      const others = j.lpnIds.length ? active.filter((l) => !j.lpnIds.includes(l.id)) : []
+      setJobNote(
+        gone || others.length
+          ? [
+              gone ? `งานนี้ส่งมา ${j.lpnIds.length} ป้าย · ใช้ได้ ${ids.length} ป้าย (อีก ${gone} ป้ายถูกรวม/แยก/ยกเลิกไปแล้ว)` : '',
+              others.length ? `ใบรับนี้มีกล่องที่ไม่อยู่ในงาน ${others.length} กล่อง (${others.slice(0, 4).map((l) => l.lpnNo).join(', ')}${others.length > 4 ? ' …' : ''}) · ถ้าเป็นกล่องที่รวม/แยกหลังส่งงาน ให้ปิดหน้านี้แล้วเลือกพิมพ์เพิ่ม` : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')
+          : null,
+      )
       jobRef.current = j
       setJob(j)
       setFormat(j.format)
       setDetail(d)
-      setSelected(new Set(j.lpnIds.length ? j.lpnIds : d.lpns.filter((l) => l.status === 'active').map((l) => l.id)))
+      setSelected(new Set(ids))
       if (d.grn.id !== grnId) onSelectGrn(j.grnId)
       setPrintOpen(true)
     } catch (e) {
@@ -74,6 +93,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
   const endJob = () => {
     jobRef.current = null
     setJob(null)
+    setJobNote(null)
   }
   const cancelJob = async (j: PrintJob) => {
     if (!window.confirm(`ยกเลิกงานพิมพ์ "${j.title ?? 'ป้ายกล่อง'}"?`)) return
@@ -115,9 +135,15 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
   const lpns = detail?.lpns ?? []
   const isVoid = detail?.grn.status === 'void'
   const chosen = lpns.filter((l) => selected.has(l.id))
+  const inNgArea = (l: Lpn) => master.locations.find((x) => x.code === l.locationCode)?.kind === 'ng'
+  // เหมือน merge_lpns (0022): กล่อง NG รวมกับกล่องของดีไม่ได้ (กล่องรวมจะหลุดออกจากพื้นที่กัก NG)
+  const mixedNg = chosen.some(inNgArea) && chosen.some((l) => !inNgArea(l))
   const ctx: LabelContext = { grn: detail?.grn ?? null, lines: detail?.lines ?? [], master, trial: settings.mode === 'trial' }
   const count = format === 'a4' ? 1 : chosen.length
   const sheets = Math.ceil(chosen.length / 4)
+  // ปุ่มเดียว: เลือกครบแล้ว ⇒ ล้าง · ยังไม่ครบ ⇒ เลือกทั้งหมด (ข้อความตรงกับสิ่งที่ทำ)
+  const activeLpns = lpns.filter((l) => l.status === 'active')
+  const allPicked = activeLpns.length > 0 && activeLpns.every((l) => selected.has(l.id))
 
   const toggle = (id: string) =>
     setSelected((s) => {
@@ -280,18 +306,27 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
                     </BigButton>
                   )}
                   {!isVoid && (
-                    <BigButton tone="secondary" onClick={() => setSelected(new Set(selected.size === lpns.filter((l) => l.status === 'active').length ? [] : lpns.filter((l) => l.status === 'active').map((l) => l.id)))}>
-                      {selected.size ? 'ล้างที่เลือก' : 'เลือกทั้งหมด'}
+                    <BigButton tone="secondary" onClick={() => setSelected(new Set(allPicked ? [] : activeLpns.map((l) => l.id)))}>
+                      {allPicked ? 'ล้างที่เลือก' : `เลือกทั้งหมด (${activeLpns.length})`}
                     </BigButton>
                   )}
                   {can('label.print') && !isVoid && (
-                    <BigButton tone="secondary" disabled={busy || chosen.length < 2} onClick={merge} title="ย้ายของหลาย part มารวมในกล่องเดียว แล้วออกป้ายใหม่ 1 ใบ">
+                    <BigButton
+                      tone="secondary"
+                      disabled={busy || chosen.length < 2 || mixedNg}
+                      onClick={merge}
+                      title={mixedNg ? 'กล่อง NG รวมกับกล่องของดีไม่ได้' : 'ย้ายของหลาย part มารวมในกล่องเดียว แล้วออกป้ายใหม่ 1 ใบ'}
+                    >
                       รวม {chosen.length > 1 ? chosen.length : ''} ป้ายเป็นกล่องเดียว
                     </BigButton>
+                  )}
+                  {can('label.print') && !isVoid && mixedNg && (
+                    <span className="self-center text-xs font-medium text-amber-800">รวมกล่อง NG กับกล่องของดีไม่ได้ · เลือกเฉพาะกล่อง NG หรือเฉพาะของดี</span>
                   )}
                 </div>
               }
             >
+              <GrnProgress lpns={lpns} grnNo={detail.grn.grnNo} />
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
                 {lpns.map((l) => {
                   const single = l.items.length === 1 ? l.items[0] : null
@@ -309,18 +344,18 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
                         <span className="mt-1 flex flex-wrap gap-1">
                           <Pill tone="muted">{l.lpnNo}</Pill>
                           {l.hold ? <Pill tone="mi3">รอ MI3</Pill> : l.status === 'empty' ? <Pill tone="muted">ใช้หมดแล้ว</Pill> : null}
-                          {master.locations.find((x) => x.code === l.locationCode)?.kind === 'ng' && <Pill tone="bad">NG · เสียหาย → {l.locationCode}</Pill>}
+                          {inNgArea(l) && <Pill tone="bad">NG · เสียหาย → {l.locationCode}</Pill>}
                         </span>
                       </span>
                       <span className="font-mono font-semibold">{fmt(qty)}</span>
                     </label>
                     {can('label.print') && l.status === 'active' && (
                       <div className="flex flex-wrap gap-2 border-t border-slate-200 px-3 py-2">
-                        <button type="button" className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium hover:bg-slate-100 disabled:opacity-40" disabled={busy || qty < 2} onClick={() => setSplitting(l)}>
+                        <button type="button" className="min-h-[40px] rounded-md border border-slate-300 bg-white px-3 text-sm font-medium hover:bg-slate-100 disabled:opacity-40" disabled={busy || qty < 2} onClick={() => setSplitting(l)}>
                           แยกกล่อง
                         </button>
                         {l.items.some((i) => i.prevLpnId) && (
-                          <button type="button" className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium hover:bg-slate-100 disabled:opacity-40" disabled={busy} onClick={() => unmerge(l)}>
+                          <button type="button" className="min-h-[40px] rounded-md border border-slate-300 bg-white px-3 text-sm font-medium hover:bg-slate-100 disabled:opacity-40" disabled={busy} onClick={() => unmerge(l)}>
                             ยกเลิกการรวม
                           </button>
                         )}
@@ -395,6 +430,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
             endJob()
           }}
           onPrinted={job ? () => void printed() : undefined}
+          notice={jobNote}
           initialCopies={job?.copies ?? 1}
           format={format}
           title={job ? `พิมพ์งานจากคิว · ${job.title ?? ''}` : 'ตัวอย่างก่อนพิมพ์'}
@@ -502,6 +538,25 @@ function SplitDialog({
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+/** ใบนี้ไปถึงไหนแล้ว: กล่องอยู่ขั้นไหนบ้าง + ปุ่มตามรอยทั้งสาย */
+function GrnProgress({ lpns, grnNo }: { lpns: Lpn[]; grnNo: string }) {
+  const { master } = useWms()
+  const n = { store: 0, staging: 0, mi3: 0, ng: 0, gone: 0 }
+  for (const l of lpns) n[boxPlace(l, master.locations)]++
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-sm">
+      <span className="text-xs font-semibold text-slate-500">กล่องของใบนี้ตอนนี้:</span>
+      {n.staging > 0 && <Pill tone="warn">รอจัดเก็บ {n.staging}</Pill>}
+      {n.mi3 > 0 && <Pill tone="mi3">รอ MI3 {n.mi3}</Pill>}
+      {n.store > 0 && <Pill tone="ok">ในช่องเก็บ {n.store}</Pill>}
+      {n.ng > 0 && <Pill tone="bad">NG {n.ng}</Pill>}
+      {n.gone > 0 && <Pill tone="muted">ใช้หมด / ปิด {n.gone}</Pill>}
+      {!lpns.length && <Pill tone="muted">ไม่มีกล่อง</Pill>}
+      <TraceButton query={grnNo} label="ตามรอยใบนี้" className="ml-auto" />
     </div>
   )
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { errorText } from './api'
 import type { StockCount, Tx } from './types'
 import { useWms } from './useWms'
 
@@ -9,6 +10,7 @@ export function useApprovals(enabled: boolean, ver = 0) {
   const { api } = useWms()
   const [adj, setAdj] = useState<Tx[]>([])
   const [sheets, setSheets] = useState<StockCount[]>([])
+  const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     if (!enabled) return
     let alive = true
@@ -18,8 +20,9 @@ export function useApprovals(enabled: boolean, ver = 0) {
           if (!alive) return
           setAdj(a)
           setSheets(c)
+          setError(null)
         })
-        .catch(() => undefined)
+        .catch((e) => alive && setError(errorText(e)))
     void load()
     const t = window.setInterval(load, POLL_MS)
     return () => {
@@ -28,5 +31,5 @@ export function useApprovals(enabled: boolean, ver = 0) {
     }
   }, [api, enabled, ver])
   const pendingSheets = sheets.filter((c) => c.status === 'pending')
-  return { adj, sheets, pendingSheets, total: adj.length + pendingSheets.length }
+  return { adj, sheets, pendingSheets, total: adj.length + pendingSheets.length, error }
 }

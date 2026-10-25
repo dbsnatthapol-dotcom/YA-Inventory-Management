@@ -32,7 +32,9 @@ describe('map stock from warehouse boxes', () => {
   it('summarises good stock, boxes, rack usage, MI3 queue and NG for the map header', () => {
     const s = mapStats(sampleLayout, stock, NO_ACTIVITY)
     expect(s.boiQty).toBe(9050 + 200)
-    expect(s.pallets).toBe(5)
+    // กล่องของดีเท่านั้น (นิยามเดียวกับหน้าภาพรวม) · ที่เหลืออยู่ในองค์ประกอบสต็อก
+    expect(s.pallets).toBe(3)
+    expect(s.mix).toEqual({ ready: { boxes: 3, qty: 9250 }, putaway: { boxes: 0, qty: 0 }, mi3: { boxes: 1, qty: 60 }, ng: { boxes: 1, qty: 20 } })
     expect([s.pendingQcQty, s.pendingQcBoxes, s.ngWaitingQty]).toEqual([60, 1, 20])
     expect(s.usedSlots).toBe(3)
     expect(s.usedSlots).toBeLessThanOrEqual(s.slots)
@@ -51,11 +53,16 @@ describe('map stock from warehouse boxes', () => {
       req('fm005', '2026-10-14', [[300, 150]]),
       req('qc', '2026-10-14', [[10, 10]]),
     ]
-    const grns = ['2026-10-14T03:00:00Z', '2026-10-13T20:00:00Z', '2026-10-13T03:00:00Z'].map((receivedAt) => ({ receivedAt }) as Grn)
+    const grn = (receivedAt: string, grnNo = 'GRN-2610-0001', status: Grn['status'] = 'active') => ({ receivedAt, grnNo, status }) as Grn
+    // ใบที่ยกเลิก และเอกสารกล่องจากการตรวจนับ (CNT-) ไม่นับ (C3)
+    const grns = [grn('2026-10-14T03:00:00Z'), grn('2026-10-13T20:00:00Z'), grn('2026-10-13T03:00:00Z'), grn('2026-10-14T05:00:00Z', 'GRN-2610-0009', 'void'), grn('2026-10-14T06:00:00Z', 'CNT-2610-0001')]
     const tx = [
       { kind: 'QI', ngQty: 5, createdAt: '2026-10-14T04:00:00Z' },
       { kind: 'QI', ngQty: 3, createdAt: '2026-10-13T04:00:00Z' },
-    ] as Tx[]
-    expect(todayActivity(reqs, grns, tx, '2026-10-14')).toEqual({ issuedToday: 300, receiptsToday: 2, ngFoundToday: 5 })
+      // เสียหายตอนตรวจรับ → กล่อง NG (นับรวมกับ NG ของ MI3) · รับเข้าช่องปกติไม่นับ
+      { kind: 'RECEIVE', qty: 4, toLoc: 'NG-HOLD', createdAt: '2026-10-14T03:00:00Z' },
+      { kind: 'RECEIVE', qty: 90, toLoc: 'RCV-01', createdAt: '2026-10-14T03:00:00Z' },
+    ] as unknown as Tx[]
+    expect(todayActivity(reqs, grns, tx, '2026-10-14', (c) => c === 'NG-HOLD')).toEqual({ issuedToday: 300, receiptsToday: 2, ngFoundToday: 9 })
   })
 })

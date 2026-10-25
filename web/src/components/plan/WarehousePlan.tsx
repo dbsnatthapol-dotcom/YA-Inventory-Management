@@ -11,6 +11,7 @@ import { pad } from '../../wms/locations'
 import { fmt } from '../../wms/logic'
 import { buildZoneStock } from '../../wms/mapStock'
 import { buildSlotMap, findSlot, SLOT_LABEL, SLOT_STATUS, spotAt, sumCounts, type Slot, type SlotBox, type SlotStatus, type Spot, type ZoneSlots } from '../../wms/slotMap'
+import { STOCK_PART_LABEL, STOCK_PARTS, stockMix, stockPartOf } from '../../wms/stockMix'
 import type { Lpn } from '../../wms/types'
 import { useWms } from '../../wms/useWms'
 import { PlanCanvas } from '../layout-editor/PlanCanvas'
@@ -224,6 +225,14 @@ export function WarehousePlan({ layout, lpns, error, focus, highlight, onOpenLpn
   const marks = tab === 'route' && zone ? [...pin(from, '#16a34a', 'A'), ...pin(zone, '#dc2626', 'B')] : undefined
 
   const floorStats = useMemo(() => sumCounts([...slotMap.zones.values()].filter((z) => z.floorId === floor.id)), [slotMap, floor.id])
+  // องค์ประกอบสต็อกของชั้นนี้ (นิยามเดียวกับหน้าภาพรวม / ผัง 3D)
+  const floorMix = useMemo(() => {
+    const kinds = new Map(layout.zones.map((z) => [z.id, z.kind]))
+    const parts = [...slotMap.zones.values()]
+      .filter((z) => z.floorId === floor.id)
+      .flatMap((zs) => [...zs.spots.flatMap((s) => s.levels.flatMap((l) => l.boxes)), ...zs.extra.flatMap((s) => s.boxes), ...zs.loose].map((b) => ({ part: stockPartOf(b.hold, kinds.get(zs.zoneId)), qty: b.qty })))
+    return stockMix(parts)
+  }, [slotMap, floor.id, layout.zones])
   const summary = useMemo(
     () =>
       floorZones
@@ -255,11 +264,14 @@ export function WarehousePlan({ layout, lpns, error, focus, highlight, onOpenLpn
           {SLOT_STATUS.map((k) => (
             <span key={k} className="flex shrink-0 items-center gap-1.5">
               <i className="h-3 w-3 rounded-sm" style={CELL[k]} />
-              {SLOT_LABEL[k]} <b className="tabular-nums text-slate-800">{fmt(floorStats.counts[k])}</b>
+              {SLOT_LABEL[k]} <b className="tabular-nums text-slate-800">{fmt(floorStats.counts[k])}</b> ช่อง
             </span>
           ))}
-          <span className="ml-auto shrink-0 text-slate-500">
-            {fmt(floorStats.boxes)} กล่อง · {fmt(floorStats.qty)} ชิ้น
+          <span className="ml-auto shrink-0 text-slate-500" title="กล่องในชั้นนี้ แยกตามส่วนของสต็อก (นับแบบเดียวกับหน้าภาพรวม)">
+            {fmt(floorStats.boxes)} กล่อง ·{' '}
+            {STOCK_PARTS.filter((p) => floorMix[p].boxes > 0)
+              .map((p) => `${STOCK_PART_LABEL[p]} ${fmt(floorMix[p].boxes)}`)
+              .join(' · ') || 'ว่าง'}
           </span>
         </div>
 
@@ -631,7 +643,7 @@ function SlotCard({ slot, spot, zs, lit, onOpenLpn }: { slot: Slot; spot: Spot |
 }
 
 function BoxRow({ box, lit, showLocation, onOpenLpn }: { box: SlotBox; lit: boolean; showLocation?: boolean; onOpenLpn?: (lpnNo: string) => void }) {
-  const open = 'ml-auto shrink-0 text-xs font-semibold text-sky-700 hover:underline'
+  const open = 'ml-auto inline-flex min-h-[36px] shrink-0 items-center rounded-lg px-2.5 text-xs font-semibold text-sky-700 ring-1 ring-sky-200 hover:bg-sky-50'
   return (
     <li className={`rounded-lg bg-white p-2.5 ${lit ? 'ring-2 ring-rose-500' : 'ring-1 ring-slate-200'}`}>
       <div className="flex items-center gap-2">

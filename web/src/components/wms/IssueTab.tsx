@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { errorText } from '../../wms/api'
+import { RELOAD_FAILED, saveThenReload } from '../../wms/afterSave'
 import { fmt } from '../../wms/logic'
 import { bomQty, fgOfModel, partsOfModel, resolvePart, stockByPart } from '../../wms/partCodes'
 import type { FgItem, Lpn, PartMaster, Requisition } from '../../wms/types'
 import { useWms } from '../../wms/useWms'
+import { useToday } from '../../lib/useToday'
 import { PrintDialog } from './Print'
 import { PlanningPage } from './ReportPages'
 import { Alert, BigButton, Card, Field, inputCls, Pill, Segmented, tdCls, thCls } from './ui'
+import { TraceButton } from './TraceButton'
 
 type Mode = 'sub' | 'fm005' | 'report'
 
@@ -37,6 +40,10 @@ export function IssueTab() {
   const [lpns, setLpns] = useState<Lpn[]>([])
   const [reqs, setReqs] = useState<Requisition[]>([])
   const [day, setDay] = useState(today)
+  // เปิดหน้าค้างข้ามคืน: เตือนให้เปลี่ยนเป็นวันนี้ (ไม่เปลี่ยนเอง กันของที่กรอกค้างหาย) · เลือกวันเองแล้วไม่เตือน
+  const now = useToday()
+  const [pickedDay, setPickedDay] = useState(false)
+  const [loadErr, setLoadErr] = useState<string | null>(null)
   const [model, setModelState] = useState(() => loadModel() || master.models[0]?.code || '')
   const setModel = (m: string) => {
     setModelState(m)
@@ -51,20 +58,28 @@ export function IssueTab() {
     const [l, r] = await Promise.all([api.activeLpns(), api.listRequisitions(day, day)])
     setLpns(l)
     setReqs(r)
+    setLoadErr(null)
   }, [api, day])
   useEffect(() => {
     let alive = true
-    Promise.all([api.activeLpns(), api.listRequisitions(day, day)]).then(([l, r]) => {
-      if (!alive) return
-      setLpns(l)
-      setReqs(r)
-    })
+    Promise.all([api.activeLpns(), api.listRequisitions(day, day)])
+      .then(([l, r]) => {
+        if (!alive) return
+        setLpns(l)
+        setReqs(r)
+        setLoadErr(null)
+      })
+      .catch((e) => alive && setLoadErr(errorText(e)))
     return () => {
       alive = false
     }
   }, [api, day])
 
-  const stock = useMemo(() => stockByPart(lpns), [lpns])
+  // พร้อมเบิก = ไม่รวมรอ MI3 และกล่องในพื้นที่กัก NG (ใบเบิกเข้าไลน์ตัดของพวกนี้ไม่ได้)
+  const stock = useMemo(() => {
+    const ng = new Set(master.locations.filter((l) => l.kind === 'ng').map((l) => l.code))
+    return stockByPart(lpns, (code) => ng.has(code))
+  }, [lpns, master.locations])
   const canIssue = can('scan.issue')
 
   return (
@@ -83,7 +98,15 @@ export function IssueTab() {
         {mode !== 'report' && (
           <>
             <Field label="วันที่">
-              <input type="date" className={inputCls} value={day} onChange={(e) => setDay(e.target.value || today())} />
+              <input
+                type="date"
+                className={inputCls}
+                value={day}
+                onChange={(e) => {
+                  setDay(e.target.value || today())
+                  setPickedDay(true)
+                }}
+              />
             </Field>
             <Field label="Model">
               <select className={inputCls} value={model} onChange={(e) => setModel(e.target.value)}>
@@ -100,6 +123,22 @@ export function IssueTab() {
       </div>
 
       {!canIssue && mode !== 'report' && <Alert tone="warn">บัญชีนี้ดูได้อย่างเดียว · ต้องมีสิทธิ์ "เบิก" จึงจะบันทึกได้</Alert>}
+      {loadErr && mode !== 'report' && (
+        <Alert tone="bad">
+          โหลดสต็อก / ใบเบิกไม่สำเร็จ: {loadErr} · ยอดพร้อมเบิกและใบเบิกของวันด้านล่างอาจไม่ครบ{' '}
+          <button type="button" className="font-semibold underline" onClick={() => void refresh().catch((e) => setLoadErr(errorText(e)))}>
+            โหลดใหม่
+          </button>
+        </Alert>
+      )}
+      {!pickedDay && day !== now && mode !== 'report' && (
+        <Alert tone="warn">
+          หน้านี้เปิดค้างไว้ตั้งแต่วันที่ {day} · วันนี้คือ {now}{' '}
+          <button type="button" className="font-semibold underline" onClick={() => setDay(now)}>
+            เปลี่ยนเป็นวันนี้
+          </button>
+        </Alert>
+      )}
 
       {mode === 'sub' && <SubForm key={`${day}-${model}`} day={day} model={model} stock={stock} reqs={reqs} canIssue={canIssue} onDone={refresh} />}
       {mode === 'fm005' && <Fm005Form key={`${day}-${model}`} day={day} model={model} stock={stock} reqs={reqs} canIssue={canIssue} onDone={refresh} />}
@@ -209,23 +248,31 @@ function SubForm({ day, model, stock, reqs, canIssue, onDone }: { day: string; m
     setBusy(true)
     setMsg(null)
     try {
-      const res = await api.postRequisition({
-        kind: 'line',
-        docDate: day,
-        modelCode: model,
-        fgCode: fgItem?.code,
-        fgQty: fg ? int(fg) : null,
-        docNo: head.docNo.trim() || undefined,
-        fromDept: head.fromDept.trim() || undefined,
-        toDept: 'W/H ASSY',
-        note: head.note.trim() || undefined,
-        lines: lines.map((l) => ({ ...l, reqQty: l.qty })),
-      })
-      setMsg({ tone: 'ok', text: `บันทึก ${res.reqNo} แล้ว · ตัดสต็อก ${lines.length} รายการ ${fmt(total)} ชิ้น` })
-      setQty({})
-      setFg('')
-      setHead({ ...head, docNo: '', note: '' })
-      await onDone()
+      // บันทึกแล้ว = สำเร็จ แม้โหลดรายการใหม่พลาด (ไม่งั้นกรอกซ้ำแล้วตัดสต็อกซ้ำ)
+      const done = (r: { reqNo: string }) => `บันทึก ${r.reqNo} แล้ว · ตัดสต็อก ${lines.length} รายการ ${fmt(total)} ชิ้น`
+      const { value: res, reloadFailed } = await saveThenReload(
+        () =>
+          api.postRequisition({
+            kind: 'line',
+            docDate: day,
+            modelCode: model,
+            fgCode: fgItem?.code,
+            fgQty: fg ? int(fg) : null,
+            docNo: head.docNo.trim() || undefined,
+            fromDept: head.fromDept.trim() || undefined,
+            toDept: 'W/H ASSY',
+            note: head.note.trim() || undefined,
+            lines: lines.map((l) => ({ ...l, reqQty: l.qty })),
+          }),
+        (r) => {
+          setMsg({ tone: 'ok', text: done(r) })
+          setQty({})
+          setFg('')
+          setHead({ ...head, docNo: '', note: '' })
+        },
+        [onDone],
+      )
+      if (reloadFailed) setMsg({ tone: 'ok', text: `${done(res)} · ${RELOAD_FAILED}` })
     } catch (e) {
       setMsg({ tone: 'bad', text: errorText(e) })
     } finally {
@@ -348,11 +395,12 @@ function TodayList({ title, reqs, canIssue, onDone }: { title: string; reqs: Req
             <b className="font-mono">{r.reqNo}</b>
             {r.docNo && <span className="font-mono text-slate-500">({r.docNo})</span>}
             <span className="text-slate-500">
-              {new Date(r.createdAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} · {r.lines.length} รายการ · {fmt(r.lines.reduce((s, l) => s + l.qty, 0))} ชิ้น
+              {new Date(r.createdAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' })} · {r.lines.length} รายการ · {fmt(r.lines.reduce((s, l) => s + l.qty, 0))} ชิ้น
               {r.fgQty ? ` · ${fmt(r.fgQty)} วง` : ''}
               {r.note ? ` · ${r.note}` : ''}
             </span>
             {r.status === 'void' ? <Pill tone="muted">ยกเลิก</Pill> : r.reconciledBy ? <Pill tone="ok">กระทบ FM-P-005 แล้ว</Pill> : <Pill tone="warn">รอ FM-P-005</Pill>}
+            <TraceButton query={r.reqNo} label="ของมาจากไหน" />
             {canIssue && r.status === 'posted' && !r.reconciledBy && (
               <button className="ml-auto rounded-md px-2 py-1 text-xs text-rose-600 ring-1 ring-rose-200 hover:bg-rose-50" onClick={() => void cancel(r)}>
                 ยกเลิกใบนี้
@@ -401,21 +449,28 @@ function Fm005Form({ day, model, stock, reqs, canIssue, onDone }: { day: string;
     setBusy(true)
     setMsg(null)
     try {
-      const res = await api.reconcileFm005({
-        docNo: head.docNo.trim(),
-        docDate: day,
-        modelCode: model,
-        fgCode: fgItem?.code,
-        fgQty: fg ? int(fg) : null,
-        fromDept: head.fromDept.trim() || undefined,
-        toDept: head.toDept.trim() || undefined,
-        note: head.note.trim() || undefined,
-        lines: rows.filter((r) => r.fm > 0 || r.sub > 0).map((r) => ({ partNo: r.no, qty: r.fm })),
-      })
-      setMsg({ tone: 'ok', text: `บันทึก FM-P-005 ${head.docNo} (${res.reqNo}) แล้ว · กระทบใบย่อย ${res.subs} ใบ · ปรับส่วนต่าง ${changed.length} รายการ` })
-      setQty({})
-      setHead({ ...head, docNo: '', note: '' })
-      await onDone()
+      const done = (r: { reqNo: string; subs: number }) => `บันทึก FM-P-005 ${head.docNo} (${r.reqNo}) แล้ว · กระทบใบย่อย ${r.subs} ใบ · ปรับส่วนต่าง ${changed.length} รายการ`
+      const { value: res, reloadFailed } = await saveThenReload(
+        () =>
+          api.reconcileFm005({
+            docNo: head.docNo.trim(),
+            docDate: day,
+            modelCode: model,
+            fgCode: fgItem?.code,
+            fgQty: fg ? int(fg) : null,
+            fromDept: head.fromDept.trim() || undefined,
+            toDept: head.toDept.trim() || undefined,
+            note: head.note.trim() || undefined,
+            lines: rows.filter((r) => r.fm > 0 || r.sub > 0).map((r) => ({ partNo: r.no, qty: r.fm })),
+          }),
+        (r) => {
+          setMsg({ tone: 'ok', text: done(r) })
+          setQty({})
+          setHead({ ...head, docNo: '', note: '' })
+        },
+        [onDone],
+      )
+      if (reloadFailed) setMsg({ tone: 'ok', text: `${done(res)} · ${RELOAD_FAILED}` })
     } catch (e) {
       setMsg({ tone: 'bad', text: errorText(e) })
     } finally {

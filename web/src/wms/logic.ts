@@ -42,15 +42,20 @@ export interface ReconRow {
   diff: number
 }
 
-/** กระทบยอด: invoice เทียบยอดรับจริงรวมทุกเที่ยว (จับคู่ด้วย Part No.) */
+/**
+ * กระทบยอด: invoice เทียบยอดรับจริงรวมทุกเที่ยว (จับคู่ด้วย Part No.)
+ * part เดียวกันหลายบรรทัด: แบ่งยอดรับให้ทีละบรรทัดตามลำดับ (ไม่เกินยอดบรรทัด) · บรรทัดสุดท้ายของ part รับส่วนที่เหลือทั้งหมด
+ */
 export function reconcile(view: InvoiceView): ReconRow[] {
   const got = new Map(view.received.map((r) => [r.partNo, r.qty]))
-  const rows: ReconRow[] = view.lines.map((l) => {
-    const r = got.get(l.partNo) ?? 0
-    got.delete(l.partNo)
+  const last = new Map(view.lines.map((l, i) => [l.partNo, i]))
+  const rows: ReconRow[] = view.lines.map((l, i) => {
+    const left = got.get(l.partNo) ?? 0
+    const r = last.get(l.partNo) === i ? left : Math.min(left, l.qty)
+    got.set(l.partNo, left - r)
     return { lineNo: l.lineNo, partNo: l.partNo, description: l.description, invoiceQty: l.qty, receivedQty: r, diff: r - l.qty }
   })
-  for (const [partNo, qty] of got) rows.push({ lineNo: null, partNo, description: 'ไม่มีใน Invoice', invoiceQty: null, receivedQty: qty, diff: qty })
+  for (const [partNo, qty] of got) if (!last.has(partNo)) rows.push({ lineNo: null, partNo, description: 'ไม่มีใน Invoice', invoiceQty: null, receivedQty: qty, diff: qty })
   return rows
 }
 
@@ -60,7 +65,7 @@ export function discrepancyText(view: InvoiceView, rows: ReconRow[]): string {
   return [
     'เรื่อง: แจ้งผลกระทบยอดสินค้ารับเข้า เทียบ Invoice',
     `Invoice ${view.invoice.invoiceNo}${view.invoice.poNo ? ` · PO ${view.invoice.poNo}` : ''}${view.invoice.docDate ? ` · ลงวันที่ ${view.invoice.docDate}` : ''}`,
-    `รับจริงตาม ${view.grns.map((g) => `${g.grnNo} (PL ${g.plRef}, ${new Date(g.receivedAt).toLocaleDateString('th-TH')})`).join(', ') || '-'}`,
+    `รับจริงตาม ${view.grns.map((g) => `${g.grnNo} (PL ${g.plRef}, ${new Date(g.receivedAt).toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok' })})`).join(', ') || '-'}`,
     '',
     'บรรทัด | Part No.    | Invoice | รับจริง | ต่าง',
     ...off.map((r) => `${pad(String(r.lineNo ?? '-'), 6)} | ${pad(r.partNo, 11)} | ${String(r.invoiceQty ?? '-').padStart(7)} | ${String(r.receivedQty).padStart(7)} | ${r.diff > 0 ? '+' : ''}${r.diff}`),

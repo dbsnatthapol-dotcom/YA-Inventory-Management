@@ -1,4 +1,5 @@
 import { BRAND_ROWS, brandHeader, brandLogo } from './excelBrand'
+import { bangkokDay } from './ledger'
 import { saveWorkbook } from './ledgerExcel'
 import { BOM_HEADERS, PART_HEADERS } from './masterImport'
 import { COUNT_HEADERS } from './stockImport'
@@ -96,10 +97,12 @@ export async function downloadStockTemplate(rows: { loc: string; partNo: string;
   ws.views = [{ state: 'frozen', ySplit: BRAND_ROWS + 1 }]
   howTo(wb, [
     'กรอกเฉพาะคอลัมน์ "นับได้" (ช่องสีเหลือง) · เว้นว่าง = ไม่ได้นับ (ระบบข้าม) · 0 = นับแล้วไม่มีของ',
-    'เจอของที่ไม่มีในรายการ: เพิ่มแถวใหม่ ใส่ช่องเก็บหรือรหัสโซน + Part No. (หรือรหัส UAM) + จำนวนนับ',
+    'เจอของที่ไม่มีในรายการ: เพิ่มแถวใหม่ ใส่รหัสช่องที่เจอ (ไฟล์แบบทั้งโซนใส่รหัสโซน) + Part No. (หรือรหัส UAM) + จำนวนนับ',
+    'part เดียวกันนับระดับเดียว: มีแถวรายช่องแล้ว ห้ามเพิ่มแถวรหัสโซนที่มีช่องนั้นอีก (ระบบไม่รับ เพราะจะปรับยอดซ้ำ)',
     'ยอดในระบบในไฟล์เป็นของตอนดาวน์โหลด · ตอนอัปโหลดระบบเทียบกับยอดล่าสุดอีกครั้ง',
     'ส่งแล้วต้องให้ผู้มีสิทธิ์อนุมัติ (ไม่ใช่คนส่ง) ระบบจึงปรับยอด และลงบัญชีคุม FM-P-537 เป็น "ปรับยอด"',
     'ยอดเกินแต่ไม่มีกล่องเดิม: ระบบสร้างกล่องใหม่ให้ พิมพ์ป้ายได้ที่ ป้าย QR & พิมพ์ (เลขเอกสาร CNT)',
   ])
-  await saveWorkbook(wb, `UAM_StockCount_${new Date().toISOString().slice(0, 10)}.xlsx`)
+  // วันที่ในชื่อไฟล์เป็นวันไทย (ตี 3 วันที่ 24 ต้องได้ _24 ไม่ใช่วัน UTC)
+  await saveWorkbook(wb, `UAM_StockCount_${bangkokDay(new Date().toISOString())}.xlsx`)
 }

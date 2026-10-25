@@ -36,6 +36,19 @@ export const ledgerDelta = (r: Pick<LedgerRow, 'col' | 'qty'>) => (IN_COLS.inclu
 
 export const bangkokDay = (iso: string) => new Date(iso).toLocaleDateString('sv-SE', { timeZone: 'Asia/Bangkok' })
 
+/** วันที่ลงบัญชีของรายการจากเอกสารลงวันที่ (ใบเบิก / FM-P-005): วันที่ในเอกสาร + เวลาที่บันทึก (เหมือน stock_ledger_entries 0023) */
+export const onDocDate = (createdAt: string, docDate: string) =>
+  new Date(Date.parse(createdAt) + Date.parse(`${docDate}T00:00:00Z`) - Date.parse(`${bangkokDay(createdAt)}T00:00:00Z`)).toISOString()
+
+/** ตัวเลือกในหน้าบัญชีคุม: part ร่วมที่ระบุ Model ไม่ได้ (เช่น ของเกินจากการตรวจนับ) */
+export const NO_MODEL = '-'
+
+/** รายการที่เข้าบัญชีคุมของ Model นี้ (ตาม Model ของเอกสาร · part ร่วมไม่ซ้ำในหลาย Model) */
+export const rowsOfModel = (rows: LedgerRow[], model: string) => rows.filter((r) => (model === NO_MODEL ? r.model === null : r.model === model))
+
+/** part ที่ใช้มากกว่า 1 Model */
+export const isShared = (p: Pick<PartMaster, 'models'>) => new Set(p.models).size > 1
+
 /** เลื่อนวัน 'YYYY-MM-DD' ไป n วัน */
 export const addDays = (day: string, n: number) => {
   const [y, m, d] = day.split('-').map(Number)

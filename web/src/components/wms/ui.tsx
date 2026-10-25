@@ -82,7 +82,7 @@ export function Segmented<T extends string>({ value, options, onChange, label }:
           key={v}
           aria-pressed={v === value}
           onClick={() => onChange(v)}
-          className={`min-h-[40px] px-3.5 py-2 text-sm transition ${v === value ? 'font-semibold text-white' : 'bg-white text-slate-700 hover:bg-slate-50'}`}
+          className={`min-h-[44px] px-3.5 py-2 text-sm transition ${v === value ? 'font-semibold text-white' : 'bg-white text-slate-700 hover:bg-slate-50'}`}
           style={v === value ? { background: BRAND.primary } : undefined}
         >
           {text}

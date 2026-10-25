@@ -81,15 +81,19 @@ export function planStockImport(rows: string[][], ctx: CountCtx): { rows: CountR
       messages,
     })
   })
-  // ช่อง + part เดียวกันหลายแถว ⇒ ไม่รู้ว่าแถวไหนถูก ผิดทุกแถว
-  const key = (x: CountRow) => `${x.loc}|${x.partNo}`
+  // part เดียวกันหลายแถวที่ช่องซ้อนกัน (ช่องเดียวกัน หรือโซนกับช่องในโซนนั้น) ⇒ ไม่รู้ว่าแถวไหนถูก
+  // และอนุมัติแล้วจะปรับยอดซ้ำสองรอบ ⇒ ผิดทุกแถว (กติกาเดียวกับ stock_count_submit ใน 0022)
+  const locsOf = new Map(out.map((x) => [x, countLocations(x.loc, ctx)?.locs ?? []]))
   for (const x of out) {
-    const same = out.filter((y) => key(y) === key(x))
-    if (same.length > 1) {
-      x.messages.push(`ซ้ำกับแถว ${same.filter((y) => y !== x).map((y) => y.row).join(', ')}`)
-      x.status = 'error'
-      x.diff = 0
-    }
+    const mine = new Set(locsOf.get(x))
+    const clash = out.filter((y) => y !== x && y.partNo === x.partNo && (locsOf.get(y) ?? []).some((c) => mine.has(c)))
+    if (!clash.length) continue
+    const same = clash.filter((y) => y.loc === x.loc).map((y) => y.row)
+    const nested = clash.filter((y) => y.loc !== x.loc).map((y) => `${y.row} (${y.loc})`)
+    if (same.length) x.messages.push(`ซ้ำกับแถว ${same.join(', ')}`)
+    if (nested.length) x.messages.push(`ซ้อนกับแถว ${nested.join(', ')} · part เดียวกันให้นับระดับเดียว: รายช่อง หรือทั้งโซน`)
+    x.status = 'error'
+    x.diff = 0
   }
   return { rows: out, skipped }
 }

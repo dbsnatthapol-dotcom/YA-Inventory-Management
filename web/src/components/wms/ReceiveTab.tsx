@@ -4,6 +4,7 @@ import { aiReaderAvailable, readInvoicePhoto, readPackingListPhoto } from '../..
 import { useIsMobile } from '../../lib/viewMode'
 import { zoneCodeOf } from '../../wms/locations'
 import { fmt, needsQi, suggestedZone } from '../../wms/logic'
+import { invoiceByPart, invoiceLinesFromRows } from '../../wms/invoiceLines'
 import { basePartNo, resolvePart } from '../../wms/partCodes'
 import { SAMPLE_INVOICE, SAMPLE_MODEL, SAMPLE_PACKING_LIST } from '../../wms/sampleDocs'
 import { useWms } from '../../wms/useWms'
@@ -61,6 +62,8 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ tone: 'ok' | 'warn' | 'bad' | 'info'; text: string } | null>(null)
   const tableRef = useRef<HTMLDivElement>(null)
+  // ยอด Invoice ต่อ part ล่าสุด (อ่านรูป / Invoice เดิม / ตัวอย่าง) · อ่านรูป PL ทีหลังแล้วยอด Invoice ไม่หาย
+  const invByPart = useRef<Map<string, { qty: number; lineNo: number | null }>>(new Map())
 
   const customerId = master.models.find((m) => m.code === modelCode)?.customerId
   // โซนที่มีช่องเก็บ (พาเลท/rack/เต็นท์) ให้เลือกเก็บเอง
@@ -80,7 +83,9 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
       // invoice เดิม: ใช้จำนวนตามที่บันทึกไว้ครั้งแรก
       const view = await api.invoiceView(no).catch(() => null)
       if (view) {
-        setRows((rs) => rs.map((r) => ({ ...r, invQty: view.lines.find((l) => canon(l.partNo) === canon(r.partNo))?.qty ?? null, invLine: view.lines.find((l) => canon(l.partNo) === canon(r.partNo))?.lineNo ?? null })))
+        const by = invoiceByPart(view.lines, canon)
+        invByPart.current = by
+        setRows((rs) => rs.map((r) => ({ ...r, invQty: by.get(canon(r.partNo))?.qty ?? null, invLine: by.get(canon(r.partNo))?.lineNo ?? null })))
         setInv((v) => ({ ...v, poNo: view.invoice.poNo ?? v.poNo, docDate: view.invoice.docDate ?? v.docDate, movementType: view.invoice.movementType ?? v.movementType }))
       }
     }
@@ -90,9 +95,11 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
     setModelCode(SAMPLE_MODEL)
     setPl({ refDoc: SAMPLE_PACKING_LIST.refDoc, soNo: SAMPLE_PACKING_LIST.soNo, packages: SAMPLE_PACKING_LIST.packages })
     setInv({ invoiceNo: SAMPLE_INVOICE.invoiceNo, poNo: SAMPLE_INVOICE.poNo, docDate: SAMPLE_INVOICE.docDate, movementType: SAMPLE_INVOICE.movementType })
+    const by = invoiceByPart(SAMPLE_INVOICE.lines, canon)
+    invByPart.current = by
     setRows(
       SAMPLE_PACKING_LIST.lines.map((l) => {
-        const il = SAMPLE_INVOICE.lines.find((x) => canon(x.partNo) === canon(l.partNo))
+        const il = by.get(canon(l.partNo))
         return { key: newKey(), caseNo: '', partNo: canon(l.partNo), description: l.description, plQty: l.qty, counted: l.qty, invQty: il?.qty ?? null, invLine: il?.lineNo ?? null, zoneId: null }
       }),
     )
@@ -108,7 +115,14 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
     try {
       const d = await readPackingListPhoto(file)
       setPl({ refDoc: d.refDoc, soNo: d.soNo, packages: d.packages })
-      setRows(d.lines.map((l) => ({ key: newKey(), caseNo: (l.caseNo ?? '').trim(), partNo: canon(l.partNo), description: l.description, plQty: l.qty, counted: l.qty, invQty: null, invLine: l.invoiceLineNo, zoneId: null })))
+      // ยอด Invoice ที่อ่าน/กรอกไว้ก่อนหน้า (ต่อ part) ใส่กลับให้ทุกเคส · part ที่มีแต่ใน Invoice คงไว้เป็นแถว (รับจริง 0)
+      const by = invByPart.current
+      const next: Row[] = d.lines.map((l) => {
+        const il = by.get(canon(l.partNo))
+        return { key: newKey(), caseNo: (l.caseNo ?? '').trim(), partNo: canon(l.partNo), description: l.description, plQty: l.qty, counted: l.qty, invQty: il?.qty ?? null, invLine: l.invoiceLineNo ?? il?.lineNo ?? null, zoneId: null }
+      })
+      for (const [part, il] of by) if (!next.some((r) => canon(r.partNo) === part)) next.push({ key: newKey(), caseNo: '', partNo: part, description: '', plQty: 0, counted: 0, invQty: il.qty, invLine: il.lineNo, zoneId: null })
+      setRows(next)
       const cases = new Set(d.lines.map((l) => l.caseNo?.trim()).filter(Boolean)).size
       setMsg({ tone: 'ok', text: `AI อ่าน Packing List ได้ ${d.lines.length} รายการ${cases ? ` ใน ${cases} เคส` : ' (ไม่พบเลขเคส · ใส่เองได้ในช่อง "เคส")'} · ตรวจทานกับเอกสารก่อน` })
     } catch (e) {
@@ -126,13 +140,17 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
     try {
       const d = await readInvoicePhoto(file)
       setInv({ invoiceNo: d.invoiceNo, poNo: d.poNo, docDate: d.docDate, movementType: d.movementType })
+      // part เดียวกันหลายบรรทัดใน Invoice: รวมยอดของ part (เทียบกับยอดรวมทุกเคส)
+      const by = invoiceByPart(d.lines, canon)
+      invByPart.current = by
       setRows((rs) => {
         const next = rs.map((r) => {
-          const il = d.lines.find((l) => canon(l.partNo) === canon(r.partNo))
+          const il = by.get(canon(r.partNo))
           return il ? { ...r, invQty: il.qty, invLine: il.lineNo } : r
         })
         // part ที่มีใน invoice แต่ไม่มีใน packing list → เพิ่มเป็นแถว (รับจริง 0)
-        for (const l of d.lines) if (!next.some((r) => canon(r.partNo) === canon(l.partNo))) next.push({ key: newKey(), caseNo: '', partNo: canon(l.partNo), description: l.description, plQty: 0, counted: 0, invQty: l.qty, invLine: l.lineNo, zoneId: null })
+        for (const l of d.lines)
+          if (!next.some((r) => canon(r.partNo) === canon(l.partNo))) next.push({ key: newKey(), caseNo: '', partNo: canon(l.partNo), description: l.description, plQty: 0, counted: 0, invQty: by.get(canon(l.partNo))?.qty ?? l.qty, invLine: l.lineNo, zoneId: null })
         return next
       })
       setMsg(
@@ -149,6 +167,14 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
   }
 
   const patch = (key: string, p: Partial<Row>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...p } : r)))
+  // ยอด Invoice เป็นยอดทั้ง part (ไม่ใช่รายเคส) ⇒ แก้แถวเดียว ทุกเคสของ part เดียวกันเปลี่ยนตาม
+  const setInvQty = (r: Row, invQty: number | null) => {
+    const part = canon(r.partNo)
+    // ยอดที่กรอกเองจำไว้ด้วย (อ่านรูป PL ทีหลังแล้วไม่หาย)
+    if (part && invQty === null) invByPart.current.delete(part)
+    else if (part && invQty !== null) invByPart.current.set(part, { qty: invQty, lineNo: r.invLine ?? invByPart.current.get(part)?.lineNo ?? null })
+    setRows((rs) => rs.map((x) => (x.key === r.key || (part && canon(x.partNo) === part) ? { ...x, invQty } : x)))
+  }
   const pickPart = (key: string, partNo: string) => {
     const part = resolvePart(master.parts, partNo)
     patch(key, { partNo: partNo.trimStart(), ...(part ? { description: part.name } : {}) })
@@ -157,11 +183,25 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
   const settlePart = (key: string, partNo: string) => patch(key, { partNo: canon(partNo) })
 
   const offPl = direct ? rows.filter((r) => r.counted !== r.plQty).length : 0
-  const offInv = rows.filter((r) => r.invQty !== null && r.counted !== r.invQty).length
+  // part เดียวกันหลายเคส: เทียบยอด Invoice กับยอดรวมทุกเคสของ part (ไม่ใช่รายแถว)
+  const byPart = new Map<string, { rows: number; counted: number; pl: number }>()
+  for (const r of rows) {
+    const k = canon(r.partNo)
+    if (!k) continue
+    const t = byPart.get(k) ?? { rows: 0, counted: 0, pl: 0 }
+    byPart.set(k, { rows: t.rows + 1, counted: t.counted + r.counted, pl: t.pl + r.plQty })
+  }
+  const partTotal = (r: Row) => byPart.get(canon(r.partNo)) ?? { rows: 1, counted: r.counted, pl: r.plQty }
+  const offInvoice = (r: Row) => r.invQty !== null && (direct ? partTotal(r).counted : partTotal(r).pl) !== r.invQty
+  const offInv = new Set(rows.filter(offInvoice).map((r) => canon(r.partNo))).size
+  const invoiceLines = () => invoiceLinesFromRows(rows.map((r) => ({ ...r, partNo: canon(r.partNo) })))
   const mi3 = rows.filter((r) => needsQi(master, settings.qiPartTypes, modelCode, canon(r.partNo))).length
   const unknown = rows.filter((r) => r.partNo && !resolvePart(master.parts, r.partNo)).length
   const total = rows.reduce((s, r) => s + (direct ? r.counted : r.plQty), 0)
-  const caseCount = new Set(rows.filter((r) => r.plQty > 0 || r.invQty === null).map((r) => r.caseNo.trim().toUpperCase() || r.key)).size
+  // นับเคสแบบเดียวกับใบตรวจรับ: แถวที่ไม่ระบุเคสรวมเป็นกลุ่ม "ไม่ระบุเคส" กลุ่มเดียว
+  const checkRows = rows.filter((r) => r.plQty > 0 || r.invQty === null)
+  const caseCount = new Set(checkRows.map((r) => r.caseNo.trim().toUpperCase())).size
+  const noCase = checkRows.filter((r) => !r.caseNo.trim()).length
   const problems = [
     !modelCode && 'เลือก Model',
     !pl.refDoc.trim() && 'ใส่เลข REF ของ Packing List',
@@ -184,14 +224,16 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
               poNo: inv.poNo.trim(),
               docDate: inv.docDate.trim(),
               movementType: inv.movementType.trim(),
-              lines: rows.filter((r) => r.invQty !== null).map((r, i) => ({ lineNo: r.invLine ?? i + 1, partNo: canon(r.partNo), description: r.description, qty: r.invQty ?? 0 })),
+              lines: invoiceLines(),
             }
           : undefined,
         lines: rows.map((r) => ({ partNo: canon(r.partNo), description: r.description, plQty: r.plQty, countedQty: r.counted, ...(r.zoneId ? { zoneId: r.zoneId } : {}), ...(r.caseNo.trim() ? { caseNo: r.caseNo.trim() } : {}) })),
       })
-      // ภาพเอกสารเป็นหลักฐาน: อัปโหลดหลังบันทึก GRN แล้ว (ถ้าเน็ตช้า/ล้ม การรับของยังสำเร็จ)
+      // ภาพเอกสารเป็นหลักฐาน: อัปโหลดหลังบันทึก GRN แล้ว (ถ้าเน็ตช้า/ล้ม การรับของยังสำเร็จ แต่ต้องบอกคนรับ)
       const [plPath, invPath] = await Promise.all([plFile ? api.uploadDoc(plFile, 'pl') : null, invFile ? api.uploadDoc(invFile, 'invoice') : null])
-      if (plPath || invPath) await api.attachImages(res.grnId, plPath ? [plPath] : [], invPath ? [invPath] : []).catch(() => undefined)
+      const attached = plPath || invPath ? await api.attachImages(res.grnId, plPath ? [plPath] : [], invPath ? [invPath] : []).then(() => true, () => false) : true
+      const lost = lostPhotos(plPath, invPath)
+      if (lost || !attached) window.alert(`รับของแล้ว (${res.grnNo}) แต่ส่งรูป${lost || 'เอกสาร'}ไม่สำเร็จ · เก็บเอกสารตัวจริงไว้เป็นหลักฐาน`)
       onCreated(res.grnId)
     } catch (e) {
       setMsg({ tone: 'bad', text: errorText(e) })
@@ -200,12 +242,18 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
     }
   }
 
+  // รูปที่เลือกไว้แต่ส่งไม่สำเร็จ (หน้าสาธิตไม่เก็บรูป จึงไม่เตือน)
+  const lostPhotos = (plPath: string | null, invPath: string | null) =>
+    api.kind === 'demo' ? '' : [plFile && !plPath ? 'Packing List' : '', invFile && !invPath ? 'Invoice' : ''].filter(Boolean).join(' และ ')
+
   // ใบตรวจรับ: ภาพเอกสารอัปโหลดก่อน (เก็บไว้ที่ใบ แล้วติดไปกับ GRN ตอนตรวจครบ) · ภาพล้มก็สร้างใบได้
   const submitCheck = async () => {
     setBusy(true)
     setMsg(null)
     try {
       const [plPath, invPath] = await Promise.all([plFile ? api.uploadDoc(plFile, 'pl') : null, invFile ? api.uploadDoc(invFile, 'invoice') : null])
+      const lost = lostPhotos(plPath, invPath)
+      if (lost && !window.confirm(`ส่งรูป${lost}ไม่สำเร็จ (เน็ตช้า/หลุด?) · สร้างใบตรวจรับต่อโดยไม่มีรูปนี้ไหม? (กดยกเลิกเพื่อลองส่งใหม่)`)) return
       // part ที่มีแต่ใน Invoice (ยอด PL 0) ไม่ต้องตรวจ แต่ยังใช้เทียบยอด Invoice
       const toCheck = rows.filter((r) => r.plQty > 0 || r.invQty === null)
       const res = await api.createCheck({
@@ -218,7 +266,7 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
               poNo: inv.poNo.trim(),
               docDate: inv.docDate.trim(),
               movementType: inv.movementType.trim(),
-              lines: rows.filter((r) => r.invQty !== null).map((r, i) => ({ lineNo: r.invLine ?? i + 1, partNo: canon(r.partNo), description: r.description, qty: r.invQty ?? 0 })),
+              lines: invoiceLines(),
               imagePaths: invPath ? [invPath] : [],
             }
           : undefined,
@@ -238,7 +286,8 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
     const qi = needsQi(master, settings.qiPartTypes, modelCode, partNo)
     const known = !!resolvePart(master.parts, r.partNo)
     const zone = suggestedZone(master, customerId, partNo)
-    const bad = direct && (r.counted !== r.plQty || (r.invQty !== null && r.counted !== r.invQty))
+    const bad = direct && (r.counted !== r.plQty || offInvoice(r))
+    const cases = partTotal(r).rows
     const num = `rounded-md px-2 text-right font-mono ${wide ? 'w-full py-2.5 text-base' : 'w-24 py-1.5'}`
     return {
       bad,
@@ -274,9 +323,10 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
           {existing ? (
             <span className={`block font-mono ${wide ? 'py-2.5 text-right text-base' : ''}`}>{fmt(r.invQty)}</span>
           ) : (
-            <input id={`inv-${r.key}`} type="number" min={0} inputMode="numeric" className={`${num} border border-slate-300`} value={r.invQty ?? ''} placeholder="–" onChange={(e) => patch(r.key, { invQty: e.target.value === '' ? null : Math.max(0, Math.floor(Number(e.target.value) || 0)) })} aria-label="จำนวนใน Invoice" />
+            <input id={`inv-${r.key}`} type="number" min={0} inputMode="numeric" className={`${num} border border-slate-300`} value={r.invQty ?? ''} placeholder="–" onChange={(e) => setInvQty(r, e.target.value === '' ? null : Math.max(0, Math.floor(Number(e.target.value) || 0)))} aria-label="จำนวนใน Invoice" />
           )}
           {r.invLine !== null && <div className="text-[10px] text-slate-400">บรรทัด {r.invLine}</div>}
+          {r.invQty !== null && cases > 1 && <div className="text-[10px] text-slate-400">ยอดรวม {cases} เคส</div>}
         </>
       ),
       zone: (
@@ -301,8 +351,8 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
       pills: (
         <>
           {direct && (r.counted === r.plQty ? <Pill tone="ok">ตรง PL</Pill> : r.counted < r.plQty ? <Pill tone="bad">ขาด {fmt(r.plQty - r.counted)}</Pill> : <Pill tone="warn">เกิน {fmt(r.counted - r.plQty)}</Pill>)}
-          {direct && r.invQty !== null && r.counted !== r.invQty && <Pill tone="bad">ไม่ตรง Invoice</Pill>}
-          {!direct && r.invQty !== null && r.plQty !== r.invQty && <Pill tone="warn">PL ไม่ตรง Invoice</Pill>}
+          {direct && offInvoice(r) && <Pill tone="bad">{cases > 1 ? `รวม ${cases} เคสไม่ตรง Invoice` : 'ไม่ตรง Invoice'}</Pill>}
+          {!direct && offInvoice(r) && <Pill tone="warn">{cases > 1 ? `PL รวม ${cases} เคสไม่ตรง Invoice` : 'PL ไม่ตรง Invoice'}</Pill>}
           {!direct && r.plQty === 0 && r.invQty !== null && <Pill tone="muted">มีแค่ใน Invoice</Pill>}
           {qi && <Pill tone="mi3">ส่ง MI3</Pill>}
           {r.partNo && !known && <Pill tone="warn">ไม่มีใน Master</Pill>}
@@ -341,7 +391,7 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
           <PhotoPick id="pl-photo" label="ถ่าย Packing List" file={plFile} onFile={readPl} />
           {reading === 'pl' && <Alert tone="info">AI กำลังอ่าน Packing List…</Alert>}
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="REF Document No. *">
+            <Field label="เลขที่ Packing List (REF. Document No.) *">
               <input id="pl-ref" className={inputCls} value={pl.refDoc} onChange={(e) => setPl({ ...pl, refDoc: e.target.value })} placeholder="เช่น 55035596" />
             </Field>
             <Field label="Model *">
@@ -354,7 +404,7 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
                 ))}
               </select>
             </Field>
-            <Field label="SO No.">
+            <Field label="เลขที่ SO">
               <input id="pl-so" className={inputCls} value={pl.soNo} onChange={(e) => setPl({ ...pl, soNo: e.target.value })} />
             </Field>
             <Field label="หีบห่อ (Packing Type)">
@@ -372,16 +422,16 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
           {reading === 'invoice' && <Alert tone="info">AI กำลังอ่าน Invoice…</Alert>}
           {existing && <Alert tone="info">Invoice นี้มีในระบบแล้ว (รับไปแล้ว {existing.grnCount} เที่ยว) · เที่ยวนี้จะผูกกับใบเดิม ไม่สร้างซ้ำ</Alert>}
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Invoice No.">
+            <Field label="เลขที่ Invoice">
               <input id="inv-no" className={inputCls} value={inv.invoiceNo} onChange={(e) => setInv({ ...inv, invoiceNo: e.target.value })} onBlur={(e) => void checkInvoice(e.target.value)} placeholder="เช่น 4957930126" />
             </Field>
-            <Field label="PO">
+            <Field label="เลขที่ PO">
               <input id="inv-po" className={inputCls} value={inv.poNo} onChange={(e) => setInv({ ...inv, poNo: e.target.value })} />
             </Field>
             <Field label="วันที่เอกสาร">
               <input id="inv-date" type="date" className={inputCls} value={inv.docDate} onChange={(e) => setInv({ ...inv, docDate: e.target.value })} />
             </Field>
-            <Field label="Movement Type">
+            <Field label="ประเภทรายการ (Movement Type)">
               <input id="inv-mvt" className={inputCls} value={inv.movementType} onChange={(e) => setInv({ ...inv, movementType: e.target.value })} placeholder="เช่น 541" />
             </Field>
           </div>
@@ -513,7 +563,7 @@ export function ReceiveTab({ onCreated, onCheckCreated }: { onCreated: (grnId: s
       <div className={`sticky bottom-2 z-20 flex flex-wrap items-center justify-between rounded-xl border-2 border-sky-700 bg-white shadow-lg ${mobile ? 'gap-2 px-3 py-2' : 'gap-3 px-4 py-3'}`}>
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <strong className="text-base">
-            {rows.length} รายการ{direct ? '' : ` · ${caseCount} เคส`} · {fmt(total)} ชิ้น
+            {rows.length} รายการ{direct ? '' : ` · ${caseCount} เคส${noCase ? ` (ไม่ระบุเคส ${noCase} รายการ)` : ''}`} · {fmt(total)} ชิ้น
           </strong>
           {direct && <Pill tone={offPl ? 'bad' : 'ok'}>{offPl ? `ต่างจาก PL ${offPl}` : 'ตรง PL ทุกรายการ'}</Pill>}
           {direct && (inv.invoiceNo || existing) && <Pill tone={offInv ? 'bad' : 'ok'}>{offInv ? `ไม่ตรง Invoice ${offInv}` : 'ตรง Invoice'}</Pill>}

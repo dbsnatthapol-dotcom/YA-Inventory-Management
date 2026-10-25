@@ -8,8 +8,9 @@ import { useIsMobile } from '../../lib/viewMode'
 import { CheckReport } from './CheckReport'
 import { PrintDialog } from './Print'
 import { Alert, BigButton, Card, Field, inputCls, Pill, Segmented, tdCls, thCls, type Tone } from './ui'
+import { TraceButton } from './TraceButton'
 
-const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '')
+const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' }) : '')
 const ISSUE_TONE: Record<LineIssue, Tone> = { short: 'bad', over: 'warn', missing: 'bad', extra: 'warn', damaged: 'bad' }
 /** ตรวจพร้อมกันหลายเครื่อง: ดึงของคนอื่นทุก 15 วินาที */
 const POLL_MS = 15_000
@@ -185,7 +186,8 @@ export function CheckView({ id, onBack, onReceived, onChanged }: { id: string; o
           </span>
         }
         action={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <TraceButton query={c.grnNo ?? c.checkNo} label="ตามรอย" className="min-h-[44px]" />
             <BigButton tone="secondary" onClick={onBack}>
               ← ทั้งหมด
             </BigButton>
@@ -456,7 +458,7 @@ function LineRow({
             placeholder="นับได้"
             value={qty}
             onChange={(e) => setQty(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && changed && save()}
+            onKeyDown={(e) => e.key === 'Enter' && changed && !busy && save()}
             aria-label={`นับได้ ${l.partNo}`}
           />
           {changed && qty !== '' ? (
@@ -466,7 +468,7 @@ function LineRow({
           ) : l.actualQty === null ? (
             // เสียหาย/หมายเหตุที่พิมพ์ไว้ไปพร้อมกัน
             <BigButton disabled={busy || l.extra} onClick={() => onSave(l, { actual: l.plQty, damaged: n(damaged), note }, `${l.partNo}: ตรงตาม PL`)} className="min-h-[48px]">
-              ✓ ตรง
+              {n(damaged) > 0 ? `✓ ครบ PL · เสียหาย ${n(damaged)}` : '✓ ตรง'}
             </BigButton>
           ) : (
             // ตรวจแล้ว: ไม่มีปุ่ม "ตรง" ให้กดทับยอดที่นับไว้โดยไม่ตั้งใจ · แก้ตัวเลขแล้วกดบันทึก

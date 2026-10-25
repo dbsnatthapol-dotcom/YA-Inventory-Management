@@ -110,7 +110,7 @@ describe('stock count import', () => {
     ])
     // ยอดเปลี่ยนหลังส่ง (เบิกไปแล้ว) ⇒ อนุมัติไม่ได้ ต้องนับใหม่
     const again = await api.submitStockCount({ lines: [{ loc: 'RCV-01', partNo: 'H6906002', counted: 0 }] })
-    await api.postRequisition({ kind: 'line', docDate: '2026-10-16', lines: [{ partNo: 'H6906002', qty: 900 }] })
+    await api.postRequisition({ kind: 'line', docDate: '2026-10-16', modelCode: 'TWIN', lines: [{ partNo: 'H6906002', qty: 900 }] })
     await expect(api.decideStockCount(again.id, true)).rejects.toThrow(/ไม่พอลด/)
     expect(await qty('H6906002')).toBe(50)
   })

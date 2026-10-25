@@ -206,10 +206,14 @@ export interface Tx {
   createdCode: string | null
   createdAt: string
   decidedCode: string | null
+  /** เวลาอนุมัติ (ปรับยอดลงบัญชีคุมวันนี้) */
+  decidedAt?: string | null
   /** ใบเบิกที่ทำให้เกิดรายการนี้ (เบิก/คืน) */
   requisitionId?: string | null
   /** ย้าย: scan = หน้าสแกน · list = เลือกจากรายการ */
   via?: 'scan' | 'list' | null
+  /** คำขอปรับยอดที่รออนุมัติ: ยอดในกล่องตอนนี้ (ต่างจาก qty = ยอดเปลี่ยนหลังขอ อนุมัติไม่ได้) */
+  nowQty?: number | null
 }
 
 export interface StorageLoc {
@@ -376,6 +380,8 @@ export interface LedgerRow {
   docNo: string | null
   lot: string | null
   note: string | null
+  /** Model ที่รายการนี้เข้าบัญชีคุม: ตามเอกสาร ⇒ ใบรับที่ของมา ⇒ Model เดียวของ part · null = part ร่วมที่ระบุ Model ไม่ได้ */
+  model: string | null
 }
 
 /** ยอดต่อ part ตอนปิดเดือน */
@@ -402,6 +408,8 @@ export interface StockClosing {
   accountBy: string | null
   accountAt: string | null
   note: string | null
+  /** ผู้ใช้คนนี้ปิดยอดเอง / รับทราบฝั่งไหนไปแล้ว (คนปิดยอดรับทราบเองไม่ได้ · คนเดียวรับทราบทั้งสองฝั่งไม่ได้) */
+  mine?: { closed: boolean; planning: boolean; account: boolean }
 }
 
 /** ใบตรวจนับจากไฟล์ Excel (รอผู้มีสิทธิ์อนุมัติก่อนปรับยอด) */
@@ -413,6 +421,8 @@ export interface ReceiptRow {
   model: string | null
   partNo: string
   qty: number
+  /** ในนั้นเสียหายตอนตรวจรับ (แยกเข้ากล่อง NG) */
+  damaged: number
   /** รับของทดแทน NG */
   replacement: boolean
 }
@@ -656,6 +666,24 @@ export interface InvoiceView {
   lines: InvoiceLine[]
   grns: Grn[]
   received: { partNo: string; qty: number }[]
+}
+
+// ===== ตามรอยเอกสาร/กล่อง (อ่านอย่างเดียว) =====
+/** เอกสารที่เลขตรงกับคำค้น */
+export interface DocMatches {
+  /** ตรงเลข GRN / Packing List / Invoice */
+  grns: Grn[]
+  /** ตรงเลขใบตรวจรับ / Packing List */
+  checks: ReceiptCheck[]
+  /** ตรงเลข RQ / เลขใบเบิกกระดาษ */
+  reqs: Requisition[]
+  invoices: { id: string; invoiceNo: string; status: InvoiceStatus }[]
+}
+
+/** รายการเคลื่อนไหว + กล่องนี้มาจากใบรับไหน + ใบเบิกของรายการเบิก/คืน */
+export interface TraceTx extends Tx {
+  box: { grnId: string | null; grnNo: string | null; plRef: string | null; invoiceNo: string | null; caseNo: string | null; modelCode: string | null } | null
+  req: { id: string; reqNo: string; docNo: string | null; kind: RequisitionKind; modelCode: string | null; docDate: string; toDept: string | null; reconciledBy: string | null; status: 'posted' | 'void' } | null
 }
 
 export interface PermRow {
