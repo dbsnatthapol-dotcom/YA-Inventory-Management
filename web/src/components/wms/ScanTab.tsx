@@ -92,7 +92,8 @@ export function ScanTab({
   // ค่าการเบิกคงไว้ข้ามกล่อง: สแกนหลายกล่องของใบเบิกเดียวกันได้ต่อเนื่อง
   const [issue, setIssue] = useState<{ kind: ScanIssuePayload['kind']; model: string; doc: string; to: string }>({ kind: 'line', model: '', doc: '', to: '' })
   // ตรวจนับแบบไม่เห็นยอด: ผลการนับล่าสุดที่ไม่ตรงกับระบบ (ใช้ส่งขอปรับยอด)
-  const [miss, setMiss] = useState<{ itemId: string; partNo: string; counted: number; system: number } | null>(null)
+  // นับไม่ตรง: revealed = บอกยอดระบบแล้ว (นับครั้งที่ 2 ขึ้นไป) · first = ยอดที่นับครั้งก่อน
+  const [miss, setMiss] = useState<{ itemId: string; partNo: string; counted: number; system: number; revealed: boolean; first?: number } | null>(null)
   const [sound, setSound] = useState(soundOn)
   const scanInput = useRef<HTMLInputElement>(null)
   const boxCard = useRef<HTMLDivElement>(null)
@@ -249,13 +250,22 @@ export function ScanTab({
           return `${r.appended ? 'เพิ่มในใบเบิก' : 'ออกใบเบิก'} ${r.reqNo}${r.docNo ? ` (เลขใบเบิก ${r.docNo})` : ''} · ${item!.partNo} −${fmt(q)} · ${where}`
         })
       case 'COUNT':
-        // นับแบบไม่เห็นยอด: บันทึกก่อน แล้วระบบบอกผล · ไม่ตรง ⇒ นับซ้ำ แล้วค่อยส่งขอปรับยอด
+        // นับแบบไม่เห็นยอด: ครั้งแรกไม่ตรงบอกแค่ "นับซ้ำ" (ไม่บอกยอดระบบ ให้นับซ้ำจริง ๆ) · ครั้งที่ 2 ค่อยบอกยอดระบบ แล้วส่งขอปรับยอด
         return run(async () => {
           const c = form.qty === '' ? NaN : n(form.qty)
           const diff = await api.scanCountItem(item!.id, c)
-          setMiss(diff === 0 ? null : { itemId: item!.id, partNo: item!.partNo, counted: c, system: c - diff })
-          if (diff === 0) return `${item!.partNo} นับได้ ${fmt(c)} · ตรงกับระบบ`
-          return { tone: 'warn', text: `${item!.partNo} นับได้ ${fmt(c)} · ระบบมี ${fmt(c - diff)} (ต่าง ${signed(diff)}) · นับซ้ำอีกครั้ง ถ้าได้เท่าเดิม${canAdjust ? 'ให้ส่งขอปรับยอดด้านล่าง' : ' แจ้งหัวหน้าโซน'}` }
+          const prev = miss && miss.itemId === item!.id ? miss : null
+          if (diff === 0) {
+            setMiss(null)
+            return `${item!.partNo} นับได้ ${fmt(c)} · ตรงกับระบบ${prev ? ` (ครั้งก่อนนับได้ ${fmt(prev.counted)})` : ''}`
+          }
+          if (!prev) {
+            setMiss({ itemId: item!.id, partNo: item!.partNo, counted: c, system: c - diff, revealed: false })
+            return { tone: 'warn', text: `${item!.partNo} นับได้ ${fmt(c)} · ไม่ตรงกับระบบ · นับซ้ำอีกครั้งตั้งแต่ต้น (ระบบบอกยอดหลังนับครั้งที่ 2)` }
+          }
+          setMiss({ itemId: item!.id, partNo: item!.partNo, counted: c, system: c - diff, revealed: true, first: prev.counted })
+          const twice = prev.counted === c ? 'สองครั้งได้เท่ากัน' : `ครั้งก่อนได้ ${fmt(prev.counted)} · สองครั้งไม่เท่ากัน นับอีกรอบให้แน่ก่อน`
+          return { tone: 'warn', text: `${item!.partNo} นับซ้ำได้ ${fmt(c)} (${twice}) · ระบบมี ${fmt(c - diff)} (ต่าง ${signed(diff)}) · ${canAdjust ? 'ส่งขอปรับยอดด้านล่าง' : 'แจ้งหัวหน้าโซน'}` }
         })
       case 'QI':
         return run(async () => {
@@ -523,7 +533,10 @@ export function ScanTab({
                 <BigButton disabled={busy || form.qty === ''} onClick={submit}>
                   บันทึกการนับ
                 </BigButton>
-                {missHere && (
+                {missHere && !missHere.revealed && (
+                  <Alert tone="warn">ครั้งแรกนับได้ {fmt(missHere.counted)} ไม่ตรงกับระบบ · นับใหม่ทั้งกล่องโดยไม่ดูตัวเลขเดิม แล้วใส่ยอดที่นับได้อีกครั้ง</Alert>
+                )}
+                {missHere?.revealed && (
                   <div className="flex flex-col gap-2 rounded-lg bg-amber-50 p-3 ring-1 ring-amber-200">
                     <p className="text-sm font-medium text-amber-900">
                       นับได้ {fmt(missHere.counted)} · ระบบมี {fmt(missHere.system)} (ต่าง {signed(missHere.counted - missHere.system)})

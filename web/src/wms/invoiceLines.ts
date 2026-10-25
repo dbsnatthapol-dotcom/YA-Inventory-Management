@@ -64,3 +64,15 @@ export function partsOffInvoice(lines: { partNo: string; countedQty: number; inv
   }
   return [...by].filter(([, v]) => v.invoice !== null && v.invoice !== v.counted).map(([p]) => p)
 }
+
+/** ยอด Invoice ต่อ part สำหรับหน้ารับของ: part เดียวกันหลายบรรทัดรวมยอด · เลขบรรทัดแรกของ part */
+export function invoiceByPart(lines: { partNo: string; qty: number; lineNo?: number | null }[], canon: (partNo: string) => string): Map<string, { qty: number; lineNo: number | null }> {
+  const by = new Map<string, { qty: number; lineNo: number | null }>()
+  for (const l of lines) {
+    const part = canon(l.partNo)
+    const cur = by.get(part)
+    if (cur) cur.qty += l.qty
+    else by.set(part, { qty: l.qty, lineNo: l.lineNo ?? null })
+  }
+  return by
+}

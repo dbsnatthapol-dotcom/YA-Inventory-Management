@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import logoUrl from '../../assets/uam-logo.png'
 import { BRAND } from '../../data/brand'
 import type { FactoryLayout } from '../../types/layout'
@@ -50,6 +50,11 @@ export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Pr
   const [tab, setTab] = useState<MobileTab>(deepLink?.kind === 'grn' ? 'labels' : deepLink?.kind === 'lpn' ? 'scan' : 'work')
   const [scan, setScan] = useState<{ code: string | null; mode?: ScanMode; key: number }>({ code: deepLink?.kind === 'lpn' ? deepLink.code : null, key: 0 })
   const [grnId, setGrnId] = useState<string | null>(null)
+  // เปลี่ยนแท็บ ⇒ เริ่มที่บนสุดเสมอ (เช่น ออก GRN แล้วเปิดหน้าป้าย ต้องเห็นเลข GRN ก่อนปุ่มยกเลิกใบรับ)
+  const mainRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0 })
+  }, [tab, grnId])
   // ผังคลัง: โซน/ช่องที่เปิดจากหน้าค้นหา และกล่องที่ไฮไลต์
   const [focus, setFocus] = useState<PlanFocus | null>(null)
   const [highlight, setHighlight] = useState<ReadonlySet<string> | null>(null)
@@ -204,7 +209,7 @@ export function MobileShell({ layout, deepLink, user, onSignOut, onDesktop }: Pr
       </header>
 
       <TraceContext.Provider value={openTrace}>
-        <main className={`min-h-0 flex-1 ${tab === 'map' ? 'overflow-hidden' : 'overflow-y-auto'}`} onClick={() => menu && setMenu(false)}>
+        <main ref={mainRef} className={`min-h-0 flex-1 ${tab === 'map' ? 'overflow-hidden' : 'overflow-y-auto'}`} onClick={() => menu && setMenu(false)}>
           {tab === 'map' ? (
             <WarehousePlan layout={layout} lpns={lpns} error={lpnError} focus={focus} highlight={highlight} onOpenLpn={scanLpn} />
           ) : (

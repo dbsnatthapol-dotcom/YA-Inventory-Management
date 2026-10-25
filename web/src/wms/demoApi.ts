@@ -215,6 +215,8 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
     return (line && db.grns.find((g) => g.id === line.grnId)?.modelCode) || (box && db.grns.find((g) => g.id === box.grnId)?.modelCode) || soleModel(part ?? null)
   }
   const log = (t: Partial<Tx> & Pick<Tx, 'kind'>) => {
+    // จำนวนเป็นจำนวนเต็ม (ชิ้น) เหมือน trigger wms_whole_qty (0025)
+    for (const v of [t.qty, t.newQty, t.passQty, t.ngQty]) if (v != null && !Number.isInteger(v)) fail(`จำนวนต้องเป็นจำนวนเต็ม (ชิ้น) · ได้ ${v}`)
     // ใบ QC / NG ที่ไม่มี Model: ติดล็อกปิดเดือนตาม Model ของใบรับที่ของมา (เหมือน trigger wms_tx_month_lock 0023)
     const req = (t.kind === 'ISSUE' || t.kind === 'RETURN') && t.requisitionId ? db.requisitions.find((r) => r.id === t.requisitionId) : undefined
     if (req && !req.modelCode) assertOpen(itemModel(t.lpnItemId, t.lpnId, t.partNo), req.docDate)
@@ -241,6 +243,11 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
     })
   }
   const lpnById = (id: string) => db.lpns.find((l) => l.id === id) ?? fail('ไม่พบป้าย')
+  // นับ / ขอปรับยอดได้เฉพาะกล่องที่ใช้งาน หรือใช้หมดแล้ว (เหมือน scan_count_item / scan_adjust_request 0025)
+  const boxInUse = (lpn: Lpn, what: string) => {
+    if (lpn.status !== 'active' && lpn.status !== 'empty')
+      fail(`กล่อง ${lpn.lpnNo} ${lpn.status === 'void' ? 'ถูกยกเลิก (ยกเลิกใบรับ)' : 'ถูกรวมเข้ากล่องอื่น'}แล้ว · ${what}เฉพาะกล่องที่ใช้งานอยู่`)
+  }
   const itemById = (id: string) => {
     for (const l of db.lpns) {
       const it = l.items.find((i) => i.id === id)
@@ -918,7 +925,8 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
     scanAdjustRequest: (itemId, newQty, reason) =>
       commit(() => {
         const { lpn, item } = itemById(itemId)
-        if (!(newQty >= 0)) fail('ใส่ยอดที่ถูกต้อง')
+        boxInUse(lpn, 'ขอปรับยอดได้')
+        if (!(newQty >= 0) || !Number.isInteger(newQty)) fail('ใส่ยอดที่ถูกต้อง (จำนวนเต็ม)')
         if (!reason.trim()) fail('ระบุเหตุผลก่อนส่ง')
         if (newQty === item.qty) fail('ยอดเท่าเดิม ไม่ต้องแก้ไข')
         if (db.tx.some((t) => t.lpnItemId === itemId && t.kind === 'ADJ' && t.status === 'pending')) fail('มีคำขอแก้ไขยอดของรายการนี้รออนุมัติอยู่แล้ว')
@@ -948,7 +956,8 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
     scanCountItem: (itemId, counted) =>
       commit(() => {
         const { lpn, item } = itemById(itemId)
-        if (!(counted >= 0)) fail('ใส่จำนวนที่นับได้')
+        boxInUse(lpn, 'นับได้')
+        if (!(counted >= 0) || !Number.isInteger(counted)) fail('ใส่จำนวนที่นับได้ (จำนวนเต็ม)')
         log({ kind: 'COUNT', lpnId: lpn.id, lpnNo: lpn.lpnNo, lpnItemId: item.id, partNo: item.partNo, qty: item.qty, newQty: counted, fromLoc: lpn.locationCode })
         return counted - item.qty
       }),
@@ -1135,6 +1144,8 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
       }),
     postRequisition: (p) =>
       commit(() => {
+        // เหมือน trigger requisition_needs_model (0025)
+        if (p.kind === 'line' && !p.modelCode) fail('ใบเบิกเข้าไลน์ต้องระบุ Model (ไม่งั้นกระทบ FM-P-005 ไม่ได้)')
         assertOpen(p.modelCode, p.docDate || today())
         const lines = p.lines.filter((l) => l.qty > 0)
         if (!lines.length) fail('ไม่มีรายการที่จะเบิก')

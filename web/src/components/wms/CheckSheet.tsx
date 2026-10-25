@@ -458,7 +458,7 @@ function LineRow({
             placeholder="นับได้"
             value={qty}
             onChange={(e) => setQty(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && changed && save()}
+            onKeyDown={(e) => e.key === 'Enter' && changed && !busy && save()}
             aria-label={`นับได้ ${l.partNo}`}
           />
           {changed && qty !== '' ? (

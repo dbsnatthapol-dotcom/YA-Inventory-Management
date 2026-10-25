@@ -53,14 +53,14 @@ export function MyWork({ onScan, onTab, onOpenCheck, onMove, onFlow }: Props) {
   const print = usePrintQueue(ready && can('label.print'), ver)
   const desk = !!onTab
   // งานที่ทำที่จอคอม: Invoice ที่ยังไม่ปิด
-  const [invoices, setInvoices] = useState<{ open: number; reported: number }>({ open: 0, reported: 0 })
+  const [invoices, setInvoices] = useState<{ open: number; reported: number; failed?: boolean }>({ open: 0, reported: 0 })
   useEffect(() => {
     if (!ready || !desk || !(can('invoice.close') || can('invoice.report'))) return
     let alive = true
     api
       .listInvoices(100)
       .then((list) => alive && setInvoices({ open: list.filter((i) => i.status === 'open').length, reported: list.filter((i) => i.status === 'discrepancy_reported').length }))
-      .catch(() => undefined)
+      .catch(() => alive && setInvoices((v) => ({ ...v, failed: true })))
     return () => {
       alive = false
     }
@@ -117,9 +117,10 @@ export function MyWork({ onScan, onTab, onOpenCheck, onMove, onFlow }: Props) {
 
   const q = work.queues
   // deskOnly = มือถือดูได้แต่ทำที่จอคอม (ไม่นับรวมในงานค้างของคนหน้างาน)
-  const sections: { key: string; count: number; node: ReactNode; deskOnly?: boolean }[] = []
+  // failed = โหลดข้อมูลของส่วนนี้ไม่ได้ (ต้องไม่บอกว่า "ไม่มีงานค้าง")
+  const sections: { key: string; count: number; node: ReactNode; deskOnly?: boolean; failed?: boolean }[] = []
   if (can('receive.create'))
-    sections.push({ key: 'checks', count: checks.length, node: <CheckSection checks={checks} onOpen={onOpenCheck} /> })
+    sections.push({ key: 'checks', count: checks.length, failed: !!snap && snap.checks === null, node: <CheckSection checks={checks} onOpen={onOpenCheck} /> })
   if (q && can('scan.qi'))
     sections.push({
       key: 'qi',
@@ -159,6 +160,7 @@ export function MyWork({ onScan, onTab, onOpenCheck, onMove, onFlow }: Props) {
     sections.push({
       key: 'approve',
       count: approvals.total,
+      failed: !!approvals.error,
       deskOnly: !desk,
       node: (
         <DeskSection
@@ -174,6 +176,7 @@ export function MyWork({ onScan, onTab, onOpenCheck, onMove, onFlow }: Props) {
     sections.push({
       key: 'print',
       count: print.queued.length,
+      failed: !!print.error,
       deskOnly: !desk,
       node: (
         <DeskSection
@@ -192,13 +195,15 @@ export function MyWork({ onScan, onTab, onOpenCheck, onMove, onFlow }: Props) {
     sections.push({
       key: 'invoice',
       count: invoices.open,
+      failed: invoices.failed,
       node: <DeskSection title="Invoice ยังรับไม่ครบ" count={invoices.open} detail={invoices.reported ? `แจ้งผู้ขายแล้วรอของ ${invoices.reported}` : 'ตรวจยอดรับกับ Invoice แล้วปิด หรือแจ้งผู้ขาย'} action="กระทบยอด" onGo={() => onTab('invoice')} />,
     })
   if (onTab && (can('ledger.ack.planning') || can('ledger.ack.account')))
-    sections.push({ key: 'ack', count: acks, node: <DeskSection title="ปิดยอดเดือน รอคุณรับทราบ" count={acks} detail="บัญชีคุม FM-P-537" action="ไปรับทราบ" onGo={() => onTab('ledger')} /> })
+    sections.push({ key: 'ack', count: acks, failed: !!snap && snap.closings === null, node: <DeskSection title="ปิดยอดเดือน รอคุณรับทราบ" count={acks} detail="บัญชีคุม FM-P-537" action="ไปรับทราบ" onGo={() => onTab('ledger')} /> })
 
   const busy = sections.filter((s) => s.count > 0)
-  const idle = sections.filter((s) => s.count === 0)
+  const idle = sections.filter((s) => s.count === 0 && !s.failed)
+  const failed = sections.filter((s) => s.failed && s.count === 0)
   const total = busy.filter((x) => !x.deskOnly).reduce((s, x) => s + x.count, 0)
   const atDesk = busy.filter((x) => x.deskOnly).reduce((s, x) => s + x.count, 0)
 
@@ -212,8 +217,12 @@ export function MyWork({ onScan, onTab, onOpenCheck, onMove, onFlow }: Props) {
             {work.at && ` · อัปเดต ${time(work.at)} น.`}
           </p>
         </div>
-        <span className={`rounded-full px-3 py-1 text-sm font-semibold ring-1 ${total ? 'bg-amber-50 text-amber-800 ring-amber-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200'}`}>
-          {total ? `ค้าง ${fmt(total)} รายการ` : '✓ ไม่มีงานค้าง'}
+        <span
+          className={`rounded-full px-3 py-1 text-sm font-semibold ring-1 ${
+            !work.at ? (work.error ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-slate-50 text-slate-500 ring-slate-200') : total ? 'bg-amber-50 text-amber-800 ring-amber-200' : failed.length ? 'bg-slate-50 text-slate-600 ring-slate-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200'
+          }`}
+        >
+          {!work.at ? (work.error ? 'โหลดงานไม่สำเร็จ' : 'กำลังโหลด…') : total ? `ค้าง ${fmt(total)} รายการ` : failed.length ? 'โหลดงานไม่ครบ' : '✓ ไม่มีงานค้าง'}
         </span>
         {atDesk > 0 && (
           <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-600 ring-1 ring-slate-200" title="งานที่ทำที่จอคอม (คิวพิมพ์ / อนุมัติ) ไม่นับรวมงานค้างหน้างาน">
@@ -236,6 +245,9 @@ export function MyWork({ onScan, onTab, onOpenCheck, onMove, onFlow }: Props) {
       )}
 
       {work.error && <Alert tone="bad">โหลดงานไม่สำเร็จ: {work.error}</Alert>}
+      {work.at && failed.length > 0 && (
+        <Alert tone="warn">โหลดไม่ได้: {failed.map((s) => SECTION_NAME[s.key]).join(' · ')} · อาจมีงานค้างที่ยังไม่แสดง กด ↻ อัปเดต</Alert>
+      )}
       {!sections.length && <Alert tone="info">บัญชีนี้ยังไม่มีงานหน้างาน · ดูภาพรวมหรือผังคลังได้จากเมนู</Alert>}
       {!work.at && !work.error && sections.length > 0 && <p className="py-8 text-center text-slate-500">กำลังโหลดงาน…</p>}
 

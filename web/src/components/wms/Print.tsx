@@ -42,6 +42,8 @@ export function PrintDialog({
   const [asking, setAsking] = useState(false)
   const [copies, setCopies] = useState(initialCopies)
   const ask = !!onPrinted
+  // ย่อตัวอย่างให้พอดีจอแคบ: กว้างหน้า (มม. × 3.78 px) + ขอบของหน้าต่างนี้
+  const fit = typeof window === 'undefined' ? 1 : Math.min(1, (window.innerWidth - 88) / ((format === 'label' ? 100 : 210) * 3.78))
 
   useEffect(() => {
     if (!printing) return
@@ -97,7 +99,10 @@ export function PrintDialog({
             </div>
           )}
           <div className="m-5 mt-3 min-h-0 flex-1 overflow-auto rounded-xl bg-slate-100 p-4">
-            <div className="flex flex-wrap justify-center gap-4">{children}</div>
+            {/* safe center: หน้า A4 กว้างกว่าจอมือถือต้องเลื่อนดูได้ทั้งสองข้าง · จอแคบย่อให้พอดีความกว้าง (ตอนพิมพ์ใช้ขนาดจริง) */}
+            <div className="flex flex-wrap gap-4 [justify-content:safe_center]" style={fit < 1 ? { zoom: fit } : undefined}>
+              {children}
+            </div>
           </div>
           {asking ? (
             <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-200 bg-amber-50 px-5 py-3">

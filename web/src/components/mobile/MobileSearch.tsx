@@ -109,7 +109,9 @@ function HitCard({ hit, onScanLpn, onShowZone }: { hit: StockHit; onScanLpn: (lp
             <div className="min-w-0 flex-1">
               <div className="font-mono text-sm font-semibold text-slate-800">{hit.kind === 'part' ? b.location : b.partNo}</div>
               <div className="truncate text-xs text-slate-500">
-                {[b.caseNo ? `เคส ${b.caseNo}` : null, b.lpnNo, `${fmt(b.qty)} ชิ้น`, hit.kind === 'place' || hit.kind === 'doc' ? b.location : null, b.hold ? 'รอ MI3' : null].filter(Boolean).join(' · ')}
+                {/* ค้นจากช่อง / PL + เคส: รหัสช่องขึ้นต้นบรรทัด (จอแคบตัดท้ายบรรทัดแล้วยังเห็นว่าอยู่ช่องไหน) */}
+                {(hit.kind === 'place' || hit.kind === 'doc') && <b className="font-mono text-slate-700">{b.location} · </b>}
+                {[b.caseNo ? `เคส ${b.caseNo}` : null, b.lpnNo, `${fmt(b.qty)} ชิ้น`, b.hold ? 'รอ MI3' : null].filter(Boolean).join(' · ')}
               </div>
             </div>
             {b.zoneId && hit.kind === 'part' && <MapButton small onClick={() => onShowZone(b.zoneId!, [b.lpnNo])} />}
