@@ -157,8 +157,13 @@ begin
   return new;
 end;
 $$;
-drop trigger if exists wms_tx_month_lock on public.wms_tx;
-create trigger wms_tx_month_lock before insert on public.wms_tx for each row execute function public.trg_wms_tx_month_lock();
+do $$
+begin
+  if not exists (select 1 from pg_trigger where tgname = 'wms_tx_month_lock' and tgrelid = 'public.wms_tx'::regclass) then
+    create trigger wms_tx_month_lock before insert on public.wms_tx for each row execute function public.trg_wms_tx_month_lock();
+  end if;
+end;
+$$;
 
 -- ===================== A9 FM-P-005 ห้ามซ้ำ + ล็อกระหว่างกระทบยอด =====================
 create unique index if not exists requisitions_fm005_doc_uq on public.requisitions (env, doc_no) where kind = 'fm005' and status = 'posted';
