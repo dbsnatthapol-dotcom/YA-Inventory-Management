@@ -156,7 +156,7 @@ const toLpn = (r: Row): Lpn => {
 }
 
 const TX_SELECT =
-  'id, kind, doc_no, lpn_id, lpn_item_id, part_no, qty, new_qty, pass_qty, ng_qty, from_loc, to_loc, ref, reason, status, created_code, created_at, decided_code, via, requisition_id, lpns(lpn_no)'
+  'id, kind, doc_no, lpn_id, lpn_item_id, part_no, qty, new_qty, pass_qty, ng_qty, from_loc, to_loc, ref, reason, status, created_code, created_at, decided_code, decided_at, via, requisition_id, lpns(lpn_no)'
 // ตามรอย: รายการเคลื่อนไหว + ใบรับของกล่อง + ใบเบิก (ระบุ FK เพราะ wms_tx อ้าง lpns และ lpn_items)
 const TRACE_TX_SELECT =
   'id, kind, doc_no, lpn_id, lpn_item_id, part_no, qty, new_qty, pass_qty, ng_qty, from_loc, to_loc, ref, reason, status, created_code, created_at, decided_code, via, requisition_id, ' +
@@ -182,6 +182,7 @@ const toTx = (r: Row): Tx => ({
   createdCode: str(r.created_code),
   createdAt: String(r.created_at),
   decidedCode: str(r.decided_code),
+  decidedAt: str(r.decided_at),
   requisitionId: str(r.requisition_id),
   via: r.via === 'scan' || r.via === 'list' ? r.via : null,
 })
@@ -719,11 +720,17 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
           docNo: str(r.doc_no),
           lot: str(r.lot),
           note: str(r.note),
+          model: str(r.model_code),
         }),
       )
     },
     async listClosings() {
-      const rows = (await run(sb.from('stock_closings').select('*').order('month', { ascending: false }).limit(500))) as Row[]
+      const [rows, me] = await Promise.all([
+        run(sb.from('stock_closings').select('*').order('month', { ascending: false }).limit(500)) as Promise<Row[]>,
+        sb.auth.getSession().then(({ data }) => data.session?.user.id ?? null),
+      ])
+      // คนปิดยอดรับทราบเองไม่ได้ · คนเดียวรับทราบทั้งสองฝั่งไม่ได้ (stock_close_ack 0023)
+      const mine = (uid: unknown) => !!me && uid === me
       return rows.map(
         (r): StockClosing => ({
           id: String(r.id),
@@ -738,6 +745,7 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
           accountBy: str(r.account_by),
           accountAt: str(r.account_at),
           note: str(r.note),
+          mine: { closed: mine(r.closed_uid), planning: mine(r.planning_uid), account: mine(r.account_uid) },
         }),
       )
     },

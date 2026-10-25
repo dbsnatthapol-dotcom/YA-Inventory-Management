@@ -43,6 +43,18 @@ export function ClosingPanel({ model, month, sheets, closing, onChanged }: { mod
     if (reason?.trim()) void act(() => api.reopenMonth(closed!.id, reason), `เปิดเดือน ${month} แล้ว · แก้ไขเสร็จให้ปิดยอดใหม่`)
   }
   const ack = (side: 'planning' | 'account') => void act(() => api.ackClosing(closed!.id, side), side === 'planning' ? 'Planning รับทราบยอดแล้ว' : 'บัญชีรับทราบยอดแล้ว')
+  // คนปิดยอดรับทราบเองไม่ได้ · คนเดียวรับทราบทั้งสองฝั่งไม่ได้ (ฐานข้อมูลก็ไม่ยอม)
+  const ackButton = (side: 'planning' | 'account', label: string) => {
+    const why = closed?.mine?.closed ? 'คุณเป็นคนปิดยอด · ให้คนอื่นกดรับทราบ' : closed?.mine?.[side === 'planning' ? 'account' : 'planning'] ? 'คุณรับทราบอีกฝั่งไปแล้ว · ให้คนอื่นกดรับทราบ' : null
+    return (
+      <span className="flex flex-col items-end gap-1">
+        <BigButton disabled={busy || !!why} onClick={() => ack(side)}>
+          {label}
+        </BigButton>
+        {why && <span className="text-xs text-slate-500">{why}</span>}
+      </span>
+    )
+  }
 
   const steps: { title: string; by: string | null; at: string | null; action?: React.ReactNode }[] = [
     { title: '① คลังปิดยอด', by: closed?.closedBy ?? null, at: closed?.closedAt ?? null },
@@ -50,21 +62,13 @@ export function ClosingPanel({ model, month, sheets, closing, onChanged }: { mod
       title: '② Planning รับทราบ',
       by: closed?.planningBy ?? null,
       at: closed?.planningAt ?? null,
-      action: closed && !closed.planningAt && can('ledger.ack.planning') && (
-        <BigButton disabled={busy} onClick={() => ack('planning')}>
-          รับทราบ (Planning)
-        </BigButton>
-      ),
+      action: closed && !closed.planningAt && can('ledger.ack.planning') && ackButton('planning', 'รับทราบ (Planning)'),
     },
     {
       title: '③ บัญชี รับทราบ',
       by: closed?.accountBy ?? null,
       at: closed?.accountAt ?? null,
-      action: closed && !closed.accountAt && can('ledger.ack.account') && (
-        <BigButton disabled={busy} onClick={() => ack('account')}>
-          รับทราบ (บัญชี)
-        </BigButton>
-      ),
+      action: closed && !closed.accountAt && can('ledger.ack.account') && ackButton('account', 'รับทราบ (บัญชี)'),
     },
   ]
 

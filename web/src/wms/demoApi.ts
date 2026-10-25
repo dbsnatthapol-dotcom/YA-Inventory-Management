@@ -2,7 +2,7 @@ import { sampleLayout } from '../data/factoryLayout'
 import { MODELS, PARTS, ZONE_RULES } from '../inventory/masterData'
 import type { WmsApi } from './api'
 import { layoutLocations, zoneCodeOf } from './locations'
-import { addDays, bangkokDay, buildLedger, monthRange } from './ledger'
+import { addDays, bangkokDay, buildLedger, monthRange, onDocDate, rowsOfModel } from './ledger'
 import { tidyInvoiceLines } from './invoiceLines'
 import { canonPartNo, partRevision, partsOfModel, resolvePart } from './partCodes'
 import { HEAD_KINDS } from './readiness'
@@ -75,6 +75,10 @@ const DEMO_HEAD = { id: 'demo-head', employeeCode: 'DEMO-WH', fullName: 'เต�
 // v2: รหัส part เป็นเลขฐาน (ข้อมูลสาธิตเก่าที่มี /A /B เริ่มใหม่)
 const KEY = 'uam-wms-demo-v2'
 const ME = 'DEMO'
+/** ชื่อผู้ใช้สาธิตบนเอกสาร (ปิดยอด / รับทราบ) */
+const DEMO_ME = `ผู้ใช้สาธิต (${ME})`
+/** สาธิต: ผู้ปิดยอด (คนละคนกับผู้ใช้สาธิต ⇒ ผู้ใช้สาธิตกดรับทราบได้) */
+const DEMO_CLOSER = 'หัวหน้าคลังสาธิต (DEMO-MGR)'
 
 function seed(): DemoDb {
   return {
@@ -198,8 +202,23 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
     db.tx
       .filter((t) => t.kind === 'COUNT' && bangkokDay(t.createdAt) >= fromDay)
       .map((t) => ({ at: t.createdAt, day: bangkokDay(t.createdAt), loc: t.fromLoc, itemId: t.lpnItemId, partNo: t.partNo ?? '', system: t.qty ?? 0, counted: t.newQty ?? 0, code: t.createdCode }))
-  const log = (t: Partial<Tx> & Pick<Tx, 'kind'>) =>
-    db.tx.unshift({
+  // Model ของรายการในบัญชีคุม (เหมือน ledger_item_model / stock_ledger_entries 0023):
+  // ใบรับที่ของชิ้นนั้นมา (รายการในกล่อง ⇒ กล่อง) ⇒ Model เดียวของ part · part ร่วมที่ไม่รู้ ⇒ null
+  const soleModel = (part: string | null) => {
+    const models = [...new Set(db.master.parts.find((p) => p.partNo === part)?.models ?? [])]
+    return models.length === 1 ? models[0] : null
+  }
+  const itemModel = (itemId: string | null | undefined, lpnId: string | null | undefined, part: string | null | undefined) => {
+    const item = itemId ? db.lpns.flatMap((l) => l.items).find((i) => i.id === itemId) : undefined
+    const line = item ? db.grnLines.find((g) => g.id === item.grnLineId) : undefined
+    const box = lpnId ? db.lpns.find((l) => l.id === lpnId) : undefined
+    return (line && db.grns.find((g) => g.id === line.grnId)?.modelCode) || (box && db.grns.find((g) => g.id === box.grnId)?.modelCode) || soleModel(part ?? null)
+  }
+  const log = (t: Partial<Tx> & Pick<Tx, 'kind'>) => {
+    // ใบ QC / NG ที่ไม่มี Model: ติดล็อกปิดเดือนตาม Model ของใบรับที่ของมา (เหมือน trigger wms_tx_month_lock 0023)
+    const req = (t.kind === 'ISSUE' || t.kind === 'RETURN') && t.requisitionId ? db.requisitions.find((r) => r.id === t.requisitionId) : undefined
+    if (req && !req.modelCode) assertOpen(itemModel(t.lpnItemId, t.lpnId, t.partNo), req.docDate)
+    return db.tx.unshift({
       id: uid(),
       docNo: null,
       lpnId: null,
@@ -220,6 +239,7 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
       decidedCode: null,
       ...t,
     })
+  }
   const lpnById = (id: string) => db.lpns.find((l) => l.id === id) ?? fail('ไม่พบป้าย')
   const itemById = (id: string) => {
     for (const l of db.lpns) {
@@ -706,6 +726,8 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         const to = location?.trim().toUpperCase() || src[0].locationCode
         if ((ng > 0) !== (db.master.locations.find((x) => x.code === to)?.kind === 'ng'))
           fail(ng ? 'กล่อง NG รวมแล้วต้องอยู่พื้นที่กัก NG · เลือกช่อง NG' : 'รวมกล่องของดีไปไว้พื้นที่กัก NG ไม่ได้')
+        // กล่องรวมใช้วันรับเข้าเก่าสุดของกล่องต้นทาง · เคสเดียวกันทุกกล่อง ⇒ คงเลขเคส (เหมือน merge_lpns 0023)
+        const cases = new Set(src.map((l) => l.caseNo ?? null))
         const lpn: Lpn = {
           id: uid(),
           lpnNo: nextDoc('LPN'),
@@ -713,7 +735,8 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
           locationCode: to,
           hold: src.some((l) => l.hold),
           status: 'active',
-          createdAt: nowIso(),
+          createdAt: src.map((l) => l.createdAt).sort()[0],
+          caseNo: cases.size === 1 ? [...cases][0] : null,
           items: src.flatMap((l) => l.items),
         }
         lpn.items.forEach((i) => {
@@ -757,7 +780,8 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
       commit(() => {
         const box = lpnById(lpnId)
         if (box.status !== 'active') fail('ไม่พบป้าย หรือป้ายนี้ใช้งานไม่ได้แล้ว')
-        const lpn: Lpn = { id: uid(), lpnNo: nextDoc('LPN'), grnId: box.grnId, locationCode: box.locationCode, hold: box.hold, status: 'active', createdAt: nowIso(), items: [] }
+        // กล่องใหม่ใช้วันรับเข้าและเลขเคสของกล่องเดิม (เหมือน split_lpn 0023 · FIFO ไม่เพี้ยน)
+        const lpn: Lpn = { id: uid(), lpnNo: nextDoc('LPN'), grnId: box.grnId, locationCode: box.locationCode, hold: box.hold, status: 'active', createdAt: box.createdAt, caseNo: box.caseNo ?? null, items: [] }
         for (const p of picks) {
           if (!(p.qty > 0)) continue
           const item = box.items.find((i) => i.id === p.itemId) ?? fail('รายการที่เลือกไม่ได้อยู่ในกล่องนี้')
@@ -910,6 +934,8 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         }
         t!.status = approve ? 'approved' : 'rejected'
         t!.decidedCode = ME
+        // บัญชีคุมลงวันที่อนุมัติ (A7)
+        t!.decidedAt = nowIso()
       }),
 
     scanCountItem: (itemId, counted) =>
@@ -1217,7 +1243,7 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
       const reqs = new Map(db.requisitions.map((r) => [r.id, r]))
       const rows: LedgerRow[] = []
       for (const t of [...db.tx].reverse()) {
-        if (!t.partNo || !want.has(t.partNo) || t.createdAt >= to) continue
+        if (!t.partNo || !want.has(t.partNo)) continue
         const ok = ['RECEIVE', 'ISSUE', 'RETURN'].includes(t.kind) || (t.kind === 'QI' && (t.ngQty ?? 0) > 0) || (t.kind === 'ADJ' && t.status === 'approved')
         if (!ok) continue
         const lpn = db.lpns.find((l) => l.id === t.lpnId)
@@ -1227,8 +1253,12 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         const inv = db.invoices.find((i) => i.id === grn?.invoiceId)
         const req = reqs.get(t.requisitionId ?? '')
         const reqCol = req?.kind === 'qc' ? 'qc' : req?.kind === 'ng' ? 'ng' : 'issue'
+        const issue = t.kind === 'ISSUE' || t.kind === 'RETURN'
+        // วันที่ลงบัญชี (เหมือน stock_ledger_entries 0023): ใบเบิก/FM-P-005 = วันที่ในเอกสาร · ปรับยอด = วันที่อนุมัติ
+        const at = issue && req ? onDocDate(t.createdAt, req.docDate) : t.kind === 'ADJ' ? (t.decidedAt ?? t.createdAt) : t.createdAt
+        if (at >= to) continue
         rows.push({
-          at: t.createdAt,
+          at,
           partNo: t.partNo,
           kind: t.kind,
           col: t.kind === 'RECEIVE' ? (grn?.replacement ? 'recv_rep' : 'recv') : t.kind === 'ISSUE' || t.kind === 'RETURN' ? reqCol : t.kind === 'QI' ? 'ng' : 'adj',
@@ -1239,18 +1269,22 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
           docNo: t.kind === 'ISSUE' || t.kind === 'RETURN' ? (req?.docNo ?? req?.reqNo ?? t.ref ?? t.docNo) : t.kind === 'RECEIVE' ? (grn?.grnNo ?? null) : t.docNo,
           lot: grn?.grnNo ?? null,
           note: t.reason ?? (req?.kind === 'fm005' ? 'กระทบยอด FM-P-005' : null),
+          model: (issue ? req?.modelCode : null) || itemModel(t.lpnItemId, t.lpnId, t.partNo),
         })
       }
-      return rows
+      return rows.sort((a, b) => a.at.localeCompare(b.at))
     },
     // สาธิต: ผังเก็บในเครื่อง (useLayoutEdits) — ที่นี่ปรับเฉพาะช่องเก็บให้ตรงกับผัง (กติกาเดียวกับ layout_save)
-    listClosings: async () => clone(db.closings),
+    // ผู้ใช้สาธิตคนนี้ปิดยอดเอง / รับทราบฝั่งไหนไปแล้ว (เหมือน listClosings ฝั่งฐานข้อมูล)
+    listClosings: async () =>
+      clone(db.closings.map((c) => ({ ...c, mine: { closed: c.closedBy === DEMO_ME, planning: c.planningBy === DEMO_ME, account: c.accountBy === DEMO_ME } }))),
     closeMonth: async (model, month, note) => {
       if (month >= today().slice(0, 7)) fail(`ปิดยอดได้เมื่อจบเดือน ${month} แล้ว`)
       const prev = db.closings.find((c) => c.modelCode === model && c.month === month)
       if (prev?.status === 'closed') fail(`${model} เดือน ${month} ปิดยอดไปแล้ว`)
       const parts = partsOfModel(db.master, model)
-      const sheets = buildLedger(await api.ledgerRows(parts.map((p) => p.partNo), monthRange(month).to), parts, month)
+      // ยอดของ Model นี้เท่านั้น (part ร่วมไม่ซ้ำในหลาย Model เหมือน ledger_month_totals 0023)
+      const sheets = buildLedger(rowsOfModel(await api.ledgerRows(parts.map((p) => p.partNo), monthRange(month).to), model), parts, month)
       const totals = sheets.map((x) => ({ partNo: x.partNo, opening: x.opening, in: x.totalIn, out: x.totalOut, closing: x.closing }))
       const next: StockClosing = {
         id: prev?.id ?? uid(),
@@ -1258,7 +1292,8 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         month,
         status: 'closed',
         totals,
-        closedBy: `ผู้ใช้สาธิต (${ME})`,
+        // สาธิต: ปิดยอดในนามหัวหน้าคลัง ผู้ใช้สาธิตจึงกดรับทราบได้ (คนปิดยอดรับทราบเองไม่ได้)
+        closedBy: DEMO_CLOSER,
         closedAt: nowIso(),
         planningBy: null,
         planningAt: null,
@@ -1281,8 +1316,12 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
       commit(() => {
         const c = db.closings.find((x) => x.id === id && x.status === 'closed')
         if (!c || (side === 'planning' ? c.planningAt : c.accountAt)) fail('ไม่พบรายการ หรือรับทราบไปแล้ว')
-        if (side === 'planning') Object.assign(c!, { planningBy: `ผู้ใช้สาธิต (${ME})`, planningAt: nowIso() })
-        else Object.assign(c!, { accountBy: `ผู้ใช้สาธิต (${ME})`, accountAt: nowIso() })
+        const who = side === 'planning' ? 'Planning' : 'บัญชี'
+        // เหมือน stock_close_ack 0023: คนปิดยอดรับทราบเองไม่ได้ · คนเดียวรับทราบทั้งสองฝั่งไม่ได้
+        if (c!.closedBy === DEMO_ME) fail(`คนที่ปิดยอดรับทราบเองไม่ได้ · ให้ ${who} กดรับทราบ`)
+        if ((side === 'planning' ? c!.accountBy : c!.planningBy) === DEMO_ME) fail(`รับทราบอีกฝั่งไปแล้ว · ฝั่ง ${who} ต้องเป็นอีกคน`)
+        if (side === 'planning') Object.assign(c!, { planningBy: DEMO_ME, planningAt: nowIso() })
+        else Object.assign(c!, { accountBy: DEMO_ME, accountAt: nowIso() })
       }),
     submitStockCount: (p) =>
       commit(() => {
@@ -1335,7 +1374,7 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         let changed = 0
         let newBoxes = 0
         const adj = (lpn: Lpn, item: Lpn['items'][number], from: number, to: number) =>
-          log({ kind: 'ADJ', docNo: c!.countNo, lpnId: lpn.id, lpnNo: lpn.lpnNo, lpnItemId: item.id, partNo: item.partNo, qty: from, newQty: to, reason, status: 'approved', createdCode: c!.createdCode, toLoc: lpn.locationCode })
+          log({ kind: 'ADJ', docNo: c!.countNo, lpnId: lpn.id, lpnNo: lpn.lpnNo, lpnItemId: item.id, partNo: item.partNo, qty: from, newQty: to, reason, status: 'approved', createdCode: c!.createdCode, toLoc: lpn.locationCode, decidedCode: ME, decidedAt: nowIso() })
         // ตรวจทุกบรรทัดก่อน (ไม่พอลด ⇒ ไม่ปรับเลยสักบรรทัด เหมือนธุรกรรมฝั่งฐานข้อมูล)
         for (const l of c!.lines) {
           const locs = countLocations(l.loc, ctx)!.locs

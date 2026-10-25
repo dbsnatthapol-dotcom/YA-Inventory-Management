@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { errorText } from '../../wms/api'
-import { buildLedger, monthRange, type LedgerSheet } from '../../wms/ledger'
+import { buildLedger, isShared, monthRange, NO_MODEL, rowsOfModel, type LedgerSheet } from '../../wms/ledger'
 import { fmt } from '../../wms/logic'
 import { partsOfModel } from '../../wms/partCodes'
 import type { LedgerRow, StockClosing } from '../../wms/types'
@@ -30,7 +30,8 @@ export function LedgerTab() {
   const [closings, setClosings] = useState<StockClosing[]>([])
   const [ver, setVer] = useState(0)
   const [printing, setPrinting] = useState(false)
-  const parts = useMemo(() => (model ? partsOfModel(master, model) : []), [master, model])
+  // ไม่ระบุ Model = part ร่วมที่รายการระบุ Model ไม่ได้ (เช่น ของเกินจากการตรวจนับ) ไม่เข้าบัญชีของ Model ใด
+  const parts = useMemo(() => (model === NO_MODEL ? master.parts.filter(isShared) : model ? partsOfModel(master, model) : []), [master, model])
 
   useEffect(() => {
     if (!parts.length) return
@@ -63,7 +64,9 @@ export function LedgerTab() {
   }, [api, ver])
   const closing = closings.find((c) => c.modelCode === model && c.month === month) ?? null
 
-  const all = useMemo(() => (rows ? buildLedger(rows, parts, month) : []), [rows, parts, month])
+  // A4: รายการเข้าบัญชีของ Model ตามเอกสาร (part ร่วมไม่ซ้ำในหลาย Model) · ยอดรวมทุก Model ไว้เทียบกับของจริง
+  const all = useMemo(() => (rows ? buildLedger(rowsOfModel(rows, model), parts, month) : []), [rows, parts, month, model])
+  const physical = useMemo(() => new Map((rows ? buildLedger(rows, parts, month) : []).map((s) => [s.partNo, s.closing])), [rows, parts, month])
   // ค่าเริ่มต้น: เฉพาะ part ที่มีความเคลื่อนไหวหรือมีของ (Model หนึ่งมีหลายรุ่นย่อย/สี ที่ไม่ได้ใช้ทุกเดือน)
   const sheets = showAll ? all : all.filter((s) => s.lines.length || s.opening || s.closing)
   const sheet = sheets.find((s) => s.partNo === picked) ?? sheets[0]
@@ -109,6 +112,7 @@ export function LedgerTab() {
                   {m.code}
                 </option>
               ))}
+              <option value={NO_MODEL}>part ร่วม · ไม่ระบุ Model</option>
             </select>
           </Field>
           <Field label="เดือน">
@@ -119,12 +123,17 @@ export function LedgerTab() {
             รวม part ที่ไม่มีความเคลื่อนไหว ({all.length - all.filter((s) => s.lines.length || s.opening || s.closing).length})
           </label>
         </div>
-        {rows && !sheets.length && parts.length > 0 && <p className="text-sm text-slate-500">เดือนนี้ยังไม่มีรับ/เบิกของ {model}</p>}
+        {model === NO_MODEL && (
+          <p className="text-sm text-slate-600">
+            part ที่ใช้หลาย Model: รายการเข้าบัญชีของ Model ตามใบรับ/ใบเบิก · ที่นี่คือรายการที่ระบุ Model ไม่ได้ (เช่น ของเกินจากการตรวจนับ, ยอดเปิดคลัง) ไม่อยู่ในบัญชีของ Model ใดและปิดยอดไม่ได้
+          </p>
+        )}
+        {rows && !sheets.length && parts.length > 0 && <p className="text-sm text-slate-500">{model === NO_MODEL ? 'ไม่มีรายการที่ระบุ Model ไม่ได้' : `เดือนนี้ยังไม่มีรับ/เบิกของ ${model}`}</p>}
         {!parts.length && <Alert tone="warn">Model นี้ยังไม่มี part ใน Master · ตั้งในหน้าหลังบ้าน → ข้อมูลหลัก → Part</Alert>}
         {error && <Alert tone="bad">{error}</Alert>}
       </Card>
 
-      {model && rows && (
+      {model && model !== NO_MODEL && rows && (
         <ClosingPanel
           model={model}
           month={month}
@@ -170,7 +179,15 @@ export function LedgerTab() {
               ))}
             </ul>
           </Card>
-          {sheet && <SheetView sheet={sheet} model={model} month={month} />}
+          {sheet && (
+            <SheetView
+              sheet={sheet}
+              model={model === NO_MODEL ? 'ไม่ระบุ Model' : model}
+              month={month}
+              shared={master.parts.find((p) => p.partNo === sheet.partNo)?.models.filter((m, i, a) => a.indexOf(m) === i) ?? []}
+              physical={physical.get(sheet.partNo) ?? null}
+            />
+          )}
         </div>
       )}
     </div>
@@ -178,9 +195,20 @@ export function LedgerTab() {
 }
 
 /** หน้าบัญชีคุม 1 part แบบเดียวกับกระดาษ FM-P-537 */
-function SheetView({ sheet, model, month }: { sheet: LedgerSheet; model: string; month: string }) {
+function SheetView({ sheet, model, month, shared, physical }: { sheet: LedgerSheet; model: string; month: string; shared: string[]; physical: number | null }) {
   return (
     <Card title={`STOCK PARTS ${model} · ${month}`} eyebrow={`PART : ${sheet.partNo} ${sheet.name}${sheet.uamCode ? ` (UAM ${sheet.uamCode})` : ''}`} className="print:shadow-none">
+      {shared.length > 1 && (
+        <p className="rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-900 ring-1 ring-sky-200">
+          part ร่วม {shared.length} Model ({shared.join(', ')}) · บัญชีนี้นับเฉพาะใบรับ/ใบเบิกของ {model}
+          {physical !== null && (
+            <>
+              {' '}
+              · ยอดรวมทุก Model ในคลัง <b className="font-mono">{fmt(physical)}</b> ชิ้น
+            </>
+          )}
+        </p>
+      )}
       <div className="overflow-x-auto rounded-lg ring-1 ring-slate-200">
         <table className="w-full min-w-[860px] text-sm">
           <thead>

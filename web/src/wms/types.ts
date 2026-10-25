@@ -206,6 +206,8 @@ export interface Tx {
   createdCode: string | null
   createdAt: string
   decidedCode: string | null
+  /** เวลาอนุมัติ (ปรับยอดลงบัญชีคุมวันนี้) */
+  decidedAt?: string | null
   /** ใบเบิกที่ทำให้เกิดรายการนี้ (เบิก/คืน) */
   requisitionId?: string | null
   /** ย้าย: scan = หน้าสแกน · list = เลือกจากรายการ */
@@ -378,6 +380,8 @@ export interface LedgerRow {
   docNo: string | null
   lot: string | null
   note: string | null
+  /** Model ที่รายการนี้เข้าบัญชีคุม: ตามเอกสาร ⇒ ใบรับที่ของมา ⇒ Model เดียวของ part · null = part ร่วมที่ระบุ Model ไม่ได้ */
+  model: string | null
 }
 
 /** ยอดต่อ part ตอนปิดเดือน */
@@ -404,6 +408,8 @@ export interface StockClosing {
   accountBy: string | null
   accountAt: string | null
   note: string | null
+  /** ผู้ใช้คนนี้ปิดยอดเอง / รับทราบฝั่งไหนไปแล้ว (คนปิดยอดรับทราบเองไม่ได้ · คนเดียวรับทราบทั้งสองฝั่งไม่ได้) */
+  mine?: { closed: boolean; planning: boolean; account: boolean }
 }
 
 /** ใบตรวจนับจากไฟล์ Excel (รอผู้มีสิทธิ์อนุมัติก่อนปรับยอด) */
