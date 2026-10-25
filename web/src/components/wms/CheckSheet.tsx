@@ -10,7 +10,7 @@ import { PrintDialog } from './Print'
 import { Alert, BigButton, Card, Field, inputCls, Pill, Segmented, tdCls, thCls, type Tone } from './ui'
 import { TraceButton } from './TraceButton'
 
-const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '')
+const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' }) : '')
 const ISSUE_TONE: Record<LineIssue, Tone> = { short: 'bad', over: 'warn', missing: 'bad', extra: 'warn', damaged: 'bad' }
 /** ตรวจพร้อมกันหลายเครื่อง: ดึงของคนอื่นทุก 15 วินาที */
 const POLL_MS = 15_000

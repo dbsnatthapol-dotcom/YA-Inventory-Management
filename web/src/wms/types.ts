@@ -421,6 +421,8 @@ export interface ReceiptRow {
   model: string | null
   partNo: string
   qty: number
+  /** ในนั้นเสียหายตอนตรวจรับ (แยกเข้ากล่อง NG) */
+  damaged: number
   /** รับของทดแทน NG */
   replacement: boolean
 }

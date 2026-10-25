@@ -49,3 +49,18 @@ export function invoiceLinesFromRows(rows: { partNo: string; description: string
   }
   return tidyInvoiceLines([...once.values()])
 }
+
+/**
+ * ใบ GRN: เทียบยอดรับกับ Invoice ราย part (ไม่ใช่รายเคส) · ทุกบรรทัดของ part เก็บยอด Invoice ทั้ง part ไว้ ใช้ค่าแรกที่มี
+ * คืน part ที่ยอดรับรวมทุกเคสไม่ตรง Invoice
+ */
+export function partsOffInvoice(lines: { partNo: string; countedQty: number; invoiceQty: number | null }[]): string[] {
+  const by = new Map<string, { counted: number; invoice: number | null }>()
+  for (const l of lines) {
+    const cur = by.get(l.partNo) ?? { counted: 0, invoice: null }
+    cur.counted += l.countedQty
+    cur.invoice ??= l.invoiceQty
+    by.set(l.partNo, cur)
+  }
+  return [...by].filter(([, v]) => v.invoice !== null && v.invoice !== v.counted).map(([p]) => p)
+}

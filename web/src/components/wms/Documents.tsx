@@ -1,11 +1,12 @@
 import { fmt, lpnUrl } from '../../wms/logic'
+import { partsOffInvoice } from '../../wms/invoiceLines'
 import { zoneHeadOf, type LabelContext } from '../../wms/labels'
 import type { Lpn } from '../../wms/types'
 import { BrandMark } from './BrandMark'
 import { QrCode } from './QrCode'
 
 const dateTime = (iso: string) =>
-  new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', calendar: 'gregory' })
+  new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', calendar: 'gregory', timeZone: 'Asia/Bangkok' })
 
 /**
  * ป้ายชี้บ่งกล่อง (UAM Tag) 100×150 มม. (แบบใบปะหน้าพัสดุ) — หน่วย mm เพื่อให้พิมพ์ได้ขนาดจริง
@@ -13,9 +14,12 @@ const dateTime = (iso: string) =>
  */
 export function LabelCard({ lpn, ctx, heightMm = 150, mono = false }: { lpn: Lpn; ctx: LabelContext; heightMm?: number; mono?: boolean }) {
   const line = (id: string) => ctx.lines.find((l) => l.id === id)
-  const single = lpn.items.length === 1 ? lpn.items[0] : null
+  // กล่องรวมที่เป็น part เดียวกัน (คนละบรรทัดรับ) แสดงเหมือนกล่อง part เดียว
+  const parts = new Set(lpn.items.map((i) => i.partNo))
+  const single = parts.size === 1 ? lpn.items[0] : null
   const total = lpn.items.reduce((s, i) => s + i.qty, 0)
-  const home = (single && line(single.grnLineId)?.homeLocation) || lpn.locationCode
+  // ช่องแนะนำจากใบรับ (กล่องหลาย part ใช้ของรายการแรกที่มี) · ไม่มีจึงใช้ที่อยู่ตอนนี้
+  const home = lpn.items.map((i) => line(i.grnLineId)?.homeLocation).find((h) => !!h) || lpn.locationCode
   // กล่องในพื้นที่กัก NG (ของเสียหายจากการตรวจรับ): อยู่ที่นั่นจนส่งคืน ห้ามเข้าไลน์
   const ng = ctx.master.locations.find((l) => l.code === lpn.locationCode)?.kind === 'ng'
   const dest = lpn.hold ? 'MI3-QC' : ng ? lpn.locationCode : home
@@ -45,7 +49,7 @@ export function LabelCard({ lpn, ctx, heightMm = 150, mono = false }: { lpn: Lpn
               <div className="text-[8pt] leading-snug">{desc}</div>
             </>
           ) : (
-            <div className="text-[10pt] font-bold">{lpn.caseNo ? '' : 'กล่องรวม '}{lpn.items.length} part</div>
+            <div className="text-[10pt] font-bold">{lpn.caseNo ? '' : 'กล่องรวม '}{parts.size} part</div>
           )}
           <div className="font-mono text-[22pt] font-bold leading-none">
             {fmt(total)} <span className="text-[9pt]">PCS</span>
@@ -117,7 +121,14 @@ export function LabelSheet({ lpns, ctx }: { lpns: Lpn[]; ctx: LabelContext }) {
 export function GrnSheet({ ctx }: { ctx: LabelContext }) {
   const g = ctx.grn
   if (!g) return null
-  const off = ctx.lines.filter((l) => l.invoiceQty !== null && l.invoiceQty !== l.countedQty).length
+  // เทียบ Invoice ราย part (part เดียวมาหลายเคส รวมกันแล้วค่อยเทียบ)
+  const off = partsOffInvoice(ctx.lines).length
+  const firstOf = new Map<string, number>()
+  const cases = new Map<string, number>()
+  for (const l of ctx.lines) {
+    if (!firstOf.has(l.partNo)) firstOf.set(l.partNo, l.lineNo)
+    cases.set(l.partNo, (cases.get(l.partNo) ?? 0) + 1)
+  }
   return (
     <div className="print-page flex flex-col gap-[4mm] p-[12mm] text-[9pt]" style={{ width: '210mm', minHeight: '297mm', boxSizing: 'border-box' }}>
       <div className="flex items-start justify-between gap-[6mm] border-b-2 border-black pb-[3mm]">
@@ -163,7 +174,16 @@ export function GrnSheet({ ctx }: { ctx: LabelContext }) {
                 {fmt(l.countedQty)}
                 {l.damagedQty ? <div className="text-[7pt] font-normal">เสียหาย→NG {fmt(l.damagedQty)}</div> : null}
               </td>
-              <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] text-right font-mono">{fmt(l.invoiceQty)}</td>
+              <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] text-right font-mono">
+                {firstOf.get(l.partNo) === l.lineNo ? (
+                  <>
+                    {fmt(l.invoiceQty)}
+                    {(cases.get(l.partNo) ?? 0) > 1 && l.invoiceQty !== null && <div className="text-[7pt]">รวม {cases.get(l.partNo)} เคส</div>}
+                  </>
+                ) : (
+                  l.invoiceQty !== null && <span className="text-[7pt]">รวมที่บรรทัด {firstOf.get(l.partNo)}</span>
+                )}
+              </td>
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm] font-mono">{l.needsQi ? 'MI3-QC' : (l.homeLocation ?? '-')}</td>
               <td className="border border-neutral-500 px-[1.5mm] py-[0.8mm]">{l.needsQi ? 'ตรวจ' : ''}</td>
             </tr>
@@ -173,7 +193,7 @@ export function GrnSheet({ ctx }: { ctx: LabelContext }) {
       <div className="text-[8pt]">
         รวม {ctx.lines.length} รายการ · {fmt(ctx.lines.reduce((s, l) => s + l.countedQty, 0))} ชิ้น
         {ctx.lines.some((l) => l.damagedQty) && ` · เสียหายแยกกล่อง NG ${fmt(ctx.lines.reduce((s, l) => s + (l.damagedQty ?? 0), 0))} ชิ้น`}
-        {off > 0 && ` · ไม่ตรง Invoice ${off} รายการ (ดูหน้ากระทบยอด Invoice)`}
+        {off > 0 && ` · ไม่ตรง Invoice ${off} part (ดูหน้ากระทบยอด Invoice)`}
       </div>
       <div className="mt-auto grid grid-cols-3 gap-[8mm] pt-[14mm] text-center">
         {['ผู้รับสินค้า', 'ผู้ตรวจนับ', 'หัวหน้าโซน'].map((s) => (

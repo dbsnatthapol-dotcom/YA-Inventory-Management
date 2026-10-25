@@ -4,6 +4,7 @@ import { ACCURACY_TARGET, countAccuracy, type Accuracy } from './cycleCount'
 import { addDays, bangkokDay } from './ledger'
 import { zoneLocator } from './mapStock'
 import { buildSlotMap, SLOT_STATUS } from './slotMap'
+import { stockMix, stockPartOf, type StockMix, type StockPart } from './stockMix'
 import type { DashActivity, Lpn, MasterData, Requisition, StockClosing } from './types'
 
 /** ช่วงเวลาบนหน้าภาพรวม */
@@ -79,7 +80,10 @@ export interface ModelRow {
   issued: number
   qcIssued: number
   ngReturned: number
+  /** NG จากผลตรวจ MI3 ในช่วงที่เลือก */
   ngFound: number
+  /** เสียหายตอนตรวจรับ (แยกเข้ากล่อง NG) ในช่วงที่เลือก */
+  ngDamaged: number
   qiChecked: number
   avgDaily: number
   /** part ที่จะหมดก่อน (คิดจากยอดเบิกเฉลี่ยของแต่ละ part) */
@@ -131,7 +135,10 @@ export interface DashKpi {
   receiptDocs: number
   issued: number
   ngFound: number
+  ngDamaged: number
   qiChecked: number
+  /** องค์ประกอบสต็อก: ในช่องเก็บ / รอจัดเก็บ / รอ MI3 / NG (onHand + boxes = ในช่องเก็บ + รอจัดเก็บ) */
+  mix: StockMix
   pendingApprovals: number
   /** ความแม่นยำสต็อกจากการนับวนในช่วงที่เลือก */
   accuracy: Accuracy
@@ -172,6 +179,8 @@ interface Box {
   qty: number
   hold: boolean
   ng: boolean
+  /** ส่วนของสต็อก (นิยามเดียวกับผัง 2D / 3D) */
+  part: StockPart
   age: number
   items: { partNo: string; qty: number }[]
 }
@@ -213,13 +222,15 @@ export function buildDashboard(input: DashInput): DashData {
     const items = l.items.filter((i) => i.qty > 0).map((i) => ({ partNo: i.partNo, qty: i.qty }))
     if (!items.length) continue
     const zoneId = zoneOf(l.locationCode)
+    const kind = zoneId ? zoneKind.get(zoneId) : undefined
     boxes.push({
       lpnNo: l.lpnNo,
       model: modelOf(l.modelCode, items[0].partNo),
       zoneId,
       qty: items.reduce((s, i) => s + i.qty, 0),
       hold: l.hold,
-      ng: !!zoneId && zoneKind.get(zoneId) === 'ng',
+      ng: kind === 'ng',
+      part: stockPartOf(l.hold, kind),
       age: Math.max(0, daysBetween(bangkokDay(l.createdAt), today)),
       items,
     })
@@ -258,12 +269,14 @@ export function buildDashboard(input: DashInput): DashData {
   // ---- รับเข้า / ผลตรวจ MI3
   const recv = new Map<string, number>() // model|day
   const docs = new Map<string, Set<string>>() // model → GRN
+  const ngDamaged = new Map<string, number>() // เสียหายตอนตรวจรับ (แยกเข้ากล่อง NG)
   for (const r of activity.receipts) {
     const m = modelOf(r.model, r.partNo)
     add(recv, `${m}|${r.day}`, r.qty)
     if (inRange(r.day)) {
       if (!docs.has(m)) docs.set(m, new Set())
       docs.get(m)!.add(r.grnNo)
+      if (r.damaged) add(ngDamaged, m, r.damaged)
     }
   }
   const ngFound = new Map<string, number>()
@@ -284,7 +297,7 @@ export function buildDashboard(input: DashInput): DashData {
   }
 
   // ---- ตาม Model (เรียงตาม Master แล้วตามด้วยที่ไม่อยู่ใน Master)
-  const seen = new Set<string>([...boxes.map((b) => b.model), ...[...use.keys(), ...recv.keys()].map((k) => k.split('|')[0]), ...qc.keys(), ...ngRet.keys(), ...ngFound.keys()])
+  const seen = new Set<string>([...boxes.map((b) => b.model), ...[...use.keys(), ...recv.keys()].map((k) => k.split('|')[0]), ...qc.keys(), ...ngRet.keys(), ...ngFound.keys(), ...ngDamaged.keys()])
   const order = [...master.models.map((m) => m.code), ...[...seen].filter((m) => !master.models.some((x) => x.code === m)).sort((a, b) => (a === '–' ? 1 : b === '–' ? -1 : a.localeCompare(b)))]
   const models: ModelRow[] = []
   for (const m of order) {
@@ -314,6 +327,7 @@ export function buildDashboard(input: DashInput): DashData {
       qcIssued: qc.get(m) ?? 0,
       ngReturned: ngRet.get(m) ?? 0,
       ngFound: ngFound.get(m) ?? 0,
+      ngDamaged: ngDamaged.get(m) ?? 0,
       qiChecked: qiChecked.get(m) ?? 0,
       avgDaily: issuedAvg,
       cover: low[0]?.cover ?? null,
@@ -391,7 +405,9 @@ export function buildDashboard(input: DashInput): DashData {
     receiptDocs: new Set([...docs].filter(([m]) => pick(m)).flatMap(([, g]) => [...g])).size,
     issued: shown.reduce((s, r) => s + r.issued, 0),
     ngFound: shown.reduce((s, r) => s + r.ngFound, 0),
+    ngDamaged: shown.reduce((s, r) => s + r.ngDamaged, 0),
     qiChecked: shown.reduce((s, r) => s + r.qiChecked, 0),
+    mix: stockMix(kBoxes),
     pendingApprovals: input.pending.adjustments + input.pending.countSheets,
     accuracy: countAccuracy(activity.counts, range.from, range.to, (r) => !only || (parts.get(r.partNo)?.models ?? []).includes(only)),
   }

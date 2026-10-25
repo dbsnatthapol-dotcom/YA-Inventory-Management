@@ -6,7 +6,7 @@ import { useWms } from '../../wms/useWms'
 import { BrandMark } from './BrandMark'
 
 const dateTime = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', calendar: 'gregory' }) : '-'
+  iso ? new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', calendar: 'gregory', timeZone: 'Asia/Bangkok' }) : '-'
 const cell = 'border border-neutral-500 px-[1.5mm] py-[0.8mm]'
 
 /**

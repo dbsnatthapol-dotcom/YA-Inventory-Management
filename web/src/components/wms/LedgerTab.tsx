@@ -6,6 +6,7 @@ import { partsOfModel } from '../../wms/partCodes'
 import type { LedgerRow, StockClosing } from '../../wms/types'
 import { useWms } from '../../wms/useWms'
 import { thisMonth } from '../../wms/closing'
+import { useToday } from '../../lib/useToday'
 import { ClosingPanel, MonthOverview } from './ClosingPanel'
 import { PrintDialog } from './Print'
 import { LedgerPage } from './ReportPages'
@@ -22,8 +23,15 @@ export function LedgerTab() {
   const { api, master } = useWms()
   const [model, setModel] = useState(master.models[0]?.code ?? '')
   const [month, setMonth] = useState(thisMonth)
-  const [rows, setRows] = useState<LedgerRow[] | null>(null)
+  // เปิดหน้าค้างข้ามเดือน: เตือน (ไม่เปลี่ยนเอง) · เลือกเดือนเองแล้วไม่เตือน
+  const nowMonth = useToday().slice(0, 7)
+  const [pickedMonth, setPickedMonth] = useState(false)
+  // รายการของ Model + เดือนที่เลือกอยู่เท่านั้น (เปลี่ยนตัวเลือกแล้วโหลดไม่สำเร็จ ต้องไม่โชว์ของชุดก่อน)
+  const key = `${model}|${month}`
+  const [loaded, setLoaded] = useState<{ key: string; rows: LedgerRow[] } | null>(null)
+  const rows = loaded?.key === key ? loaded.rows : null
   const [error, setError] = useState<string | null>(null)
+  const [closingsErr, setClosingsErr] = useState<string | null>(null)
   const [picked, setPicked] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [showAll, setShowAll] = useState(false)
@@ -43,21 +51,25 @@ export function LedgerTab() {
       )
       .then((r) => {
         if (!alive) return
-        setRows(r)
+        setLoaded({ key, rows: r })
         setError(null)
       })
-      .catch((e) => alive && setError(errorText(e)))
+      .catch((e) => alive && setError(`โหลดบัญชีคุมไม่สำเร็จ: ${errorText(e)}`))
     return () => {
       alive = false
     }
-  }, [api, parts, month, ver])
+  }, [api, parts, month, key, ver])
 
   useEffect(() => {
     let alive = true
     api
       .listClosings()
-      .then((c) => alive && setClosings(c))
-      .catch(() => alive && setClosings([]))
+      .then((c) => {
+        if (!alive) return
+        setClosings(c)
+        setClosingsErr(null)
+      })
+      .catch((e) => alive && setClosingsErr(errorText(e)))
     return () => {
       alive = false
     }
@@ -116,7 +128,15 @@ export function LedgerTab() {
             </select>
           </Field>
           <Field label="เดือน">
-            <input type="month" className={inputCls} value={month} onChange={(e) => setMonth(e.target.value || thisMonth())} />
+            <input
+              type="month"
+              className={inputCls}
+              value={month}
+              onChange={(e) => {
+                setMonth(e.target.value || thisMonth())
+                setPickedMonth(true)
+              }}
+            />
           </Field>
           <label className="flex min-h-[44px] items-center gap-2 self-end text-sm text-slate-600">
             <input type="checkbox" className="h-5 w-5" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
@@ -130,10 +150,33 @@ export function LedgerTab() {
         )}
         {rows && !sheets.length && parts.length > 0 && <p className="text-sm text-slate-500">{model === NO_MODEL ? 'ไม่มีรายการที่ระบุ Model ไม่ได้' : `เดือนนี้ยังไม่มีรับ/เบิกของ ${model}`}</p>}
         {!parts.length && <Alert tone="warn">Model นี้ยังไม่มี part ใน Master · ตั้งในหน้าหลังบ้าน → ข้อมูลหลัก → Part</Alert>}
-        {error && <Alert tone="bad">{error}</Alert>}
+        {error && (
+          <Alert tone="bad">
+            {error}{' '}
+            <button type="button" className="font-semibold underline" onClick={() => setVer((v) => v + 1)}>
+              โหลดใหม่
+            </button>
+          </Alert>
+        )}
+        {closingsErr && (
+          <Alert tone="bad">
+            โหลดสถานะปิดยอดไม่สำเร็จ: {closingsErr} · ปิดยอด / รับทราบไม่ได้จนกว่าจะโหลดได้{' '}
+            <button type="button" className="font-semibold underline" onClick={() => setVer((v) => v + 1)}>
+              โหลดใหม่
+            </button>
+          </Alert>
+        )}
+        {!pickedMonth && month !== nowMonth && (
+          <Alert tone="warn">
+            หน้านี้เปิดค้างไว้ตั้งแต่เดือน {month} · เดือนนี้คือ {nowMonth}{' '}
+            <button type="button" className="font-semibold underline" onClick={() => setMonth(nowMonth)}>
+              เปลี่ยนเป็นเดือนนี้
+            </button>
+          </Alert>
+        )}
       </Card>
 
-      {model && model !== NO_MODEL && rows && (
+      {model && model !== NO_MODEL && rows && !closingsErr && (
         <ClosingPanel
           model={model}
           month={month}

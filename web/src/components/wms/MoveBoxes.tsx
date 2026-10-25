@@ -94,7 +94,10 @@ export function MoveBoxes({ initialQuery = '', initialPlace = 'all' }: { initial
   }, [master.locations])
   const special = master.locations.filter((l) => l.active && !l.blocked && (l.kind === 'staging' || l.kind === 'hold' || l.kind === 'ng'))
   const slots = zone ? master.locations.filter((l) => l.zoneId === zone && l.active && !l.blocked && (l.kind === 'bin' || l.kind === 'floor')).sort((a, b) => a.code.localeCompare(b.code, 'en', { numeric: true })) : []
-  const destOk = !!locs.get(dest.trim().toUpperCase())?.active && !locs.get(dest.trim().toUpperCase())?.blocked
+  const destLoc = locs.get(dest.trim().toUpperCase())
+  const destOk = !!destLoc?.active && !destLoc.blocked
+  // กล่องในพื้นที่ NG ออกไปช่องของดีได้เฉพาะ MI3 (ตรวจซ้ำแล้วผ่าน) · กติกาเดียวกับ move_lpns (0024)
+  const ngOut = destOk && destLoc.kind !== 'ng' && !can('scan.qi') ? chosen.filter((l) => locs.get(l.locationCode)?.kind === 'ng') : []
 
   const toggle = (id: string) =>
     setPicked((s) => {
@@ -261,6 +264,11 @@ export function MoveBoxes({ initialQuery = '', initialPlace = 'all' }: { initial
               ))}
           </datalist>
           {dest && !destOk && <Alert tone="warn">ไม่พบช่อง {dest.trim().toUpperCase()} หรือช่องนี้ปิดใช้อยู่</Alert>}
+          {ngOut.length > 0 && (
+            <Alert tone="warn">
+              กล่อง NG {ngOut.map((l) => l.lpnNo).join(', ')} ย้ายออกไปช่องของดีได้เฉพาะ MI3 (ตรวจซ้ำแล้วผ่าน) · เอาออกจากที่เลือก หรือส่งคืน/ตัดทิ้งด้วยใบเบิก NG
+            </Alert>
+          )}
         </Card>
       )}
 
@@ -276,8 +284,8 @@ export function MoveBoxes({ initialQuery = '', initialPlace = 'all' }: { initial
             <BigButton tone="secondary" onClick={() => setPicked(new Set())}>
               ล้าง
             </BigButton>
-            <BigButton disabled={busy || !destOk} onClick={() => void move()} className={`!py-3 text-base ${mobile ? 'flex-1' : ''}`}>
-              {destOk ? `ย้ายไป ${dest.trim().toUpperCase()}` : 'เลือกช่องปลายทาง'}
+            <BigButton disabled={busy || !destOk || ngOut.length > 0} onClick={() => void move()} className={`!py-3 text-base ${mobile ? 'flex-1' : ''}`}>
+              {!destOk ? 'เลือกช่องปลายทาง' : ngOut.length ? 'มีกล่อง NG ในที่เลือก' : `ย้ายไป ${dest.trim().toUpperCase()}`}
             </BigButton>
           </div>
         </div>

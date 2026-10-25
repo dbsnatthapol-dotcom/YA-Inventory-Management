@@ -52,7 +52,7 @@ const saveMode = (m: Mode) => {
 const signed = (n: number) => (n > 0 ? `+${fmt(n)}` : n < 0 ? `−${fmt(-n)}` : '0')
 
 const TX_TONE: Record<Tx['kind'], Tone> = { RECEIVE: 'info', PUT: 'ok', MOVE: 'ok', ISSUE: 'info', ADJ: 'warn', COUNT: 'muted', QI: 'mi3', MERGE: 'muted', UNMERGE: 'muted', SPLIT: 'muted', RETURN: 'info' }
-const time = (iso: string) => new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+const time = (iso: string) => new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' })
 
 interface Current {
   lpn: Lpn
@@ -260,7 +260,7 @@ export function ScanTab({
       case 'QI':
         return run(async () => {
           const doc = await api.scanQi(lpn.id, n(form.pass), n(form.ng), form.note.trim())
-          return `${doc} บันทึกแล้ว · ปลดล็อกให้เบิกได้${cur?.homeLocation ? ` · ใช้โหมด "จัดเก็บเข้าที่" ย้ายไป ${cur.homeLocation}` : ''}`
+          return `${doc} บันทึกแล้ว · ปลดล็อกให้เบิกได้${cur?.homeLocation ? ` · ใช้โหมด "${can('scan.put') ? 'จัดเก็บเข้าที่' : 'ย้ายที่'}" ย้ายไป ${cur.homeLocation}` : ''}`
         })
     }
   }
@@ -287,7 +287,13 @@ export function ScanTab({
   }
 
   const home = inNg(lpn?.locationCode) ? null : (cur?.homeLocation ?? null)
-  const locChoices = [home, 'MI3-QC', 'NG-HOLD', 'RCV-01'].filter((x, i, a): x is string => !!x && a.indexOf(x) === i && x !== lpn?.locationCode)
+  // กล่องในพื้นที่ NG ออกไปช่องของดีได้เฉพาะ MI3 (ตรวจซ้ำแล้วผ่าน) · ช่องปลายทางต้องมีและเปิดใช้ (scan_move 0024)
+  const ngBox = !!lpn && inNg(lpn.locationCode) && !can('scan.qi')
+  const destCode = form.loc.trim().toUpperCase()
+  const destLoc = master.locations.find((l) => l.code === destCode)
+  const destBad = !!destCode && (!destLoc || !destLoc.active || destLoc.blocked)
+  const ngLocked = ngBox && !!destLoc && destLoc.kind !== 'ng'
+  const locChoices = [home, 'MI3-QC', 'NG-HOLD', 'RCV-01'].filter((x, i, a): x is string => !!x && a.indexOf(x) === i && x !== lpn?.locationCode && (!ngBox || inNg(x)))
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
@@ -441,7 +447,11 @@ export function ScanTab({
                   ))}
                 </div>
                 {lpn.hold && <Alert tone="warn">กล่องนี้รอตรวจ MI3 · ย้ายได้ แต่ยังเบิกไม่ได้จนกว่าจะผ่าน</Alert>}
-                <BigButton disabled={busy || !form.loc.trim()} onClick={submit}>
+                {destBad && <Alert tone="warn">ไม่พบช่อง {destCode} หรือช่องนี้ปิดใช้อยู่ · สแกน QR ที่ช่อง หรือเลือกจากรายการ</Alert>}
+                {ngBox && (
+                  <Alert tone={ngLocked ? 'bad' : 'warn'}>กล่องนี้อยู่พื้นที่กัก NG · ย้ายได้เฉพาะในพื้นที่ NG · ออกไปช่องของดีได้เฉพาะ MI3 (ตรวจซ้ำแล้วผ่าน) · ส่งคืน/ตัดทิ้งใช้ใบเบิก NG</Alert>
+                )}
+                <BigButton disabled={busy || !destCode || destBad || ngLocked} onClick={submit}>
                   ยืนยัน{modeInfo.name}
                 </BigButton>
               </>

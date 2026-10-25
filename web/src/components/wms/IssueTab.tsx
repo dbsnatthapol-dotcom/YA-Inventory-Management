@@ -5,6 +5,7 @@ import { fmt } from '../../wms/logic'
 import { bomQty, fgOfModel, partsOfModel, resolvePart, stockByPart } from '../../wms/partCodes'
 import type { FgItem, Lpn, PartMaster, Requisition } from '../../wms/types'
 import { useWms } from '../../wms/useWms'
+import { useToday } from '../../lib/useToday'
 import { PrintDialog } from './Print'
 import { PlanningPage } from './ReportPages'
 import { Alert, BigButton, Card, Field, inputCls, Pill, Segmented, tdCls, thCls } from './ui'
@@ -39,6 +40,10 @@ export function IssueTab() {
   const [lpns, setLpns] = useState<Lpn[]>([])
   const [reqs, setReqs] = useState<Requisition[]>([])
   const [day, setDay] = useState(today)
+  // เปิดหน้าค้างข้ามคืน: เตือนให้เปลี่ยนเป็นวันนี้ (ไม่เปลี่ยนเอง กันของที่กรอกค้างหาย) · เลือกวันเองแล้วไม่เตือน
+  const now = useToday()
+  const [pickedDay, setPickedDay] = useState(false)
+  const [loadErr, setLoadErr] = useState<string | null>(null)
   const [model, setModelState] = useState(() => loadModel() || master.models[0]?.code || '')
   const setModel = (m: string) => {
     setModelState(m)
@@ -53,20 +58,28 @@ export function IssueTab() {
     const [l, r] = await Promise.all([api.activeLpns(), api.listRequisitions(day, day)])
     setLpns(l)
     setReqs(r)
+    setLoadErr(null)
   }, [api, day])
   useEffect(() => {
     let alive = true
-    Promise.all([api.activeLpns(), api.listRequisitions(day, day)]).then(([l, r]) => {
-      if (!alive) return
-      setLpns(l)
-      setReqs(r)
-    })
+    Promise.all([api.activeLpns(), api.listRequisitions(day, day)])
+      .then(([l, r]) => {
+        if (!alive) return
+        setLpns(l)
+        setReqs(r)
+        setLoadErr(null)
+      })
+      .catch((e) => alive && setLoadErr(errorText(e)))
     return () => {
       alive = false
     }
   }, [api, day])
 
-  const stock = useMemo(() => stockByPart(lpns), [lpns])
+  // พร้อมเบิก = ไม่รวมรอ MI3 และกล่องในพื้นที่กัก NG (ใบเบิกเข้าไลน์ตัดของพวกนี้ไม่ได้)
+  const stock = useMemo(() => {
+    const ng = new Set(master.locations.filter((l) => l.kind === 'ng').map((l) => l.code))
+    return stockByPart(lpns, (code) => ng.has(code))
+  }, [lpns, master.locations])
   const canIssue = can('scan.issue')
 
   return (
@@ -85,7 +98,15 @@ export function IssueTab() {
         {mode !== 'report' && (
           <>
             <Field label="วันที่">
-              <input type="date" className={inputCls} value={day} onChange={(e) => setDay(e.target.value || today())} />
+              <input
+                type="date"
+                className={inputCls}
+                value={day}
+                onChange={(e) => {
+                  setDay(e.target.value || today())
+                  setPickedDay(true)
+                }}
+              />
             </Field>
             <Field label="Model">
               <select className={inputCls} value={model} onChange={(e) => setModel(e.target.value)}>
@@ -102,6 +123,22 @@ export function IssueTab() {
       </div>
 
       {!canIssue && mode !== 'report' && <Alert tone="warn">บัญชีนี้ดูได้อย่างเดียว · ต้องมีสิทธิ์ "เบิก" จึงจะบันทึกได้</Alert>}
+      {loadErr && mode !== 'report' && (
+        <Alert tone="bad">
+          โหลดสต็อก / ใบเบิกไม่สำเร็จ: {loadErr} · ยอดพร้อมเบิกและใบเบิกของวันด้านล่างอาจไม่ครบ{' '}
+          <button type="button" className="font-semibold underline" onClick={() => void refresh().catch((e) => setLoadErr(errorText(e)))}>
+            โหลดใหม่
+          </button>
+        </Alert>
+      )}
+      {!pickedDay && day !== now && mode !== 'report' && (
+        <Alert tone="warn">
+          หน้านี้เปิดค้างไว้ตั้งแต่วันที่ {day} · วันนี้คือ {now}{' '}
+          <button type="button" className="font-semibold underline" onClick={() => setDay(now)}>
+            เปลี่ยนเป็นวันนี้
+          </button>
+        </Alert>
+      )}
 
       {mode === 'sub' && <SubForm key={`${day}-${model}`} day={day} model={model} stock={stock} reqs={reqs} canIssue={canIssue} onDone={refresh} />}
       {mode === 'fm005' && <Fm005Form key={`${day}-${model}`} day={day} model={model} stock={stock} reqs={reqs} canIssue={canIssue} onDone={refresh} />}
@@ -358,7 +395,7 @@ function TodayList({ title, reqs, canIssue, onDone }: { title: string; reqs: Req
             <b className="font-mono">{r.reqNo}</b>
             {r.docNo && <span className="font-mono text-slate-500">({r.docNo})</span>}
             <span className="text-slate-500">
-              {new Date(r.createdAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} · {r.lines.length} รายการ · {fmt(r.lines.reduce((s, l) => s + l.qty, 0))} ชิ้น
+              {new Date(r.createdAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' })} · {r.lines.length} รายการ · {fmt(r.lines.reduce((s, l) => s + l.qty, 0))} ชิ้น
               {r.fgQty ? ` · ${fmt(r.fgQty)} วง` : ''}
               {r.note ? ` · ${r.note}` : ''}
             </span>

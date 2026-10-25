@@ -442,9 +442,13 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
     voidGrn: (grnId, reason) => rpc('grn_void', { p_grn: grnId, p_reason: reason }),
 
     createCheck: (p) => rpc<{ id: string; checkNo: string }>('check_create', { p }),
+    // ใบที่ยังเปิดทั้งหมด (ใบเก่าที่เปิดกลับจากการยกเลิก GRN ต้องไม่หลุด) + ใบที่ปิดแล้ว 80 ใบล่าสุด
     async listChecks() {
-      const rows = ((await run(sb.from('receipt_checks').select(CHECK_SELECT).order('created_at', { ascending: false }).limit(80))) as Row[]).map(toCheck)
-      return [...rows.filter((c) => c.status === 'open'), ...rows.filter((c) => c.status !== 'open')]
+      const [open, done] = await Promise.all([
+        fetchAll((a, b) => sb.from('receipt_checks').select(CHECK_SELECT).eq('status', 'open').order('created_at', { ascending: false }).range(a, b)),
+        run(sb.from('receipt_checks').select(CHECK_SELECT).neq('status', 'open').order('created_at', { ascending: false }).limit(80)) as Promise<Row[]>,
+      ])
+      return [...open, ...done].map(toCheck)
     },
     async checkDetail(id) {
       const [c, lines] = await Promise.all([
@@ -645,7 +649,7 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
         fetchAll((a, b) =>
           sb
             .from('grns')
-            .select('id, grn_no, model_code, received_at, replacement, grn_lines(part_no, counted_qty)')
+            .select('id, grn_no, model_code, received_at, replacement, grn_lines(part_no, counted_qty, damaged_qty)')
             .gte('received_at', from)
             .not('grn_no', 'like', 'CNT-%')
             .eq('status', 'active')
@@ -674,6 +678,7 @@ export function supabaseWms(sb: SupabaseClient): WmsApi {
               model: str(g.model_code),
               partNo: String(l.part_no),
               qty: Number(l.counted_qty ?? 0),
+              damaged: Number(l.damaged_qty ?? 0),
               replacement: Boolean(g.replacement),
             }))
             .filter((r) => r.qty > 0),

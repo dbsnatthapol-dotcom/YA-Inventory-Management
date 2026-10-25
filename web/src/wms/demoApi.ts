@@ -311,6 +311,11 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
 
   // ===== ใบเบิก: กติกาเดียวกับ wms_issue_fifo (0021) / wms_return_lifo (0014) =====
   const inNgArea = (l: Lpn) => db.master.locations.find((x) => x.code === l.locationCode)?.kind === 'ng'
+  // ช่องปลายทางต้องมีและเปิดใช้ (move_target_check ใน 0024) · ผู้ใช้สาธิตมีทุกสิทธิ์ (รวมตรวจ MI3) จึงย้ายกล่อง NG ออกได้เสมอ
+  const openSlot = (dest: string) => {
+    const loc = db.master.locations.find((l) => l.code === dest)
+    if (!loc || !loc.active || loc.blocked) fail(`ไม่พบช่อง ${dest} หรือช่องนี้ปิดใช้อยู่`)
+  }
   const onHand = (part: string) =>
     db.lpns.filter((l) => l.status === 'active').reduce((s, l) => s + l.items.filter((i) => i.partNo === part).reduce((t, i) => t + i.qty, 0), 0)
   const issueFifo = (reqId: string, doc: string, ref: string, part: string, qty: number) => {
@@ -428,7 +433,8 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         partType: type,
         plQty: line.plQty,
         countedQty: line.countedQty,
-        invoiceQty: invoice?.lines.find((l) => l.partNo === line.partNo)?.qty ?? null,
+        // ยอด Invoice ทั้ง part (Invoice มี part เดียวกันหลายบรรทัดได้ · create_grn 0024)
+        invoiceQty: invoice?.lines.some((l) => l.partNo === line.partNo) ? invoice.lines.filter((l) => l.partNo === line.partNo).reduce((s, l) => s + l.qty, 0) : null,
         needsQi: needs,
         homeLocation: home,
         caseNo,
@@ -577,9 +583,10 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         })
         return { id, checkNo }
       }),
+    // เหมือนระบบจริง: ใบที่ยังเปิดทั้งหมด + ใบที่ปิดแล้ว 80 ใบล่าสุด
     listChecks: async () => {
       const all = db.checks.map(checkOf)
-      return clone([...all.filter((c) => c.status === 'open'), ...all.filter((c) => c.status !== 'open')].slice(0, 80))
+      return clone([...all.filter((c) => c.status === 'open'), ...all.filter((c) => c.status !== 'open').slice(0, 80)])
     },
     checkDetail: async (id) => {
       const c = db.checks.find((x) => x.id === id)
@@ -823,19 +830,19 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
         if (lpn.status !== 'active') fail('ไม่พบป้าย หรือป้ายนี้ใช้หมดแล้ว')
         if (!dest) fail('เลือกช่องปลายทาง')
         if (dest === lpn.locationCode) fail('กล่องอยู่ที่ช่องนี้แล้ว')
+        openSlot(dest)
         log({ kind, lpnId, lpnNo: lpn.lpnNo, fromLoc: lpn.locationCode, toLoc: dest, via: 'scan' })
         lpn.locationCode = dest
       }),
 
-    // เหมือน move_lpns (0020): ปลายทางต้องเป็นช่องที่มีและเปิดใช้ · จากจุดรับของ/จุดพัก = PUT
+    // เหมือน move_lpns (0024): ปลายทางต้องเป็นช่องที่มีและเปิดใช้ · จากจุดรับของ/จุดพัก = PUT · กล่อง NG ออกไปช่องของดีได้เฉพาะ MI3
     moveLpns: (lpnIds, to) =>
       commit(() => {
         const ids = [...new Set(lpnIds)]
         if (!ids.length) fail('เลือกกล่องที่จะย้าย')
         if (ids.length > 200) fail('ย้ายได้ครั้งละไม่เกิน 200 กล่อง')
         const dest = to.trim().toUpperCase()
-        const loc = db.master.locations.find((l) => l.code === dest)
-        if (!loc || !loc.active || loc.blocked) fail(`ไม่พบช่อง ${dest} หรือช่องนี้ปิดใช้อยู่`)
+        openSlot(dest)
         const boxes = ids.map((id) => db.lpns.find((l) => l.id === id) ?? fail('ไม่พบบางกล่อง · โหลดรายการใหม่')).sort((a, b) => a.lpnNo.localeCompare(b.lpnNo))
         let moved = 0
         for (const lpn of boxes) {
@@ -1220,7 +1227,7 @@ export function demoWms(opts: { samples?: boolean } = {}): WmsApi {
           .filter((l) => grns.has(l.grnId) && l.countedQty > 0)
           .map((l) => {
             const g = grns.get(l.grnId)!
-            return { day: bangkokDay(g.receivedAt), grnNo: g.grnNo, model: g.modelCode, partNo: l.partNo, qty: l.countedQty, replacement: !!g.replacement }
+            return { day: bangkokDay(g.receivedAt), grnNo: g.grnNo, model: g.modelCode, partNo: l.partNo, qty: l.countedQty, damaged: l.damagedQty ?? 0, replacement: !!g.replacement }
           }),
         qi: db.tx
           .filter((t) => t.kind === 'QI' && bangkokDay(t.createdAt) >= fromDay)

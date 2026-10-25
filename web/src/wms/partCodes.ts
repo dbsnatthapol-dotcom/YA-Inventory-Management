@@ -65,15 +65,19 @@ export const fgOfModel = (master: Pick<MasterData, 'fgItems'>, model: string) =>
 /** จำนวนเบิกต่อ part จากจำนวนวง × BOM */
 export const bomQty = (fg: FgItem, wheels: number) => Object.fromEntries(fg.lines.map((l) => [l.partNo, Math.round(wheels * l.qtyPer)]))
 
-/** ยอดในคลังต่อ part: total = ทั้งหมด (รวมรอ MI3), available = พร้อมเบิก */
-export function stockByPart(lpns: { status: string; hold: boolean; items: { partNo: string; qty: number }[] }[]) {
+/**
+ * ยอดในคลังต่อ part: total = ทั้งหมด (รวมรอ MI3 และพื้นที่ NG), available = พร้อมเบิกเข้าไลน์
+ * (ไม่รวมรอ MI3 และกล่องในพื้นที่กัก NG · กติกาเดียวกับ wms_issue_fifo)
+ */
+export function stockByPart(lpns: { status: string; hold: boolean; locationCode: string; items: { partNo: string; qty: number }[] }[], isNgLoc: (code: string) => boolean = () => false) {
   const map = new Map<string, { total: number; available: number }>()
   for (const l of lpns) {
     if (l.status !== 'active') continue
+    const usable = !l.hold && !isNgLoc(l.locationCode)
     for (const i of l.items) {
       const cur = map.get(i.partNo) ?? { total: 0, available: 0 }
       cur.total += i.qty
-      if (!l.hold) cur.available += i.qty
+      if (usable) cur.available += i.qty
       map.set(i.partNo, cur)
     }
   }

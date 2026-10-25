@@ -13,7 +13,7 @@ import { Alert, BigButton, Card, inputCls, Pill, Segmented, tdCls, thCls } from 
 import { TraceButton } from './TraceButton'
 import { boxPlace } from '../../wms/trace'
 
-const dateTime = (iso: string) => new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+const dateTime = (iso: string) => new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' })
 
 export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSelectGrn: (id: string) => void }) {
   const { api, master, settings, can } = useWms()
@@ -30,6 +30,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
   const [qver, setQver] = useState(0)
   const queue = usePrintQueue(!mobile && can('label.print'), qver)
   const [job, setJob] = useState<PrintJob | null>(null)
+  const [jobNote, setJobNote] = useState<string | null>(null)
   const jobRef = useRef<PrintJob | null>(null)
 
   useEffect(() => {
@@ -57,16 +58,32 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
     }
   }, [api, grnId])
 
-  // งานจากคิว: โหลด GRN ของงาน เลือกป้ายตามงาน แล้วเปิดตัวอย่างก่อนพิมพ์
+  // งานจากคิว: โหลด GRN ของงานใหม่ทุกครั้ง (ยอด/กล่องอาจเปลี่ยนหลังส่งงาน) เลือกป้ายตามงาน แล้วเปิดตัวอย่างก่อนพิมพ์
   const startJob = async (j: PrintJob) => {
     try {
-      const d = detail?.grn.id === j.grnId ? detail : await api.grnDetail(j.grnId)
+      const d = await api.grnDetail(j.grnId)
       if (!d) return setMsg({ tone: 'bad', text: 'ไม่พบใบรับสินค้าของงานนี้' })
+      const active = d.lpns.filter((l) => l.status === 'active')
+      const ids = j.lpnIds.length ? j.lpnIds.filter((id) => active.some((l) => l.id === id)) : active.map((l) => l.id)
+      // ป้ายในงานที่ใช้ไม่ได้แล้ว (รวม/แยก/ยกเลิก) + กล่องในใบรับที่ไม่อยู่ในงาน (เช่น กล่องที่แยกหลังส่งงาน)
+      const gone = j.lpnIds.length - ids.length
+      if (j.format !== 'a4' && !ids.length) return setMsg({ tone: 'bad', text: `ป้ายในงาน "${j.title ?? 'ป้ายกล่อง'}" ถูกรวม/แยก/ยกเลิกไปหมดแล้ว · ยกเลิกงานนี้ แล้วเลือกพิมพ์ป้ายกล่องปัจจุบัน` })
+      const others = j.lpnIds.length ? active.filter((l) => !j.lpnIds.includes(l.id)) : []
+      setJobNote(
+        gone || others.length
+          ? [
+              gone ? `งานนี้ส่งมา ${j.lpnIds.length} ป้าย · ใช้ได้ ${ids.length} ป้าย (อีก ${gone} ป้ายถูกรวม/แยก/ยกเลิกไปแล้ว)` : '',
+              others.length ? `ใบรับนี้มีกล่องที่ไม่อยู่ในงาน ${others.length} กล่อง (${others.slice(0, 4).map((l) => l.lpnNo).join(', ')}${others.length > 4 ? ' …' : ''}) · ถ้าเป็นกล่องที่รวม/แยกหลังส่งงาน ให้ปิดหน้านี้แล้วเลือกพิมพ์เพิ่ม` : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')
+          : null,
+      )
       jobRef.current = j
       setJob(j)
       setFormat(j.format)
       setDetail(d)
-      setSelected(new Set(j.lpnIds.length ? j.lpnIds : d.lpns.filter((l) => l.status === 'active').map((l) => l.id)))
+      setSelected(new Set(ids))
       if (d.grn.id !== grnId) onSelectGrn(j.grnId)
       setPrintOpen(true)
     } catch (e) {
@@ -76,6 +93,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
   const endJob = () => {
     jobRef.current = null
     setJob(null)
+    setJobNote(null)
   }
   const cancelJob = async (j: PrintJob) => {
     if (!window.confirm(`ยกเลิกงานพิมพ์ "${j.title ?? 'ป้ายกล่อง'}"?`)) return
@@ -123,6 +141,9 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
   const ctx: LabelContext = { grn: detail?.grn ?? null, lines: detail?.lines ?? [], master, trial: settings.mode === 'trial' }
   const count = format === 'a4' ? 1 : chosen.length
   const sheets = Math.ceil(chosen.length / 4)
+  // ปุ่มเดียว: เลือกครบแล้ว ⇒ ล้าง · ยังไม่ครบ ⇒ เลือกทั้งหมด (ข้อความตรงกับสิ่งที่ทำ)
+  const activeLpns = lpns.filter((l) => l.status === 'active')
+  const allPicked = activeLpns.length > 0 && activeLpns.every((l) => selected.has(l.id))
 
   const toggle = (id: string) =>
     setSelected((s) => {
@@ -285,8 +306,8 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
                     </BigButton>
                   )}
                   {!isVoid && (
-                    <BigButton tone="secondary" onClick={() => setSelected(new Set(selected.size === lpns.filter((l) => l.status === 'active').length ? [] : lpns.filter((l) => l.status === 'active').map((l) => l.id)))}>
-                      {selected.size ? 'ล้างที่เลือก' : 'เลือกทั้งหมด'}
+                    <BigButton tone="secondary" onClick={() => setSelected(new Set(allPicked ? [] : activeLpns.map((l) => l.id)))}>
+                      {allPicked ? 'ล้างที่เลือก' : `เลือกทั้งหมด (${activeLpns.length})`}
                     </BigButton>
                   )}
                   {can('label.print') && !isVoid && (
@@ -409,6 +430,7 @@ export function LabelsTab({ grnId, onSelectGrn }: { grnId: string | null; onSele
             endJob()
           }}
           onPrinted={job ? () => void printed() : undefined}
+          notice={jobNote}
           initialCopies={job?.copies ?? 1}
           format={format}
           title={job ? `พิมพ์งานจากคิว · ${job.title ?? ''}` : 'ตัวอย่างก่อนพิมพ์'}

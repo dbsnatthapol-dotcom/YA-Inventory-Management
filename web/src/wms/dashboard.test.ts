@@ -59,8 +59,8 @@ const input = (over: Partial<DashInput> = {}): DashInput => ({
   reqs,
   activity: {
     receipts: [
-      { day: TODAY, grnNo: 'GRN-1', model: 'K1G', partNo: 'RAT00586', qty: 200, replacement: false },
-      { day: addDays(TODAY, -3), grnNo: 'GRN-2', model: 'J1A', partNo: '1100351', qty: 120, replacement: false },
+      { day: TODAY, grnNo: 'GRN-1', model: 'K1G', partNo: 'RAT00586', qty: 200, damaged: 0, replacement: false },
+      { day: addDays(TODAY, -3), grnNo: 'GRN-2', model: 'J1A', partNo: '1100351', qty: 120, damaged: 0, replacement: false },
     ],
     qi: [{ day: TODAY, model: 'J1A', partNo: '1100351', pass: 55, ng: 5 }],
     counts: [],

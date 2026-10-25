@@ -22,6 +22,7 @@ import type { Lpn, MasterData } from '../../wms/types'
 import { useDashboard, type DashSource } from '../../wms/useDashboard'
 import { useWms } from '../../wms/useWms'
 import { FlowBoard } from '../wms/FlowBoard'
+import { StockMixBar } from '../wms/StockMixBar'
 import { Alert } from '../wms/ui'
 import type { WmsTab } from '../wms/WarehousePage'
 import { TrendChart } from './TrendChart'
@@ -257,7 +258,7 @@ export function DashboardPage({ layout, lpns, onPlan, onWms }: Props) {
               label={model ? `ของดีคงคลัง ${model}` : 'ของดีคงคลัง'}
               value={fmt(k.onHand)}
               unit="ชิ้น"
-              sub={`${fmt(k.boxes)} กล่อง พร้อมเบิก`}
+              sub={`${fmt(k.boxes)} กล่อง พร้อมเบิก${k.mix.putaway.boxes ? ` (รอจัดเก็บ ${fmt(k.mix.putaway.boxes)})` : ''}`}
               onClick={model && modelLpns.length ? () => onPlan({ kind: 'plan', zoneId: data.models[0]?.topZone ?? null, lpnNos: modelLpns }) : undefined}
             />
             <Tile
@@ -284,11 +285,19 @@ export function DashboardPage({ layout, lpns, onPlan, onWms }: Props) {
               label="NG รอส่งคืน"
               value={fmt(k.ngWaitQty)}
               unit="ชิ้น"
-              sub={`พบ NG ${label} ${fmt(k.ngFound)} ชิ้น${k.qiChecked ? ` (${((k.ngFound / k.qiChecked) * 100).toFixed(1)}%)` : ''}`}
+              sub={`พบ NG ${label}: MI3 ${fmt(k.ngFound)}${k.qiChecked ? ` (${((k.ngFound / k.qiChecked) * 100).toFixed(1)}%)` : ''} · ตรวจรับ ${fmt(k.ngDamaged)} ชิ้น`}
               onClick={data.actions.ng ? () => act(data.actions.ng!) : undefined}
             />
             <Tile label={`รับเข้า ${label}`} value={fmt(k.received)} unit="ชิ้น" sub={`${fmt(k.receiptDocs)} ใบรับสินค้า`} />
             <Tile label={`เบิกเข้าไลน์ ${label}`} value={fmt(k.issued)} unit="ชิ้น" sub={`เฉลี่ย ${fmt(avg)} ชิ้น/วันทำงาน (${AVG_WINDOW} วัน)`} />
+          </div>
+
+          <div className="rounded-xl bg-white px-4 py-3 ring-1 ring-slate-200">
+            <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="text-sm font-bold text-slate-800">องค์ประกอบสต็อก{model ? ` ${model}` : ''} ตอนนี้</h3>
+              <span className="text-xs text-slate-500">ของดีคงคลัง = ในช่องเก็บ + รอจัดเก็บ · นับแบบเดียวกับผังคลัง 2D และผัง 3D</span>
+            </div>
+            <StockMixBar mix={k.mix} />
           </div>
 
           {stages && <FlowBoard stages={stages} onPick={(k) => (k === 'stock' ? onPlan({ kind: 'plan', zoneId: null, lpnNos: [] }) : onWms(FLOW_TAB[k]))} />}

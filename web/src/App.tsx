@@ -37,7 +37,7 @@ import { applyLayoutEdits } from './lib/layoutEdit'
 import { loadLayout, type LoadedLayout } from './lib/layoutSource'
 import { useLayoutEdits } from './lib/useLayoutEdits'
 import { findRoute, type RouteOptions } from './lib/pathfinding'
-import { emptyZone } from './wms/mapStock'
+import { emptyZone, zoneLocator } from './wms/mapStock'
 import { useMapStock } from './wms/useMapStock'
 import { ZonePanel } from './components/ZonePanel'
 import { WarehousePlan, type PlanFocus } from './components/plan/WarehousePlan'
@@ -190,7 +190,15 @@ function FactoryApp() {
   const [cameraCommand, setCameraCommand] = useState<CameraCommand | null>(null)
   const camera = (cmd: DistributiveOmit<CameraCommand, 'n'>) => setCameraCommand((prev) => ({ ...cmd, n: (prev?.n ?? 0) + 1 }) as CameraCommand)
 
-  const stats = useMemo(() => mapStats(layout, zoneStock, mapData.activity), [layout, zoneStock, mapData.activity])
+  // กล่องที่รหัสช่องไม่อยู่บนผัง: วาดไม่ได้แต่นับในตัวเลข (ให้ตรงกับหน้าภาพรวม)
+  const unplaced = useMemo(() => {
+    const zoneOf = zoneLocator(wms.master, layout)
+    return mapData.lpns
+      .filter((l) => l.status === 'active' && !zoneOf(l.locationCode))
+      .map((l) => ({ hold: l.hold, qty: l.items.reduce((s, i) => s + Math.max(0, i.qty), 0) }))
+      .filter((b) => b.qty > 0)
+  }, [mapData.lpns, wms.master, layout])
+  const stats = useMemo(() => mapStats(layout, zoneStock, mapData.activity, unplaced), [layout, zoneStock, mapData.activity, unplaced])
 
   // ---- ไกด์ประจำจุด, heatmap, live flow, โหมดนำเสนอ
   const [guidesOn, setGuidesOn] = useState(true)

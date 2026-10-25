@@ -138,7 +138,7 @@ function partSheet(wb: Workbook, model: string, month: string, s: LedgerSheet, l
   box(ws, `A${f}`, `F${f + 1}`)
   ws.getCell(`A${f + 3}`).value = 'FM-P-537'
   ws.getCell(`K${f + 3}`).value = 'Rev.:01'
-  ws.getCell(`A${f + 4}`).value = `ออกจากระบบ ${new Date().toLocaleString('th-TH')}`
+  ws.getCell(`A${f + 4}`).value = `ออกจากระบบ ${new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })}`
   ws.getCell(`A${f + 4}`).font = { size: 9, color: { argb: 'FF64748B' } }
 }
 

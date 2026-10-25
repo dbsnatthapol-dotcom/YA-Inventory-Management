@@ -76,21 +76,22 @@ export function buildZoneStock(lpns: Lpn[], master: Pick<MasterData, 'locations'
 export interface MapActivity {
   /** เบิกเข้าไลน์: ใบเบิกย่อย + ส่วนต่างที่ FM-P-005 ตัดเพิ่ม/คืน */
   issuedToday: number
-  /** ใบรับสินค้า (GRN) */
+  /** ใบรับสินค้า (GRN) ที่ใช้งานอยู่ ไม่นับใบที่ยกเลิกและเอกสารกล่องจากการตรวจนับ (เหมือนหน้าภาพรวม) */
   receiptsToday: number
-  /** NG ที่ MI3 พบ */
+  /** NG ที่พบ: MI3 ตรวจเจอ + เสียหายตอนตรวจรับ (แยกเข้ากล่อง NG) */
   ngFoundToday: number
 }
 
 export const NO_ACTIVITY: MapActivity = { issuedToday: 0, receiptsToday: 0, ngFoundToday: 0 }
 
-export function todayActivity(reqs: Requisition[], grns: Grn[], tx: Tx[], day: string): MapActivity {
+export function todayActivity(reqs: Requisition[], grns: Grn[], tx: Tx[], day: string, isNgLoc: (code: string) => boolean = () => false): MapActivity {
   const posted = reqs.filter((r) => r.status === 'posted' && r.docDate === day)
   const sub = posted.filter((r) => r.kind === 'line').reduce((s, r) => s + r.lines.reduce((t, l) => t + l.qty, 0), 0)
   const fm = posted.filter((r) => r.kind === 'fm005').reduce((s, r) => s + r.lines.reduce((t, l) => t + l.qty - (l.reqQty ?? 0), 0), 0)
+  const today = tx.filter((t) => bangkokDay(t.createdAt) === day)
   return {
     issuedToday: sub + fm,
-    receiptsToday: grns.filter((g) => bangkokDay(g.receivedAt) === day).length,
-    ngFoundToday: tx.filter((t) => t.kind === 'QI' && bangkokDay(t.createdAt) === day).reduce((s, t) => s + (t.ngQty ?? 0), 0),
+    receiptsToday: grns.filter((g) => bangkokDay(g.receivedAt) === day && g.status !== 'void' && !g.grnNo.startsWith('CNT-')).length,
+    ngFoundToday: today.reduce((s, t) => s + (t.kind === 'QI' ? (t.ngQty ?? 0) : t.kind === 'RECEIVE' && !!t.toLoc && isNgLoc(t.toLoc) ? (t.qty ?? 0) : 0), 0),
   }
 }

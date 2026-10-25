@@ -12,7 +12,7 @@ const STATUS: Record<InvoiceStatus, [string, Tone]> = {
   closed: ['ปิดแล้ว', 'muted'],
 }
 
-const dateTime = (iso: string) => new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+const dateTime = (iso: string) => new Date(iso).toLocaleString('th-TH', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' })
 
 export function InvoiceTab({ onOpenGrn }: { onOpenGrn: (grnId: string) => void }) {
   const { api, can } = useWms()
